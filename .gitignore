@@ -1,0 +1,13 @@
+# secrets never enter git (design v0.2 §6.1 BYOK discipline)
+.env
+license.json
+*.pem
+
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+data/
+dist/
+*.egg-info/

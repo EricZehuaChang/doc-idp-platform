@@ -1,0 +1,18 @@
+# Parser plugins (design v0.2 §4.2 final decision 2026-07-14):
+# local embedded OCR = GLM-OCR only; other vendors join as cloud APIs; MonkeyOCR kept as optional GPU parser.
+parsers:
+  - name: markitdown          # Office family -> Markdown (no bbox: acceptable, no page image concept)
+    type: local
+    for: electronic-office
+  - name: pdfplumber          # electronic PDF text layer, bbox included (verification highlight)
+    type: local
+    for: electronic-pdf
+  - name: glm-ocr-cloud       # Zhipu /layout_parsing, tested live: 1.6-12s, bbox+md (cloud-first for lite tier)
+    type: cloud_api
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: ZHIPU_API_KEY
+  # M2: glm-ocr-local (vLLM + PP-DocLayoutV3), monkeyocr (optional, weights research-licensed), rapidocr (CPU fallback)
+default_parser:
+  lite: glm-ocr-cloud
+  standard: glm-ocr-local
+  air_gapped: glm-ocr-local
