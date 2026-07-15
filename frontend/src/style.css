@@ -1,0 +1,55 @@
+/* Dark theme tokens — UI/UX baseline is the Insavlo console look
+   (design v0.2 §2: dark workbench, amber accent, card panels). */
+:root {
+  --bg: #131a26;
+  --bg-panel: #1a2332;
+  --bg-raised: #222d40;
+  --border: #2c3a52;
+  --text: #e8ecf3;
+  --text-dim: #8b96a9;
+  --accent: #f0b429;        /* Insavlo amber */
+  --accent-text: #131a26;
+  --green: #34c07c;
+  --red: #e5534b;
+  --blue: #58a6ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+a { color: var(--blue); text-decoration: none; }
+button {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-text); border: none; font-weight: 600; }
+button.confirm { background: var(--green); color: #fff; border: none; font-weight: 600; }
+button.danger { background: var(--red); color: #fff; border: none; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+input, textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: 100%;
+}
+input:focus { outline: none; border-color: var(--accent); }
+.badge-r {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 11px; font-weight: 700;
+}
+.badge-inferred {
+  background: var(--blue); color: #fff; border-radius: 4px;
+  font-size: 11px; padding: 1px 6px;
+}

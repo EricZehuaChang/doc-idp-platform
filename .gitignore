@@ -11,3 +11,5 @@ __pycache__/
 data/
 dist/
 *.egg-info/
+node_modules/
+frontend/node_modules/

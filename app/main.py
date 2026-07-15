@@ -4,8 +4,10 @@ Health probes per HA design (feasibility v2.0 §2.2): /healthz (live),
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api.routes import process, review, skills
@@ -49,5 +51,10 @@ def create_app() -> FastAPI:
         async with sf() as s:
             await s.execute(text("SELECT 1"))
         return {"status": "ready", "tier": get_settings().deploy_tier}
+
+    # serve the built frontend if present (private-deploy pattern: one process)
+    webdist = Path(__file__).resolve().parent / "webdist"
+    if webdist.exists():
+        app.mount("/", StaticFiles(directory=webdist, html=True), name="web")
 
     return app

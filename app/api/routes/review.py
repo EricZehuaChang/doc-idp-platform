@@ -68,16 +68,25 @@ async def queue(skill_code: str | None = None, assignee: str | None = None,
 
 @router.get("/{file_id}")
 async def detail(file_id: str):
-    """Everything the dual-screen UI needs: result fields + UDR pointer."""
+    """Everything the dual-screen UI needs: result fields + page dimensions
+    (bbox overlay coordinate base — bboxes live in page pixel space)."""
+    import json
+    from pathlib import Path
+
     sf = session_factory()
     async with sf() as s:
         f = await _get_file(s, file_id)
+        pages = []
+        if f.udr_path and Path(f.udr_path).exists():
+            udr = json.loads(Path(f.udr_path).read_text(encoding="utf-8"))
+            pages = [{"page_no": p["page_no"], "width": p.get("width", 0),
+                      "height": p.get("height", 0)} for p in udr.get("pages", [])]
         return {
             "file_id": f.id, "file_name": f.file_name, "status": f.status,
             "transaction_id": f.transaction_id, "page_count": f.page_count,
             "result": f.result, "assignee": f.assignee,
             "locked_by": None if _lock_expired(f) else f.locked_by,
-            "verified_by": f.verified_by,
+            "verified_by": f.verified_by, "pages": pages,
         }
 
 
