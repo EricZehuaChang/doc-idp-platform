@@ -72,6 +72,19 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     return SubmitResponse(transaction_id=txn_id, files=out)
 
 
+@router.get("/files/{file_id}/download")
+async def download(file_id: str):
+    """Original file stream — the left pane of the dual-screen review UI."""
+    from fastapi.responses import FileResponse
+
+    sf = session_factory()
+    async with sf() as s:
+        f = await s.get(FileRecord, file_id)
+        if f is None or f.tenant_id != current_tenant():
+            raise HTTPException(404, "file not found")
+        return FileResponse(f.storage_path, filename=f.file_name)
+
+
 @router.get("/status/{transaction_id}")
 async def status(transaction_id: str, include_confidence_flag: bool = True):
     tenant = current_tenant()

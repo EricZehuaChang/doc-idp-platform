@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from app.api.routes import process, skills
+from app.api.routes import process, review, skills
 from app.config import get_settings
 from app.db import get_engine, init_db, session_factory
 from app.models import Tenant
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.add_middleware(TenantMiddleware)
     app.include_router(process.router)
     app.include_router(skills.router)
+    app.include_router(review.router)
 
     @app.get("/healthz", tags=["system"])
     async def healthz():
