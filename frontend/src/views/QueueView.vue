@@ -25,15 +25,20 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { useQuery, useQueryClient } from "@tanstack/vue-query";
+import { computed } from "vue";
 import { api, type QueueItem } from "../api";
 
-const items = ref<QueueItem[]>([]);
-let timer: number | undefined;
-
-async function load() {
-  try { items.value = await api.queue(); } catch { /* backend offline: keep last */ }
-}
+// TanStack Query replaces the hand-rolled setInterval poll: same 5s cadence,
+// plus cache reuse when hopping back from the review page.
+const qc = useQueryClient();
+const { data } = useQuery({
+  queryKey: ["queue"],
+  queryFn: api.queue,
+  refetchInterval: 5000,
+  placeholderData: (prev) => prev,   // backend hiccup: keep last list
+});
+const items = computed<QueueItem[]>(() => data.value ?? []);
 
 // hover prefetch (caching design §9.0 layer ②): warm the original image via
 // the browser cache (download endpoint is immutable) so the review page's
@@ -56,11 +61,8 @@ async function claim(it: QueueItem) {
                "X-User": api.currentUser },
     body: JSON.stringify({ assignee: api.currentUser }),
   });
-  await load();
+  await qc.invalidateQueries({ queryKey: ["queue"] });
 }
-
-onMounted(() => { load(); timer = window.setInterval(load, 5000); });
-onUnmounted(() => window.clearInterval(timer));
 </script>
 
 <style scoped>

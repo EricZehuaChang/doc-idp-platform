@@ -2,7 +2,7 @@
   <main class="wrap">
     <h2>数据柜 Cabinet</h2>
     <div class="bar">
-      <select v-model="skill" @change="load">
+      <select v-model="skill">
         <option value="" disabled>选择技能</option>
         <option v-for="s in skills" :key="s.skill_code" :value="s.skill_code">
           {{ s.name }}（{{ s.skill_code }}）
@@ -28,24 +28,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { useQuery } from "@tanstack/vue-query";
+import { computed, ref, watch } from "vue";
 import { api, type SkillInfo } from "../api";
 
-const skills = ref<SkillInfo[]>([]);
 const skill = ref("");
-const rows = ref<Record<string, string>[]>([]);
+
+const { data: skillsData } = useQuery({ queryKey: ["skills"], queryFn: api.skills });
+const skills = computed<SkillInfo[]>(() => skillsData.value ?? []);
+watch(skills, (list) => { if (list.length && !skill.value) skill.value = list[0].skill_code; },
+      { immediate: true });
+
+const { data: cabinetData } = useQuery({
+  queryKey: computed(() => ["cabinet", skill.value]),
+  queryFn: () => api.cabinet(skill.value),
+  enabled: computed(() => !!skill.value),
+});
+const rows = computed(() => cabinetData.value?.rows ?? []);
 
 const columns = computed(() => (rows.value[0] ? Object.keys(rows.value[0]) : []));
 const short = (v: string) => (v && v.length > 40 ? v.slice(0, 40) + "…" : v);
-
-async function load() {
-  if (!skill.value) return;
-  rows.value = (await api.cabinet(skill.value)).rows;
-}
-onMounted(async () => {
-  skills.value = await api.skills();
-  if (skills.value.length) { skill.value = skills.value[0].skill_code; await load(); }
-});
 </script>
 
 <style scoped>

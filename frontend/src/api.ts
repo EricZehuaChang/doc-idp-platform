@@ -55,7 +55,8 @@ export const api = {
   detail: (id: string) => req<ReviewDetail>("GET", `/api/v1/review/${id}`),
   lock: (id: string) => req("POST", `/api/v1/review/${id}/lock`),
   unlock: (id: string) => req("POST", `/api/v1/review/${id}/unlock`),
-  patchFields: (id: string, edits: { field: string; value: string }[]) =>
+  patchFields: (id: string,
+                edits: { field: string; value: string; bbox?: number[]; page?: number }[]) =>
     req("PATCH", `/api/v1/review/${id}/fields`, { edits }),
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),

@@ -139,6 +139,9 @@ async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
 class FieldEdit(BaseModel):
     field: str
     value: str
+    # reviewer re-drew the anchor box (M2 box-select): page-pixel space bbox
+    bbox: list[float] | None = None
+    page: int | None = None
 
 
 class FieldsPatch(BaseModel):
@@ -164,8 +167,10 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             if not isinstance(cell, dict):
                 raise HTTPException(400, f"unknown or non-editable field: {e.field}")
             old = str(cell.get("$value") or "")
-            if old == e.value:
+            bbox_changed = e.bbox is not None and e.bbox != cell.get("$bbox")
+            if old == e.value and not bbox_changed:
                 continue
+            # bbox-only fixes count as corrections too (old==new marks them)
             s.add(Correction(
                 tenant_id=f.tenant_id, file_id=f.id,
                 skill_code=txn.skill_code if txn else "",
@@ -175,6 +180,10 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             cell["$value"] = e.value
             cell["$confidence"] = 3          # human truth
             cell["$corrected"] = True
+            if e.bbox is not None:
+                cell["$bbox"] = e.bbox
+                if e.page is not None:
+                    cell["$pages"] = e.page
             result[e.field] = cell
             applied.append(e.field)
         f.result = result

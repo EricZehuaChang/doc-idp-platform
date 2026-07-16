@@ -35,12 +35,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { useQuery } from "@tanstack/vue-query";
+import { computed } from "vue";
 import { api, type SkillStat } from "../api";
 
-const stats = ref<SkillStat[]>([]);
+const { data } = useQuery({ queryKey: ["stats"], queryFn: api.stats });
+const stats = computed<SkillStat[]>(() => data.value?.skills ?? []);
 const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
-onMounted(async () => { stats.value = (await api.stats()).skills; });
 </script>
 
 <style scoped>

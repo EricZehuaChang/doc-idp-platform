@@ -1,3 +1,4 @@
+import { VueQueryPlugin } from "@tanstack/vue-query";
 import { createApp } from "vue";
 import { createRouter, createWebHashHistory } from "vue-router";
 import App from "./App.vue";
@@ -18,4 +19,15 @@ const router = createRouter({
   ],
 });
 
-createApp(App).use(router).mount("#app");
+// TanStack Query (caching design §9.0 layer ①): server state cached across
+// route hops; stale-while-revalidate keeps weak networks usable.
+createApp(App)
+  .use(router)
+  .use(VueQueryPlugin, {
+    queryClientConfig: {
+      defaultOptions: {
+        queries: { staleTime: 5_000, retry: 1, refetchOnWindowFocus: false },
+      },
+    },
+  })
+  .mount("#app");
