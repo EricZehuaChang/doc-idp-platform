@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.config import get_settings
+from app.extraction.provider_client import ProviderError
 from app.db import session_factory
 from app.models import GoldenSample, Skill, SkillVersion
 from app.parsers.base import UDR
@@ -118,7 +119,10 @@ async def probe(file: UploadFile = File(...), provider: str | None = Form(defaul
     The editor opens 80% filled instead of blank."""
     udr = await _parse_upload(file, current_tenant())
     await _warm_byok()
-    out = await asyncio.to_thread(studio.probe, udr, provider)
+    try:
+        out = await asyncio.to_thread(studio.probe, udr, provider)
+    except ProviderError as e:
+        raise HTTPException(502, f"模型通道暂时不可用，请稍后重试：{str(e)[:200]}")
     draft = out["draft"]
     fields = studio.draft_to_fields(draft if isinstance(draft, dict) else {})
     return {"doc_type": (draft or {}).get("doc_type", ""),
@@ -138,7 +142,10 @@ async def draft_from_text(body: TextDraftBody):
     if not body.text.strip():
         raise HTTPException(400, "描述不能为空")
     await _warm_byok()
-    out = await asyncio.to_thread(studio.draft_from_text, body.text, body.provider)
+    try:
+        out = await asyncio.to_thread(studio.draft_from_text, body.text, body.provider)
+    except ProviderError as e:
+        raise HTTPException(502, f"模型通道暂时不可用，请稍后重试：{str(e)[:200]}")
     draft = out["draft"]
     fields = studio.draft_to_fields(draft if isinstance(draft, dict) else {})
     if not fields:
@@ -146,6 +153,41 @@ async def draft_from_text(body: TextDraftBody):
     return {"doc_type": (draft or {}).get("doc_type", ""),
             "fields": [f.model_dump() for f in fields],
             "provider_used": out["provider_used"]}
+
+
+class EnrichBody(BaseModel):
+    fields: list[dict]
+    doc_type: str = ""
+    provider: str | None = None
+
+
+@router.post("/draft-enrich")
+async def draft_enrich(body: EnrichBody):
+    """LLM instruction enrichment (§5.1): expand terse field notes into full
+    keyword->cleaning->format rules. Returns per-field instruction patches the
+    editor merges as a draft — user reviews before saving. Burns tokens."""
+    if not body.fields:
+        raise HTTPException(400, "没有可补全的字段")
+    await _warm_byok()
+    try:
+        out = await asyncio.to_thread(studio.enrich_fields, body.fields,
+                                      body.doc_type, body.provider)
+    except ProviderError as e:
+        raise HTTPException(502, f"模型通道暂时不可用，请稍后重试：{str(e)[:200]}")
+    draft = out["draft"] if isinstance(out["draft"], dict) else {}
+    patches = []
+    for f in draft.get("fields", []):
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        patches.append({"name": str(f["name"]),
+                        "instruction": str(f.get("instruction") or ""),
+                        "columns": [{"name": str(c["name"]),
+                                     "instruction": str(c.get("instruction") or "")}
+                                    for c in (f.get("columns") or [])
+                                    if isinstance(c, dict) and c.get("name")]})
+    if not patches:
+        raise HTTPException(422, "模型未返回可用的说明补全")
+    return {"fields": patches, "provider_used": out["provider_used"]}
 
 
 @router.post("/draft-from-table")

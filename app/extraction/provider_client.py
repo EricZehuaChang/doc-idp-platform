@@ -64,9 +64,18 @@ def chat_json_with_fallback(messages: list[dict], provider_names: list[str | Non
     chain = [resolve_provider(n) for n in provider_names] or [resolve_provider(None)]
     errors: list[str] = []
     candidates = [p for p in chain if cooldown.available(p["name"])] or chain[-1:]
-    for p in candidates:
+    # with a fallback available, fail FAST on the primary (no in-provider
+    # retries, shorter timeout) — otherwise a dead vendor stalls the chain for
+    # minutes before the fallback ever gets a chance (observed live: 6min 500)
+    fast = len(candidates) > 1
+    for i, p in enumerate(candidates):
+        last_option = i == len(candidates) - 1
         try:
-            data, usage = chat_json(messages, p, transport=transport)
+            if fast and not last_option:
+                data, usage = chat_json(messages, p, timeout=60.0, retries=0,
+                                        transport=transport)
+            else:
+                data, usage = chat_json(messages, p, transport=transport)
             return data, usage, p["name"]
         except ProviderError as e:
             cooldown.failed(p["name"])

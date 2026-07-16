@@ -65,6 +65,7 @@ def load_providers() -> dict:
     raw = yaml.safe_load((REPO_ROOT / "configs" / "providers.yaml").read_text(encoding="utf-8"))
     return {
         "active": raw["active"],
+        "fallback": raw.get("fallback"),   # platform-level failover channel
         "providers": {p["name"]: ProviderCfg(**p) for p in raw["providers"]},
     }
 

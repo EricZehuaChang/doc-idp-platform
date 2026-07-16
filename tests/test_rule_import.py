@@ -92,6 +92,32 @@ async def test_draft_from_text_prefills_fields(client, monkeypatch):
     assert r.status_code == 400
 
 
+async def test_draft_enrich_patches_instructions(client, monkeypatch):
+    def fake_chat(messages, chain, transport=None):
+        assert "三段式" in messages[0]["content"]
+        assert "invoice_no" in messages[1]["content"]
+        return ({"fields": [
+            {"name": "invoice_no",
+             "instruction": "查找发票号码（Invoice No/Fatura No）。清洗：去空格连字符。输出纯字母数字。"},
+            {"name": "items", "instruction": "提取明细行",
+             "columns": [{"name": "qty", "instruction": "数量：移除非数字字符"}]},
+        ]}, {"prompt_tokens": 60, "completion_tokens": 90}, "fake")
+
+    monkeypatch.setattr(studio, "chat_json_with_fallback", fake_chat)
+    r = await client.post("/api/v1/skills/draft-enrich", json={
+        "fields": [{"name": "invoice_no", "type": "string", "instruction": "发票号"},
+                   {"name": "items", "type": "table", "instruction": "",
+                    "columns": [{"name": "qty", "instruction": ""}]}],
+        "doc_type": "发票"})
+    assert r.status_code == 200, r.text
+    by = {f["name"]: f for f in r.json()["fields"]}
+    assert "清洗" in by["invoice_no"]["instruction"]
+    assert by["items"]["columns"][0]["name"] == "qty"
+
+    r = await client.post("/api/v1/skills/draft-enrich", json={"fields": []})
+    assert r.status_code == 400
+
+
 async def test_draft_from_table_csv_and_xlsx(client):
     csv_bytes = ("字段名,类型,说明,必填\n"
                  "invoice_no,文本,发票号码,是\n"

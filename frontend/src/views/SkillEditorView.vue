@@ -46,6 +46,9 @@
               <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
               <span class="btn-like">📊 表格导入</span>
             </label>
+            <button v-if="pkg.fields.length" class="mini" :disabled="enriching"
+                    title="让大模型把字段说明扩写为 关键词→清洗规则→输出格式 的完整抽取指令"
+                    @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
             <button class="mini" @click="addField">＋ 手动</button>
           </header>
 
@@ -382,9 +385,34 @@ async function tableImport(ev: Event) {
   try {
     const r = await api.skillDraftFromTable(file);
     const n = mergeDraft(r.fields);
-    toast.ok(`表格导入完成：新增 ${n} 个字段，请核对后保存`);
+    toast.ok(`表格导入完成：新增 ${n} 个字段。可点「✨ AI 补全说明」扩写规则，核对后保存`);
   } catch (e) { toast.error(e); }
   finally { (ev.target as HTMLInputElement).value = ""; }
+}
+
+// LLM instruction enrichment: expands terse notes into full extraction rules
+// (keyword hunt -> cleaning -> output format); prefill-only, user confirms
+const enriching = ref(false);
+async function enrich() {
+  if (!pkg.value?.fields.length) return;
+  enriching.value = true;
+  try {
+    const r = await api.skillEnrich(pkg.value.fields, pkg.value.doc_type_hint);
+    let n = 0;
+    const apply = (specs: FieldSpec[], patches: { name: string; instruction: string;
+                                                  columns?: { name: string; instruction: string }[] }[]) => {
+      for (const p of patches) {
+        const f = specs.find((x) => x.name === p.name);
+        if (!f) continue;
+        if (p.instruction && p.instruction !== f.instruction) { f.instruction = p.instruction; n++; }
+        if (p.columns?.length && f.columns.length)
+          apply(f.columns, p.columns.map((c) => ({ ...c, columns: undefined })));
+      }
+    };
+    apply(pkg.value.fields, r.fields);
+    toast.ok(`已补全 ${n} 处字段说明（${r.provider_used}），请核对后保存`);
+  } catch (e) { toast.error(e); }
+  finally { enriching.value = false; }
 }
 
 const running = ref(false);

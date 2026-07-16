@@ -195,6 +195,11 @@ export const api = {
   skillDraftFromText: (text: string) =>
     req<{ doc_type: string; fields: FieldSpec[]; provider_used: string }>(
       "POST", "/api/v1/skills/draft-from-text", { text }),
+  skillEnrich: (fields: FieldSpec[], doc_type = "") =>
+    req<{ fields: { name: string; instruction: string;
+                    columns?: { name: string; instruction: string }[] }[];
+          provider_used: string }>(
+      "POST", "/api/v1/skills/draft-enrich", { fields, doc_type }),
   skillDraftFromTable: (file: File) => {
     const f = new FormData();
     f.append("file", file);

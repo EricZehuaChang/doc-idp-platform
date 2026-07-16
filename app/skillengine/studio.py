@@ -7,10 +7,20 @@
 """
 import json
 
+from app.config import load_providers
 from app.extraction.pipeline import extract
 from app.extraction.provider_client import chat_json_with_fallback
 from app.parsers.base import UDR
 from app.skillengine.schema import FieldSpec, SkillPackage
+
+
+def _studio_chain(provider: str | None) -> list[str | None]:
+    """Studio tools get the platform failover (M2 resilience): explicit
+    provider = respect it; default = active channel + platform fallback."""
+    if provider:
+        return [provider]
+    fb = load_providers().get("fallback")
+    return [None, fb] if fb else [None]
 
 _PROBE_PROMPT = (
     "你是文档抽取技能设计助手。分析给定文档内容，产出建议抽取的字段草稿。\n"
@@ -27,7 +37,7 @@ def probe(udr: UDR, provider: str | None = None, transport=None) -> dict:
     raw, usage, used = chat_json_with_fallback(
         [{"role": "system", "content": _PROBE_PROMPT},
          {"role": "user", "content": doc}],
-        [provider], transport=transport)
+        _studio_chain(provider), transport=transport)
     return {"draft": raw, "usage": usage, "provider_used": used}
 
 
@@ -142,7 +152,39 @@ def draft_from_text(text: str, provider: str | None = None, transport=None) -> d
     raw, usage, used = chat_json_with_fallback(
         [{"role": "system", "content": _TEXT_DRAFT_PROMPT},
          {"role": "user", "content": text[:8000]}],
-        [provider], transport=transport)
+        _studio_chain(provider), transport=transport)
+    return {"draft": raw, "usage": usage, "provider_used": used}
+
+
+# —— LLM instruction enrichment: terse notes -> production-grade rules ——
+
+_ENRICH_PROMPT = (
+    "你是文档抽取技能设计专家。给定一组字段（名称/类型/现有说明），为每个字段撰写生产级抽取说明，"
+    "采用三段式：寻找关键词（含多语言常见标签）→ 清洗规则 → 输出格式。\n"
+    "要求：保留并吸收现有说明里的语义（尤其是用户写明的格式/清洗要求，不得丢弃）；"
+    "金额类统一去货币符号和千分位、输出 xxx.xx；日期类统一 YYYY-MM-DD；"
+    "枚举类说明每个取值的判断依据；table 字段的每一列也要写说明。\n"
+    "输出 JSON：{\"fields\": [{\"name\": \"与输入一致\", \"instruction\": \"完整抽取说明\","
+    " \"columns\": [{\"name\": \"列名\", \"instruction\": \"列说明\"}]}]}。"
+    "只输出 JSON，不要改动字段名，不要新增或删除字段。"
+)
+
+
+def enrich_fields(fields: list[dict], doc_type: str = "",
+                  provider: str | None = None, transport=None) -> dict:
+    """Expand field instructions into full extraction rules (keyword hunt ->
+    cleaning -> output format). Prefill-only: caller merges, user confirms."""
+    brief = [{"name": f.get("name"), "type": f.get("type"),
+              "instruction": f.get("instruction") or "",
+              "columns": [{"name": c.get("name"),
+                           "instruction": c.get("instruction") or ""}
+                          for c in (f.get("columns") or [])]}
+             for f in fields if f.get("name")]
+    user = json.dumps({"doc_type": doc_type, "fields": brief}, ensure_ascii=False)
+    raw, usage, used = chat_json_with_fallback(
+        [{"role": "system", "content": _ENRICH_PROMPT},
+         {"role": "user", "content": user[:16000]}],
+        _studio_chain(provider), transport=transport)
     return {"draft": raw, "usage": usage, "provider_used": used}
 
 
