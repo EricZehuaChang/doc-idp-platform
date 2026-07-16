@@ -1,1 +1,1 @@
-{"root":["./src/api.ts","./src/main.ts","./src/app.vue","./src/views/queueview.vue","./src/views/reviewview.vue"],"version":"5.9.3"}
+{"root":["./src/api.ts","./src/main.ts","./src/app.vue","./src/views/cabinetview.vue","./src/views/queueview.vue","./src/views/reviewview.vue","./src/views/statsview.vue"],"version":"5.9.3"}

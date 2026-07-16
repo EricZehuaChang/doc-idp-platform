@@ -220,5 +220,9 @@ async def _decide(file_id: str, new_status: str, actor: str, comment: str) -> di
             txn = await s.get(Transaction, f.transaction_id)
             if txn:
                 txn.status = "completed"
+        tenant = f.tenant_id
         await s.commit()
+    from app.integrations import webhooks
+    await webhooks.fire(tenant, f"file.{new_status}",
+                        {"file_id": file_id, "status": new_status, "by": actor})
     return {"file_id": file_id, "status": new_status, "verified_by": actor}

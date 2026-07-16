@@ -15,6 +15,7 @@ from app.billing.ledger import shadow_meter
 from app.config import get_settings
 from app.db import session_factory
 from app.extraction.pipeline import extract
+from app.integrations import webhooks
 from app.models import FileRecord, SkillVersion, Transaction
 from app.parsers.router import parse_document
 from app.skillengine.schema import SkillPackage
@@ -93,6 +94,7 @@ async def _process_file(file_id: str, pkg: SkillPackage) -> None:
     udr_path.parent.mkdir(parents=True, exist_ok=True)
     udr_path.write_text(udr.model_dump_json(), encoding="utf-8")
 
+    new_status = "pending_verification" if needs_review else "completed"
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         f.result = json.loads(json.dumps(result, ensure_ascii=False))
@@ -100,10 +102,13 @@ async def _process_file(file_id: str, pkg: SkillPackage) -> None:
         f.udr_path = str(udr_path)
         f.input_tokens = int(usage.get("prompt_tokens") or 0)
         f.output_tokens = int(usage.get("completion_tokens") or 0)
-        f.status = "pending_verification" if needs_review else "completed"
+        f.status = new_status
         await s.commit()
     await shadow_meter(tenant_id=tenant, file_id=file_id,
                        pages=len(udr.pages), usage=usage)
+    await webhooks.fire(tenant, f"file.{new_status}",
+                        {"file_id": file_id, "status": new_status,
+                         "pages": len(udr.pages)})
 
 
 async def _mark_error(file_id: str, message: str) -> None:
@@ -112,7 +117,10 @@ async def _mark_error(file_id: str, message: str) -> None:
         f = await s.get(FileRecord, file_id)
         f.status = "error"
         f.error = message
+        tenant = f.tenant_id
         await s.commit()
+    await webhooks.fire(tenant, "file.error",
+                        {"file_id": file_id, "error": message[:200]})
 
 
 def submit(transaction_id: str) -> None:

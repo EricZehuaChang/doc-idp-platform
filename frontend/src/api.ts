@@ -40,6 +40,16 @@ export interface ReviewDetail {
   locked_by: string | null; verified_by: string | null;
 }
 
+export interface SkillStat {
+  skill_code: string; total: number; decided: number;
+  by_status: Record<string, number>;
+  corrections: number; correction_rate: number | null;
+  straight_through_rate: number | null;
+  top_corrected_fields: { field: string; count: number }[];
+}
+
+export interface SkillInfo { skill_code: string; name: string; kind: string; state: string }
+
 export const api = {
   queue: () => req<QueueItem[]>("GET", "/api/v1/review/queue"),
   detail: (id: string) => req<ReviewDetail>("GET", `/api/v1/review/${id}`),
@@ -50,5 +60,10 @@ export const api = {
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
+  skills: () => req<SkillInfo[]>("GET", "/api/v1/skills"),
+  cabinet: (skill: string) =>
+    req<{ rows: Record<string, string>[] }>("GET", `/api/v1/cabinet/${skill}`),
+  cabinetCsvUrl: (skill: string) => `/api/v1/cabinet/${skill}/export.csv`,
+  stats: () => req<{ skills: SkillStat[] }>("GET", "/api/v1/stats/skills"),
   currentUser: USER,
 };

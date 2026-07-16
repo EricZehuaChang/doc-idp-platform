@@ -180,9 +180,26 @@ async function decide(kind: "confirm" | "reject") {
   try {
     if (dirty.value) await saveEdits();
     await (kind === "confirm" ? api.confirm(props.fileId) : api.reject(props.fileId));
-    router.push("/queue");            // Previous/Next continuous review lands in M2
+    // continuous review: jump straight to the next pending file (reviewer
+    // rhythm — no round-trip through the queue page between documents)
+    const next = (await api.queue()).find(
+      (q) => q.file_id !== props.fileId && (!q.locked_by || q.locked_by === api.currentUser));
+    if (next) {
+      router.push(`/review/${next.file_id}`);   // fileId watcher re-initializes
+    } else {
+      router.push("/queue");
+    }
   } catch (e) { msg.value = String(e); }
 }
+
+// same component instance is reused across /review/:fileId — reset state on switch
+watch(() => props.fileId, () => {
+  locked.value = false;
+  msg.value = "";
+  activeField.value = "";
+  activeBox.value = null;
+  load();
+});
 onMounted(load);
 </script>
 

@@ -12,7 +12,11 @@
           <td>{{ it.page_count }}</td>
           <td>{{ it.locked_by || "-" }}</td>
           <td>{{ new Date(it.created_at).toLocaleString() }}</td>
-          <td><router-link :to="`/review/${it.file_id}`"><button class="primary">Verify</button></router-link></td>
+          <td class="ops">
+            <router-link :to="`/review/${it.file_id}`"><button class="primary">Verify</button></router-link>
+            <button v-if="!it.assignee" @click="claim(it)">认领</button>
+            <span v-else class="dim">{{ it.assignee }}</span>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -41,6 +45,18 @@ function prefetch(it: QueueItem) {
   if (/\.(png|jpe?g|bmp|webp)$/i.test(it.file_name)) {
     new Image().src = api.downloadUrl(it.file_id);
   }
+}
+
+// claim = set assignee to me (PM item #2: assignee is "whose job", distinct
+// from the review lock which is "who is editing right now")
+async function claim(it: QueueItem) {
+  await fetch(`/api/v1/review/${it.file_id}/assign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tenant-Id": "default",
+               "X-User": api.currentUser },
+    body: JSON.stringify({ assignee: api.currentUser }),
+  });
+  await load();
 }
 
 onMounted(() => { load(); timer = window.setInterval(load, 5000); });
