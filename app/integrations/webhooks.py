@@ -19,7 +19,7 @@ from app.models import _uuid
 log = logging.getLogger("idp.webhooks")
 
 EVENTS = ("file.completed", "file.pending_verification", "file.passed",
-          "file.rejected", "file.error")
+          "file.rejected", "file.error", "file.split")
 
 
 class Webhook(Base):

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     queue_backend: str = "inprocess"
     redis_url: str = "redis://127.0.0.1:6379/0"
 
+    # multi-doc split (M2 item 7): "auto" = LLM page classification on
+    # multi-page files (one cheap call per file); "off" = never split
+    multi_doc_split: str = "auto"
+
     # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
     # "on" = /api requires Bearer JWT or API key, tenant comes from credential
     auth_mode: str = "off"

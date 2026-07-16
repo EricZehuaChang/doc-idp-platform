@@ -99,15 +99,35 @@ async def parse_stage(file_id: str, parser_pin: str | None) -> None:
 async def extract_stage(file_id: str, pkg: SkillPackage) -> None:
     """Stage 2: UDR (from disk) -> extraction result + billing + webhook.
     Skips quietly when parse never landed (chain redelivery after a parse
-    failure) — the error state is already on the row."""
+    failure) — the error state is already on the row.
+
+    Multi-doc split (M2 item 7) happens here, before extraction: an LLM page
+    classifier may fan the bundle out into child files, each extracted on its
+    own; the parent ends in status "split"."""
     sf = session_factory()
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         if f is None or f.status == "error" or not f.udr_path:
             return
         tenant, udr_path = f.tenant_id, f.udr_path
+        is_child = f.parent_file_id is not None
 
     udr = UDR.model_validate_json(Path(udr_path).read_text(encoding="utf-8"))
+
+    # children never re-split (bounded recursion); "off" kills the feature
+    if not is_child and get_settings().multi_doc_split == "auto" and len(udr.pages) >= 2:
+        from app.extraction.splitter import classify_pages
+        groups, split_usage = await asyncio.to_thread(classify_pages, udr)
+        if len(groups) > 1:
+            child_ids = await _fan_out_children(file_id, udr, groups)
+            await shadow_meter(tenant_id=tenant, file_id=file_id,
+                               pages=0, usage=split_usage)   # classification tokens
+            await webhooks.fire(tenant, "file.split",
+                                {"file_id": file_id, "children": child_ids,
+                                 "documents": len(child_ids)})
+            for cid in child_ids:
+                await extract_stage(cid, pkg)
+            return
     result, usage, needs_review = await asyncio.to_thread(extract, udr, pkg)
 
     new_status = "pending_verification" if needs_review else "completed"
@@ -124,14 +144,50 @@ async def extract_stage(file_id: str, pkg: SkillPackage) -> None:
                         {"file_id": file_id, "status": new_status, "pages": pages})
 
 
+async def _fan_out_children(file_id: str, udr: UDR, groups: list[list[int]]) -> list[str]:
+    """Create one child FileRecord per detected document: sliced UDR on disk,
+    physical PDF slice when possible, parent marked split."""
+    from app.extraction.splitter import slice_udr, split_pdf
+
+    data_dir = Path(get_settings().data_dir)
+    sf = session_factory()
+    child_ids: list[str] = []
+    async with sf() as s:
+        parent = await s.get(FileRecord, file_id)
+        stem, suffix = Path(parent.file_name).stem, Path(parent.file_name).suffix
+        for i, pages in enumerate(groups, start=1):
+            child = FileRecord(
+                tenant_id=parent.tenant_id, transaction_id=parent.transaction_id,
+                parent_file_id=parent.id, file_name=f"{stem}#doc{i}{suffix}",
+                storage_path=parent.storage_path, status="processing",
+                page_count=len(pages))
+            s.add(child)
+            await s.flush()
+            c_udr = slice_udr(udr, pages)
+            udr_path = data_dir / "udr" / f"{child.id}.json"
+            udr_path.parent.mkdir(parents=True, exist_ok=True)
+            udr_path.write_text(c_udr.model_dump_json(), encoding="utf-8")
+            child.udr_path = str(udr_path)
+            dst = data_dir / "files" / f"{child.id}.pdf"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if await asyncio.to_thread(split_pdf, parent.storage_path, pages, str(dst)):
+                child.storage_path = str(dst)
+            child_ids.append(child.id)
+        parent.status = "split"
+        await s.commit()
+    return child_ids
+
+
 async def finalize_transaction(transaction_id: str) -> None:
-    """Roll file states up into the transaction row (state machine truth)."""
+    """Roll file states up into the transaction row (state machine truth).
+    "split" parents count as settled — their children carry the work."""
     sf = session_factory()
     async with sf() as s:
         txn = await s.get(Transaction, transaction_id)
         rows = (await s.execute(
             select(FileRecord.status).where(FileRecord.transaction_id == transaction_id))).all()
         statuses = {r[0] for r in rows}
+        statuses.discard("split")
         if statuses <= {"completed", "passed"}:
             txn.status = "completed"
         elif "pending_verification" in statuses:

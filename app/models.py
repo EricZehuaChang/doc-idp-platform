@@ -98,6 +98,9 @@ class FileRecord(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id"), index=True)
+    # multi-doc split (M2): children point at the bundle they came from;
+    # the parent ends in status "split" and is never extracted itself
+    parent_file_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     file_name: Mapped[str] = mapped_column(String(500))
     storage_path: Mapped[str] = mapped_column(String(1000))
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)

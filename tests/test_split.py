@@ -1,0 +1,153 @@
+"""Multi-document split tests (context.md M2 item 7). LLM is always mocked
+(no tokens); pypdf slices a real 3-page PDF built in-test.
+"""
+import asyncio
+import json
+
+import pytest
+
+from app.parsers.base import UDR, Block, Page
+from app.skillengine.schema import FieldSpec, SkillPackage
+
+PKG = SkillPackage(skill_code="split_test", name="t",
+                   fields=[FieldSpec(name="invoice_no", instruction="号码")])
+
+
+def _udr3() -> UDR:
+    return UDR(pages=[
+        Page(page_no=1, width=595, height=842, markdown="发票号码 INV-A 抬头甲公司",
+             blocks=[Block(text="INV-A", bbox=[1, 2, 3, 4])]),
+        Page(page_no=2, width=595, height=842, markdown="发票号码 INV-B 抬头乙公司",
+             blocks=[Block(text="INV-B", bbox=[5, 6, 7, 8])]),
+        Page(page_no=3, width=595, height=842, markdown="合计（续上页）",
+             blocks=[Block(text="合计", bbox=[9, 10, 11, 12])]),
+    ], full_markdown="x", parser="test")
+
+
+def test_classify_pages_groups_consecutive(monkeypatch):
+    import app.extraction.splitter as sp
+    monkeypatch.setattr(sp, "chat_json_with_fallback",
+                        lambda messages, chain, transport=None: (
+                            {"pages": [{"page": 1, "new_doc": True},
+                                       {"page": 2, "new_doc": True},
+                                       {"page": 3, "new_doc": False}]},
+                            {"prompt_tokens": 50, "completion_tokens": 20}, "fake"))
+    groups, usage = sp.classify_pages(_udr3())
+    assert groups == [[1], [2, 3]]
+    assert usage["provider_used"] == "fake"
+
+
+def test_classify_failure_fails_open(monkeypatch):
+    import app.extraction.splitter as sp
+
+    def boom(messages, chain, transport=None):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(sp, "chat_json_with_fallback", boom)
+    groups, usage = sp.classify_pages(_udr3())
+    assert groups == [[1, 2, 3]]      # one group = no split
+    assert usage == {}
+
+
+def test_single_page_never_calls_llm(monkeypatch):
+    import app.extraction.splitter as sp
+
+    def boom(messages, chain, transport=None):
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(sp, "chat_json_with_fallback", boom)
+    udr = UDR(pages=[Page(page_no=1)], full_markdown="x", parser="t")
+    assert sp.classify_pages(udr)[0] == [[1]]
+
+
+def test_slice_udr_renumbers_and_keeps_geometry():
+    from app.extraction.splitter import slice_udr
+    child = slice_udr(_udr3(), [2, 3])
+    assert [p.page_no for p in child.pages] == [1, 2]
+    assert child.pages[0].width == 595
+    assert child.pages[0].blocks[0].text == "INV-B"
+    assert "INV-B" in child.full_markdown and "INV-A" not in child.full_markdown
+
+
+def test_end_to_end_split_flow(tmp_path, monkeypatch):
+    """Full runner path on a real 3-page PDF: parse -> classify (mock: doc A =
+    p1, doc B = p2-3) -> two children extracted, physical PDF sliced, parent
+    split, transaction rolls up, split webhook fired."""
+    monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    import app.config as config
+    import app.db as db
+    config.get_settings.cache_clear()
+    db._engine = None
+    db._session_factory = None
+
+    from pypdf import PdfWriter
+    pdf_path = tmp_path / "bundle.pdf"
+    w = PdfWriter()
+    for _ in range(3):
+        w.add_blank_page(width=595, height=842)
+    with open(pdf_path, "wb") as fh:
+        w.write(fh)
+
+    import app.tasks.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: _udr3())
+    monkeypatch.setattr(runner_mod, "extract",
+                        lambda udr, pkg: ({"invoice_no": {"$value": udr.pages[0].blocks[0].text,
+                                                          "$confidence": 3, "$bbox": [1, 2, 3, 4],
+                                                          "$pages": 1}},
+                                          {"prompt_tokens": 10, "completion_tokens": 5}, False))
+    import app.extraction.splitter as sp
+    monkeypatch.setattr(sp, "chat_json_with_fallback",
+                        lambda messages, chain, transport=None: (
+                            {"pages": [{"page": 1, "new_doc": True},
+                                       {"page": 2, "new_doc": True},
+                                       {"page": 3, "new_doc": False}]},
+                            {"prompt_tokens": 50, "completion_tokens": 20}, "fake"))
+    fired = []
+    async def fake_fire(tenant, event, payload, transport=None):
+        fired.append((event, payload))
+    monkeypatch.setattr(runner_mod.webhooks, "fire", fake_fire)
+
+    async def main():
+        from sqlalchemy import select
+        from app.db import init_db, session_factory
+        from app.models import FileRecord, SkillVersion, Transaction
+        await init_db()
+        sf = session_factory()
+        async with sf() as s:
+            s.add(SkillVersion(tenant_id="default", skill_code="split_test", version=1,
+                               status="published", package=PKG.model_dump()))
+            txn = Transaction(tenant_id="default", skill_code="split_test", skill_version=1)
+            s.add(txn)
+            await s.flush()
+            parent = FileRecord(tenant_id="default", transaction_id=txn.id,
+                                file_name="bundle.pdf", storage_path=str(pdf_path))
+            s.add(parent)
+            await s.commit()
+            txn_id, parent_id = txn.id, parent.id
+
+        await runner_mod.process_transaction(txn_id)
+
+        async with sf() as s:
+            parent = await s.get(FileRecord, parent_id)
+            children = (await s.execute(select(FileRecord).where(
+                FileRecord.parent_file_id == parent_id))).scalars().all()
+            txn = await s.get(Transaction, txn_id)
+            return parent, sorted(children, key=lambda c: c.file_name), txn
+
+    parent, children, txn = asyncio.run(main())
+
+    assert parent.status == "split" and parent.result is None
+    assert [c.file_name for c in children] == ["bundle#doc1.pdf", "bundle#doc2.pdf"]
+    assert [c.page_count for c in children] == [1, 2]
+    # each child extracted its own document's value
+    assert children[0].result["invoice_no"]["$value"] == "INV-A"
+    assert children[1].result["invoice_no"]["$value"] == "INV-B"
+    assert all(c.status == "completed" for c in children)
+    # physical PDF slices exist and differ from the parent path
+    from pypdf import PdfReader
+    assert len(PdfReader(children[0].storage_path).pages) == 1
+    assert len(PdfReader(children[1].storage_path).pages) == 2
+    # split parents settle the transaction
+    assert txn.status == "completed"
+    assert any(e == "file.split" and p["documents"] == 2 for e, p in fired)
