@@ -35,6 +35,9 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(32), default="operator")  # RBAC minimal set (§11.10)
+    # local-login credential; NULL for SSO-only accounts (§11.9)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)  # disable takes effect on next request
     # SSO fields reserved on day one to avoid rework (§11.9 M1 note)
     auth_provider: Mapped[str] = mapped_column(String(32), default="local")
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     deploy_tier: str = "lite"      # lite | standard | air_gapped (design §8)
     default_tenant: str = "default"
 
+    # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
+    # "on" = /api requires Bearer JWT or API key, tenant comes from credential
+    auth_mode: str = "off"
+    # bootstrap admin, created at startup iff no user exists and password is set
+    admin_email: str = "admin@example.com"  # @local would fail EmailStr validation on login
+    admin_password: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
