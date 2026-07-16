@@ -51,9 +51,9 @@ async def pg(monkeypatch):
     async with su.begin() as conn:
         await conn.execute(text(
             "INSERT INTO users (id, tenant_id, email, role, auth_provider, unlimited, active,"
-            " created_at) VALUES"
-            " ('u1', 't1', 'a@example.com', 'operator', 'local', false, true, now()),"
-            " ('u2', 't2', 'b@example.com', 'operator', 'local', false, true, now())"))
+            " email_verified, must_change_password, created_at) VALUES"
+            " ('u1', 't1', 'a@example.com', 'operator', 'local', false, true, true, false, now()),"
+            " ('u2', 't2', 'b@example.com', 'operator', 'local', false, true, true, false, now())"))
     await su.dispose()
 
     app_engine = create_async_engine(APP_URL)

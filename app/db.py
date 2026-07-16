@@ -100,6 +100,18 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if engine.dialect.name == "sqlite":
+            # dev stopgap until Alembic (M4): create_all never ALTERs, so new
+            # model columns break existing dev DBs — add missing ones here.
+            # Simple ADD COLUMN only; anything structural still needs Alembic.
+            for table in Base.metadata.tables.values():
+                rows = await conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')
+                existing = {r[1] for r in rows}
+                for col in table.columns:
+                    if col.name not in existing:
+                        ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" ' \
+                              f"{col.type.compile(engine.dialect)}"
+                        await conn.exec_driver_sql(ddl)
     if engine.dialect.name == "postgresql":
         # separate tx: RLS DDL needs table ownership. When the app runs as the
         # fenced idp_app role (production posture), DDL belongs to provisioning

@@ -24,7 +24,9 @@ _actor_ctx: ContextVar[dict] = ContextVar("actor", default={"name": "anonymous",
                                                             "user_id": None})
 
 # paths under /api that must stay reachable without a credential
-_PUBLIC_API_PATHS = {"/api/v1/auth/login"}
+# (account entry flows §11.8: token inside the body is the credential)
+_PUBLIC_API_PATHS = {"/api/v1/auth/login", "/api/v1/auth/activate",
+                     "/api/v1/auth/forgot", "/api/v1/auth/reset"}
 
 _ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
 

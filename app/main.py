@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api.routes import auth, data, hooks, process, review, skills
+from app.api.routes import auth, data, hooks, process, review, settings as settings_routes, skills
 from app.auth import security
 from app.config import get_settings
 from app.db import get_engine, init_db, session_factory
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Doc IDP Platform", version="0.1.0", lifespan=_lifespan)
     app.add_middleware(TenantMiddleware)
     app.include_router(auth.router)
+    app.include_router(settings_routes.router)
     app.include_router(process.router)
     app.include_router(skills.router)
     app.include_router(review.router)

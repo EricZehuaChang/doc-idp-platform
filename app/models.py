@@ -35,9 +35,13 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(32), default="operator")  # RBAC minimal set (§11.10)
-    # local-login credential; NULL for SSO-only accounts (§11.9)
+    # local-login credential; NULL for SSO-only or not-yet-activated accounts (§11.9)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)  # disable takes effect on next request
+    # account lifecycle (§11.8): invited users verify via email token; admin-created
+    # accounts are verified by fiat but must change password on first login
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     # SSO fields reserved on day one to avoid rework (§11.9 M1 note)
     auth_provider: Mapped[str] = mapped_column(String(32), default="local")
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -54,6 +58,22 @@ class ApiKey(Base):
     scopes: Mapped[str] = mapped_column(String(255), default="process:write,skills:read")
     quota_mode: Mapped[str] = mapped_column(String(16), default="pool")  # pool|allocated (§12.7)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AuthToken(Base):
+    """One-time account tokens (§11.8): invite / password reset / email verify.
+    DB-backed (not stateless signatures) so consumption is single-use by
+    construction; only the sha256 of the token ever touches the DB."""
+    __tablename__ = "auth_tokens"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    email: Mapped[str] = mapped_column(String(255))
+    purpose: Mapped[str] = mapped_column(String(16))       # invite | reset
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Skill(Base):
