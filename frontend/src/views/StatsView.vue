@@ -30,7 +30,10 @@
         </div>
       </div>
     </div>
-    <p v-if="!stats.length" class="dim">暂无数据——跑一些任务后再来。</p>
+    <Skeleton v-if="isLoading" :rows="4" />
+    <p v-else-if="!stats.length" class="dim">
+      暂无数据——技能跑过任务并有人工校验后，这里会出现直通率与修正率。
+    </p>
   </main>
 </template>
 
@@ -38,8 +41,9 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import { api, type SkillStat } from "../api";
+import Skeleton from "../components/Skeleton.vue";
 
-const { data } = useQuery({ queryKey: ["stats"], queryFn: api.stats });
+const { data, isLoading } = useQuery({ queryKey: ["stats"], queryFn: api.stats });
 const stats = computed<SkillStat[]>(() => data.value?.skills ?? []);
 const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 </script>

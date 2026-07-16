@@ -23,7 +23,11 @@
         </tbody>
       </table>
     </div>
-    <p v-else-if="skill" class="dim">该技能暂无已通过数据。</p>
+    <Skeleton v-else-if="skill && isLoading" :rows="6" />
+    <p v-else-if="skill" class="dim">
+      该技能暂无已通过数据——文件在校验页“通过”后会进入数据柜，可导出 CSV。
+    </p>
+    <p v-else class="dim">还没有任何技能。先到技能中心创建并发布一个抽取技能。</p>
   </main>
 </template>
 
@@ -31,6 +35,7 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { api, type SkillInfo } from "../api";
+import Skeleton from "../components/Skeleton.vue";
 
 const skill = ref("");
 
@@ -39,7 +44,7 @@ const skills = computed<SkillInfo[]>(() => skillsData.value ?? []);
 watch(skills, (list) => { if (list.length && !skill.value) skill.value = list[0].skill_code; },
       { immediate: true });
 
-const { data: cabinetData } = useQuery({
+const { data: cabinetData, isLoading } = useQuery({
   queryKey: computed(() => ["cabinet", skill.value]),
   queryFn: () => api.cabinet(skill.value),
   enabled: computed(() => !!skill.value),

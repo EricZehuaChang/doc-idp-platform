@@ -1,7 +1,18 @@
 <template>
   <div class="stage" ref="stageEl">
+    <!-- zoom / rotate toolbar (UX debt: 图片无缩放) -->
+    <div class="tools">
+      <button title="缩小" @click="zoomBy(-0.25)">－</button>
+      <span class="zoom-val">{{ Math.round(zoom * 100) }}%</span>
+      <button title="放大" @click="zoomBy(0.25)">＋</button>
+      <button title="实际大小" @click="zoom = 1">1:1</button>
+      <button v-if="isImage" title="旋转 90°" @click="rotate()">⟳</button>
+      <span v-if="rotation && annotate" class="hint">旋转视图下暂不支持框选</span>
+    </div>
+
+    <div class="scaler" :style="scalerStyle">
     <!-- images render directly; single page, UDR dims from pages[0] -->
-    <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate }"
+    <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate && !rotation }"
          @pointerdown="down($event, 1)" @pointermove="move" @pointerup="up">
       <img :src="src" @load="ready = true" draggable="false" />
       <svg v-if="ready && pageDim(1)" class="overlay"
@@ -38,6 +49,7 @@
         <span class="page-no dim">{{ p.no }} / {{ pdfPages.length }}</span>
       </div>
     </template>
+    </div>
   </div>
 </template>
 
@@ -86,6 +98,16 @@ let loadingTask: ReturnType<PdfjsModule["getDocument"]> | null = null;
 
 const isImage = computed(() => /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
 const isPdf = computed(() => /\.pdf$/i.test(props.fileName));
+
+// —— zoom / rotate (UX debt) ——
+const zoom = ref(1);
+const rotation = ref(0);            // image-only; box-select disabled while rotated
+function zoomBy(d: number) { zoom.value = Math.min(4, Math.max(0.5, zoom.value + d)); }
+function rotate() { rotation.value = (rotation.value + 90) % 360; }
+const scalerStyle = computed(() => ({
+  transform: `scale(${zoom.value}) rotate(${rotation.value}deg)`,
+  transformOrigin: "top left",
+}));
 
 // UDR page dims are the bbox coordinate base; fall back to the pdf.js viewport
 // when the parser produced no page geometry (e.g. markitdown)
@@ -152,7 +174,7 @@ function toUdr(ev: PointerEvent, page: number): [number, number] | null {
           ((ev.clientY - r.top) / r.height) * dim.height];
 }
 function down(ev: PointerEvent, page: number) {
-  if (!props.annotate) return;
+  if (!props.annotate || rotation.value !== 0) return;
   const pt = toUdr(ev, page);
   if (!pt) return;
   (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
@@ -184,12 +206,23 @@ watch(() => [props.activeBox, props.activePage] as const, async () => {
     ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
-watch(() => props.src, () => { ready.value = false; renderPdfSafe(); }, { immediate: true });
+watch(() => props.src, () => {
+  ready.value = false;
+  zoom.value = 1;
+  rotation.value = 0;
+  renderPdfSafe();
+}, { immediate: true });
 onBeforeUnmount(() => loadingTask?.destroy());
 </script>
 
 <style scoped>
 .stage { display: flex; flex-direction: column; gap: 12px; }
+.tools { display: flex; align-items: center; gap: 6px; position: sticky; top: 0;
+  z-index: 5; background: var(--bg); padding: 2px 0 6px; }
+.tools button { padding: 2px 10px; font-size: 13px; }
+.zoom-val { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; }
+.hint { font-size: 12px; color: var(--accent); }
+.scaler { align-self: flex-start; display: flex; flex-direction: column; gap: 12px; }
 .page-wrap { position: relative; display: inline-block; align-self: flex-start; }
 .page-wrap.annotating { cursor: crosshair; }
 .page-wrap img, .page-wrap canvas { max-width: 100%; display: block; background: #fff;

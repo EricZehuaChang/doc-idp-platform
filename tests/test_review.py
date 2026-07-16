@@ -15,7 +15,8 @@ UDR_SAMPLE = UDR(pages=[Page(page_no=1, blocks=[Block(text="发票号码 INV-1",
 
 PKG = SkillPackage(
     skill_code="review_test", name="必审技能",
-    fields=[FieldSpec(name="invoice_no", instruction="发票号码")],
+    fields=[FieldSpec(name="invoice_no", instruction="发票号码"),
+            FieldSpec(name="items", instruction="明细行", type="table")],
     review_policy=ReviewPolicy(mode="always"),   # force the human loop
 )
 
@@ -33,7 +34,8 @@ async def test_review_loop(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
     import app.extraction.pipeline as pipe
     monkeypatch.setattr(pipe, "chat_json_with_fallback",
-                        lambda *a, **k: ({"invoice_no": "INV-1"},
+                        lambda *a, **k: ({"invoice_no": "INV-1",
+                                          "items": [{"name": "笔", "qty": "2"}]},
                                          {"prompt_tokens": 10, "completion_tokens": 5},
                                          "fake"))
 
@@ -79,6 +81,18 @@ async def test_review_loop(tmp_path, monkeypatch):
             cell = r.json()["result"]["invoice_no"]
             assert cell["$value"] == "INV-9" and cell["$confidence"] == 3 and cell["$corrected"]
 
+            # table-field edit (M2 UX debt): rows payload replaces the array
+            # and writes a Correction row of its own
+            r = await client.patch(f"/api/v1/review/{fid}/fields",
+                                   headers={"X-User": "alice"},
+                                   json={"edits": [{"field": "items",
+                                                    "rows": [{"name": "笔", "qty": "3"},
+                                                             {"name": "纸", "qty": "1"}]}]})
+            assert r.json()["corrected_fields"] == ["items"], r.text
+            r = await client.get(f"/api/v1/review/{fid}")
+            assert r.json()["result"]["items"] == [{"name": "笔", "qty": "3"},
+                                                   {"name": "纸", "qty": "1"}]
+
             # confirm -> passed; transaction rolls up to completed
             r = await client.post(f"/api/v1/review/{fid}/confirm",
                                   headers={"X-User": "alice"}, json={"comment": "ok"})
@@ -90,10 +104,11 @@ async def test_review_loop(tmp_path, monkeypatch):
             from app.models import AuditLog, Correction
             async with session_factory()() as s:
                 corrections = (await s.execute(select(Correction))).scalars().all()
-                assert len(corrections) == 1
-                c = corrections[0]
-                assert (c.field, c.old_value, c.new_value, c.reviewer) == \
-                       ("invoice_no", "INV-1", "INV-9", "alice")
+                assert len(corrections) == 2      # scalar edit + table edit
+                by_field = {c.field: c for c in corrections}
+                c = by_field["invoice_no"]
+                assert (c.old_value, c.new_value, c.reviewer) == ("INV-1", "INV-9", "alice")
                 assert c.skill_code == "review_test" and c.skill_version == 1
+                assert '"纸"' in by_field["items"].new_value
                 audits = (await s.execute(select(AuditLog))).scalars().all()
                 assert any(a.action == "review.passed" for a in audits)

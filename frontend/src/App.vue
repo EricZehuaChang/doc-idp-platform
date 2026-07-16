@@ -35,6 +35,7 @@
     </div>
 
     <HelpPanel v-if="helpOpen" @close="helpOpen = false" />
+    <Toasts />
   </div>
 </template>
 
@@ -42,6 +43,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import HelpPanel from "./components/HelpPanel.vue";
+import Toasts from "./components/Toasts.vue";
 import { clearSession, session } from "./session";
 
 const route = useRoute();

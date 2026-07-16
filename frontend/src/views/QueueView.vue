@@ -20,7 +20,15 @@
         </tr>
       </tbody>
     </table>
-    <p v-else class="empty">队列为空 —— 没有待校验文件。</p>
+    <Skeleton v-else-if="isLoading" :rows="6" />
+    <div v-else class="empty-state">
+      <p class="big">队列为空 🎉</p>
+      <p>没有待人工校验的文件。文档通过 API 提交处理后，低置信结果会出现在这里。</p>
+      <p>
+        还没有技能？先到 <router-link to="/skills">技能中心</router-link> 定义抽取字段并发布；
+        接入方式见右下角 <a href="#" @click.prevent>帮助</a> 或 API 文档 <code>/docs</code>。
+      </p>
+    </div>
   </main>
 </template>
 
@@ -28,11 +36,12 @@
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed } from "vue";
 import { api, type QueueItem } from "../api";
+import Skeleton from "../components/Skeleton.vue";
 
 // TanStack Query replaces the hand-rolled setInterval poll: same 5s cadence,
 // plus cache reuse when hopping back from the review page.
 const qc = useQueryClient();
-const { data } = useQuery({
+const { data, isLoading } = useQuery({
   queryKey: ["queue"],
   queryFn: api.queue,
   refetchInterval: 5000,
@@ -66,5 +75,6 @@ async function claim(it: QueueItem) {
 table { width: 100%; border-collapse: collapse; background: var(--bg-panel); border-radius: 8px; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 th { color: var(--text-dim); font-weight: 600; }
-.empty { color: var(--text-dim); }
+.empty-state { color: var(--text-dim); line-height: 2; margin-top: 24px; }
+.empty-state .big { font-size: 18px; color: var(--text); }
 </style>

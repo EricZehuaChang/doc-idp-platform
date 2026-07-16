@@ -147,10 +147,12 @@ async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
 
 class FieldEdit(BaseModel):
     field: str
-    value: str
+    value: str = ""
     # reviewer re-drew the anchor box (M2 box-select): page-pixel space bbox
     bbox: list[float] | None = None
     page: int | None = None
+    # table-field edit (M2 UX debt: 明细表可编辑): full replacement rows
+    rows: list[dict] | None = None
 
 
 class FieldsPatch(BaseModel):
@@ -174,6 +176,22 @@ async def patch_fields(file_id: str, body: FieldsPatch,
         applied = []
         for e in body.edits:
             cell = result.get(e.field)
+            # table fields arrive as row arrays; a rows payload replaces them
+            if isinstance(cell, list) and e.rows is not None:
+                import json as _json
+                old_rows = _json.dumps(cell, ensure_ascii=False)
+                new_rows = _json.dumps(e.rows, ensure_ascii=False)
+                if old_rows == new_rows:
+                    continue
+                s.add(Correction(
+                    tenant_id=f.tenant_id, file_id=f.id,
+                    skill_code=txn.skill_code if txn else "",
+                    skill_version=txn.skill_version if txn else 0,
+                    field=e.field, old_value=old_rows[:4000], new_value=new_rows[:4000],
+                    reviewer=user))
+                result[e.field] = e.rows
+                applied.append(e.field)
+                continue
             if not isinstance(cell, dict):
                 raise HTTPException(400, f"unknown or non-editable field: {e.field}")
             old = str(cell.get("$value") or "")
