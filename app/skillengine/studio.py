@@ -16,11 +16,10 @@ from app.skillengine.schema import FieldSpec, SkillPackage
 
 def _studio_chain(provider: str | None) -> list[str | None]:
     """Studio tools get the platform failover (M2 resilience): explicit
-    provider = respect it; default = active channel + platform fallback."""
+    provider = respect it; default = active channel + full fallback chain."""
     if provider:
         return [provider]
-    fb = load_providers().get("fallback")
-    return [None, fb] if fb else [None]
+    return [None, *load_providers().get("fallback", [])]
 
 _PROBE_PROMPT = (
     "你是文档抽取技能设计助手。分析给定文档内容，产出建议抽取的字段草稿。\n"

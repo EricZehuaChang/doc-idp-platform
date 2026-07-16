@@ -71,7 +71,9 @@ async def list_skills():
 
 
 @router.get("/{skill_code}")
-async def get_skill(skill_code: str):
+async def get_skill(skill_code: str, version: int | None = None):
+    """Skill detail; ?version=N loads that version's package into the editor
+    (the version rail switches between drafts/published/archived)."""
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
@@ -81,11 +83,35 @@ async def get_skill(skill_code: str):
         versions = (await s.execute(
             select(SkillVersion).where(SkillVersion.skill_code == skill_code)
             .order_by(SkillVersion.version))).scalars().all()
+        selected = None
+        if version is not None:
+            selected = next((v for v in versions if v.version == version), None)
+            if selected is None:
+                raise HTTPException(404, "version not found")
+        elif versions:
+            selected = versions[-1]
         return {"skill_code": skill.code, "name": skill.name, "kind": skill.kind,
                 "state": skill.state,
                 "versions": [{"version": v.version, "status": v.status,
-                              "changelog": v.changelog} for v in versions],
-                "latest_package": versions[-1].package if versions else None}
+                              "changelog": v.changelog,
+                              "created_at": v.created_at.isoformat()} for v in versions],
+                "selected_version": selected.version if selected else None,
+                "latest_package": selected.package if selected else None}
+
+
+@router.delete("/{skill_code}")
+async def delete_skill(skill_code: str):
+    """Soft delete (state machine, §5.1): running tasks keep their pinned
+    versions; the skill just disappears from lists and submission."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, skill_code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        skill.state = "deleted"
+        await s.commit()
+    return {"skill_code": skill_code, "state": "deleted"}
 
 
 class DraftUpdate(BaseModel):

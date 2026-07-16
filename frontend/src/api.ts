@@ -88,7 +88,8 @@ export interface ValidatorSpec {
   target?: string | null; parts: string[];
 }
 export interface SkillPackage {
-  skill_code: string; name: string; kind: string; doc_type_hint: string;
+  skill_code: string; name: string; description: string; kind: string;
+  doc_type_hint: string;
   system_prompt: string; fields: FieldSpec[];
   few_shot: { input_excerpt: string; expected_output: Record<string, unknown> }[];
   validators: ValidatorSpec[];
@@ -98,7 +99,9 @@ export interface SkillPackage {
 }
 export interface SkillDetail {
   skill_code: string; name: string; kind: string; state: string;
-  versions: { version: number; status: string; changelog: string }[];
+  versions: { version: number; status: string; changelog: string;
+              created_at?: string }[];
+  selected_version: number | null;
   latest_package: SkillPackage | null;
 }
 export interface HomeStats {
@@ -170,7 +173,10 @@ export const api = {
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
   // skill studio (batch D)
-  skillDetail: (code: string) => req<SkillDetail>("GET", `/api/v1/skills/${code}`),
+  skillDetail: (code: string, version?: number) =>
+    req<SkillDetail>("GET",
+      `/api/v1/skills/${code}${version ? `?version=${version}` : ""}`),
+  skillDelete: (code: string) => req("DELETE", `/api/v1/skills/${code}`),
   skillCreate: (pkg: SkillPackage, changelog = "") =>
     req("POST", "/api/v1/skills", { package: pkg, changelog }),
   skillNewDraft: (code: string, pkg: SkillPackage, changelog = "") =>

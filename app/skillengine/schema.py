@@ -50,6 +50,7 @@ class ModelBinding(BaseModel):
 class SkillPackage(BaseModel):
     skill_code: str
     name: str = ""
+    description: str = ""                # editor "描述" (human context, not prompt)
     kind: str = "extract"                # extract|audit (§5.5, audit lands M3)
     doc_type_hint: str = ""
     system_prompt: str = ""              # compiler fills if empty

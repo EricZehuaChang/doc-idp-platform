@@ -2,9 +2,10 @@
 # Keys always come from env vars (api_key_env) — this file is safe to commit.
 # DB becomes the single source of truth after first seed import (KBase providers_store pattern).
 active: qwen
-# platform-level fallback: studio tools (probe/text-draft/enrich) and any call
-# without a skill-level binding fail over here when the active channel is down
-fallback: deepseek
+# platform-level fallback chain: studio tools (probe/text-draft/enrich) and any
+# call without a skill-level binding fail over in order when channels are down.
+# All keys live in D:/Claude Code/env/secrets.yaml (injected by run_dev.py).
+fallback: [deepseek, gpt]
 providers:
   - name: qwen
     model: qwen3.7-plus

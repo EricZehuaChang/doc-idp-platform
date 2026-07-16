@@ -63,9 +63,11 @@ def get_settings() -> Settings:
 @lru_cache
 def load_providers() -> dict:
     raw = yaml.safe_load((REPO_ROOT / "configs" / "providers.yaml").read_text(encoding="utf-8"))
+    fb = raw.get("fallback") or []
     return {
         "active": raw["active"],
-        "fallback": raw.get("fallback"),   # platform-level failover channel
+        # platform-level failover chain (str or list in yaml -> always a list)
+        "fallback": [fb] if isinstance(fb, str) else list(fb),
         "providers": {p["name"]: ProviderCfg(**p) for p in raw["providers"]},
     }
 
