@@ -6,7 +6,8 @@ OFD three-level handling and multi-doc split land in M2.
 from pathlib import Path
 
 from app.config import get_settings, load_parsers
-from app.parsers import electronic, glm_ocr_cloud, rapidocr_http  # noqa: F401  register plugins
+from app.parsers import (  # noqa: F401  register plugins
+    electronic, glm_ocr_cloud, monkeyocr_http, rapidocr_http)
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
