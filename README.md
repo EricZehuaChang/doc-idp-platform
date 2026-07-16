@@ -16,11 +16,20 @@ copy .env.example .env    # 填模型 key（或用 D:\Claude Code\env\load_keys.
 # OpenAPI 文档: http://localhost:8200/docs
 ```
 
-## 测试
+## 测试与验收
 
 ```powershell
-.venv\Scripts\python -m pytest -q          # 全 mock，不烧 token
-.venv\Scripts\python tests\canary_real.py  # 真实金丝雀：真 PDF + GLM-OCR + qwen（烧少量 token）
+.venv\Scripts\python -m pytest -q               # 单测全 mock，不烧 token
+.venv\Scripts\python tests\canary_real.py       # 真实金丝雀：真 PDF + GLM-OCR + qwen
+.venv\Scripts\python tests\acceptance_samples.py # M1 验收：中投三组样本代表集（烧 token）
+```
+
+## 一键起完整平台（后端 + 已打包前端）
+
+```powershell
+.venv\Scripts\python run_dev.py     # 注入 secrets.yaml 密钥 -> uvicorn :8200
+# 浏览器打开 http://127.0.0.1:8200  （待审队列 -> Verify 双屏校验页）
+# 改前端后重新打包: cd frontend && npm run build  （产物进 app/webdist，由后端托管）
 ```
 
 ## 结构（按域拆模块）

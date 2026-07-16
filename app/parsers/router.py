@@ -6,7 +6,7 @@ OFD three-level handling and multi-doc split land in M2.
 from pathlib import Path
 
 from app.config import get_settings, load_parsers
-from app.parsers import electronic, glm_ocr_cloud  # noqa: F401  register plugins
+from app.parsers import electronic, glm_ocr_cloud, rapidocr_http  # noqa: F401  register plugins
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
@@ -27,6 +27,16 @@ def default_scan_parser() -> str:
     return load_parsers()["default_parser"].get(tier, "glm-ocr-cloud")
 
 
+def _scan_parse(path: str) -> UDR:
+    """Degradation chain (HA design v2.0 §2.5): tier default OCR first,
+    RapidOCR CPU as last resort. Degradation is logged by the caller via
+    UDR.parser so quality gates can see which engine produced the text."""
+    try:
+        return _make(default_scan_parser()).parse(path)
+    except ParserUnavailable:
+        return _make("rapidocr").parse(path)
+
+
 def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
     if pinned_parser:
         return _make(pinned_parser).parse(path)
@@ -37,7 +47,7 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
         try:
             return _make("pdfplumber").parse(path)   # text layer first
         except ParserUnavailable:
-            return _make(default_scan_parser()).parse(path)  # scanned PDF -> OCR
+            return _scan_parse(path)                 # scanned PDF -> OCR chain
     if suffix in _IMAGES:
-        return _make(default_scan_parser()).parse(path)
+        return _scan_parse(path)
     raise ParserUnavailable(f"unsupported file type: {suffix}")
