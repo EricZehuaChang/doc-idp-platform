@@ -32,12 +32,10 @@ async def test_review_loop(tmp_path, monkeypatch):
     import app.tasks.runner as runner_mod
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
     import app.extraction.pipeline as pipe
-    monkeypatch.setattr(pipe, "chat_json",
+    monkeypatch.setattr(pipe, "chat_json_with_fallback",
                         lambda *a, **k: ({"invoice_no": "INV-1"},
-                                         {"prompt_tokens": 10, "completion_tokens": 5}))
-    monkeypatch.setattr(pipe, "resolve_provider",
-                        lambda name: {"name": "fake", "model": "fake",
-                                      "base_url": "http://fake", "api_key": "x"})
+                                         {"prompt_tokens": 10, "completion_tokens": 5},
+                                         "fake"))
 
     from app.main import create_app
     app = create_app()

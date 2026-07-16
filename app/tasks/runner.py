@@ -34,14 +34,22 @@ async def process_transaction(transaction_id: str) -> None:
             select(FileRecord).where(FileRecord.transaction_id == transaction_id))).scalars().all()
         pkg = await _load_package(s, txn)
 
-    any_error = False
-    for f in files:
-        try:
-            await _process_file(f.id, pkg)
-        except Exception as e:                    # per-file isolation
-            any_error = True
-            log.exception("file %s failed", f.id)
-            await _mark_error(f.id, str(e)[:500])
+    # files fan out in parallel (bounded), each isolated — one bad file never
+    # poisons its siblings (design §4.3); M2 Celery pools replace this later
+    sem = asyncio.Semaphore(4)
+
+    async def _one(file_id: str) -> bool:
+        async with sem:
+            try:
+                await _process_file(file_id, pkg)
+                return False
+            except Exception as e:
+                log.exception("file %s failed", file_id)
+                await _mark_error(file_id, str(e)[:500])
+                return True
+
+    results = await asyncio.gather(*(_one(f.id) for f in files))
+    any_error = any(results)
 
     async with sf() as s:
         txn = await s.get(Transaction, transaction_id)

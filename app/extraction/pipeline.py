@@ -4,17 +4,27 @@ tables as row arrays and inferred fields carrying "$reasoning"+"inferred".
 Pure function of (udr, pkg) — idempotent by design (HA discipline).
 """
 from app.extraction import confidence as conf
-from app.extraction.provider_client import chat_json, resolve_provider
+from app.extraction.provider_client import chat_json_with_fallback
 from app.extraction.validators import run_validators
 from app.parsers.base import UDR
 from app.skillengine.compiler import compile_messages
 from app.skillengine.schema import SkillPackage
 
 
-def extract(udr: UDR, pkg: SkillPackage, transport=None) -> tuple[dict, dict, bool]:
-    """Returns (result, usage, needs_review)."""
-    provider = resolve_provider(pkg.model_binding.extractor or None)
-    raw, usage = chat_json(compile_messages(pkg, udr), provider, transport=transport)
+def extract(udr: UDR, pkg: SkillPackage, transport=None,
+            provider_override: str | None = None) -> tuple[dict, dict, bool]:
+    """Returns (result, usage, needs_review). Resilience: extractor -> fallback
+    chain with cooldown (M1 acceptance hit exactly this failure mode)."""
+    if provider_override:
+        chain: list[str | None] = [provider_override]
+    else:
+        chain = [pkg.model_binding.extractor or None]
+        if pkg.model_binding.fallback:
+            chain.append(pkg.model_binding.fallback)
+    raw, usage, used = chat_json_with_fallback(
+        compile_messages(pkg, udr), chain, transport=transport)
+    usage = dict(usage)
+    usage["provider_used"] = used
 
     # flatten for the rule channel: inferred fields arrive as {value, reasoning}
     flat: dict[str, object] = {}

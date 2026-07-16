@@ -1,17 +1,38 @@
-"""Skills API (design v0.2 §7 group 2): CRUD + versioning. M1 covers create /
-list / get / new draft version / publish — enough for the self-serve loop via
-API; Studio UI arrives in M2 on top of these same endpoints (API-first).
+"""Skills API (design v0.2 §7 group 2): CRUD + versioning + studio services
+(probe pre-annotation / dry-run side-by-side / YAML import-export / golden
+check). All studio interactions are API-first — the M2 UI sits on these.
 """
-from fastapi import APIRouter, HTTPException
+import asyncio
+import hashlib
+from pathlib import Path
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.db import session_factory
-from app.models import Skill, SkillVersion
+from app.models import GoldenSample, Skill, SkillVersion
+from app.parsers.base import UDR
+from app.parsers.router import parse_document
+from app.skillengine import studio
 from app.skillengine.schema import SkillPackage
 from app.tenancy import current_tenant
 
 router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
+
+
+async def _parse_upload(up: UploadFile, tenant: str) -> UDR:
+    """Persist an uploaded sample then parse it to UDR (thread offload)."""
+    blob = await up.read()
+    digest = hashlib.sha256(blob).hexdigest()[:16]
+    suffix = Path(up.filename or "sample").suffix.lower()
+    store = Path(get_settings().data_dir) / "samples" / tenant
+    store.mkdir(parents=True, exist_ok=True)
+    path = store / f"{digest}{suffix}"
+    path.write_bytes(blob)
+    return await asyncio.to_thread(parse_document, str(path))
 
 
 class SkillCreate(BaseModel):
@@ -89,6 +110,139 @@ async def new_draft(skill_code: str, payload: DraftUpdate):
                            changelog=payload.changelog))
         await s.commit()
     return {"skill_code": skill_code, "version": next_ver, "status": "draft"}
+
+
+@router.post("/probe")
+async def probe(file: UploadFile = File(...), provider: str | None = Form(default=None)):
+    """Sample -> LLM-drafted field list (§5.1 step 2: pre-annotation).
+    The editor opens 80% filled instead of blank."""
+    udr = await _parse_upload(file, current_tenant())
+    out = await asyncio.to_thread(studio.probe, udr, provider)
+    draft = out["draft"]
+    fields = studio.draft_to_fields(draft if isinstance(draft, dict) else {})
+    return {"doc_type": (draft or {}).get("doc_type", ""),
+            "fields": [f.model_dump() for f in fields],
+            "raw_draft": draft, "provider_used": out["provider_used"]}
+
+
+class DryRunBody(BaseModel):
+    package: SkillPackage
+    providers: list[str] = []
+
+
+@router.post("/dry-run")
+async def dry_run(file: UploadFile = File(...), package: str = Form(...),
+                  providers: str = Form(default="")):
+    """Try a package on one sample without creating a task; multiple providers
+    run side-by-side (output/usage comparison — Unstract-validated UX)."""
+    try:
+        pkg = SkillPackage.model_validate_json(package)
+    except Exception as e:
+        raise HTTPException(400, f"invalid package json: {e}") from e
+    plist = [p.strip() for p in providers.split(",") if p.strip()]
+    udr = await _parse_upload(file, current_tenant())
+    runs = await asyncio.to_thread(studio.dry_run, udr, pkg, plist or None)
+    return {"runs": runs}
+
+
+@router.get("/{skill_code}/export", response_class=PlainTextResponse)
+async def export_yaml(skill_code: str, version: int | None = None):
+    """Skill package as YAML — cross-environment migration (§5.1)."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        q = select(SkillVersion).where(SkillVersion.skill_code == skill_code,
+                                       SkillVersion.tenant_id == tenant)
+        q = q.where(SkillVersion.version == version) if version else \
+            q.order_by(SkillVersion.version.desc())
+        row = (await s.execute(q)).scalars().first()
+        if row is None:
+            raise HTTPException(404, "skill/version not found")
+        return studio.package_to_yaml(SkillPackage(**row.package))
+
+
+@router.post("/import", status_code=201)
+async def import_yaml(file: UploadFile = File(...)):
+    """YAML -> new skill (or new draft version if the code exists)."""
+    tenant = current_tenant()
+    try:
+        pkg = studio.package_from_yaml((await file.read()).decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(400, f"invalid package yaml: {e}") from e
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, pkg.skill_code)
+        if skill is not None and skill.tenant_id != tenant:
+            raise HTTPException(409, "skill code taken by another tenant")
+        if skill is None:
+            s.add(Skill(code=pkg.skill_code, tenant_id=tenant,
+                        name=pkg.name or pkg.skill_code, kind=pkg.kind))
+            next_ver = 1
+        else:
+            latest = (await s.execute(
+                select(SkillVersion).where(SkillVersion.skill_code == pkg.skill_code)
+                .order_by(SkillVersion.version.desc()))).scalars().first()
+            next_ver = (latest.version + 1) if latest else 1
+        s.add(SkillVersion(tenant_id=tenant, skill_code=pkg.skill_code,
+                           version=next_ver, status="draft",
+                           package=pkg.model_dump(), changelog="imported from YAML"))
+        await s.commit()
+    return {"skill_code": pkg.skill_code, "version": next_ver, "status": "draft"}
+
+
+class GoldenAdd(BaseModel):
+    expected: dict
+
+
+@router.post("/{skill_code}/golden", status_code=201)
+async def add_golden(skill_code: str, file: UploadFile = File(...),
+                     expected: str = Form(...)):
+    """Attach a golden sample (file + expected plain values) to a skill."""
+    import json as _json
+    tenant = current_tenant()
+    blob = await file.read()
+    digest = hashlib.sha256(blob).hexdigest()[:16]
+    suffix = Path(file.filename or "golden").suffix.lower()
+    store = Path(get_settings().data_dir) / "golden" / tenant / skill_code
+    store.mkdir(parents=True, exist_ok=True)
+    path = store / f"{digest}{suffix}"
+    path.write_bytes(blob)
+    sf = session_factory()
+    async with sf() as s:
+        if (await s.get(Skill, skill_code)) is None:
+            raise HTTPException(404, "skill not found")
+        s.add(GoldenSample(tenant_id=tenant, skill_code=skill_code,
+                           storage_path=str(path),
+                           expected=_json.loads(expected)))
+        await s.commit()
+    return {"skill_code": skill_code, "stored": path.name}
+
+
+@router.post("/{skill_code}/versions/{version}/golden-check")
+async def golden_check(skill_code: str, version: int):
+    """Run this version over the skill's golden set and report field diffs —
+    the publish gate evidence (PM item #4). Burns tokens: explicit call only."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        row = (await s.execute(
+            select(SkillVersion).where(SkillVersion.skill_code == skill_code,
+                                       SkillVersion.version == version,
+                                       SkillVersion.tenant_id == tenant))).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "version not found")
+        goldens = (await s.execute(
+            select(GoldenSample).where(GoldenSample.skill_code == skill_code,
+                                       GoldenSample.tenant_id == tenant))).scalars().all()
+    if not goldens:
+        return {"samples": 0, "note": "no golden samples attached"}
+    pkg = SkillPackage(**row.package)
+
+    def _run():
+        pairs = [(parse_document(g.storage_path), g.expected or {}) for g in goldens]
+        return studio.golden_check(pkg, pairs)
+
+    return await asyncio.to_thread(_run)
 
 
 @router.post("/{skill_code}/versions/{version}/publish")

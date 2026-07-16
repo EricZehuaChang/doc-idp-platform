@@ -82,16 +82,13 @@ async def test_api_full_loop(tmp_path, monkeypatch):
     import app.tasks.runner as runner_mod
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
 
-    # fake LLM: OpenAI-compatible JSON reply via respx-free monkeypatch
-    def fake_extract_llm(messages, provider, timeout=120.0, retries=2, transport=None):
+    # fake LLM: OpenAI-compatible JSON reply via monkeypatch
+    def fake_extract_llm(messages, chain, transport=None):
         return ({"invoice_no": "INV-2026-001", "total": "1,026.50",
                  "expense_type": {"value": "差旅", "reasoning": "出租车费"}},
-                {"prompt_tokens": 100, "completion_tokens": 50})
+                {"prompt_tokens": 100, "completion_tokens": 50}, "fake")
     import app.extraction.pipeline as pipe
-    monkeypatch.setattr(pipe, "chat_json", fake_extract_llm)
-    monkeypatch.setattr(pipe, "resolve_provider",
-                        lambda name: {"name": "fake", "model": "fake",
-                                      "base_url": "http://fake", "api_key": "x"})
+    monkeypatch.setattr(pipe, "chat_json_with_fallback", fake_extract_llm)
 
     from app.main import create_app
     app = create_app()

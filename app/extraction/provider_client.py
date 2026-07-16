@@ -1,12 +1,15 @@
 """Extraction LLM client — one OpenAI-compatible path for all vendors
 (design v0.2 §6: DashScope/DeepSeek/OpenAI/vLLM all speak the same protocol).
 
-M1 keeps a thin httpx client with bounded retry (DashScope jitter was reproduced
-live several times — resilience is a requirement, not theory). TODO(M2): swap in
-LiteLLM router for fallback/cooldown/cost tracking per feasibility v2.0 §3.2.
+M2 resilience (the one failure mode the M1 acceptance actually hit — qwen
+timeout): skill-level fallback chain + per-provider failure cooldown (a simple
+circuit breaker: a provider that just failed is skipped for COOLDOWN seconds so
+a flaky vendor doesn't stall every task). LiteLLM remains an M3 swap option;
+this covers the proven need without the heavy dependency.
 """
 import json
 import os
+import threading
 import time
 
 import httpx
@@ -18,6 +21,26 @@ class ProviderError(RuntimeError):
     pass
 
 
+class _Cooldown:
+    """Thread-safe failure cooldown (runner executes in worker threads)."""
+
+    def __init__(self, seconds: float = 60.0):
+        self.seconds = seconds
+        self._until: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def failed(self, name: str) -> None:
+        with self._lock:
+            self._until[name] = time.time() + self.seconds
+
+    def available(self, name: str) -> bool:
+        with self._lock:
+            return time.time() >= self._until.get(name, 0.0)
+
+
+cooldown = _Cooldown()
+
+
 def resolve_provider(name: str | None) -> dict:
     cfg = load_providers()
     pname = name or cfg["active"]
@@ -26,6 +49,25 @@ def resolve_provider(name: str | None) -> dict:
         raise ProviderError(f"provider not configured: {pname}")
     key = os.environ.get(p.api_key_env, "").strip() if p.api_key_env else ""
     return {"name": p.name, "model": p.model, "base_url": p.base_url, "api_key": key}
+
+
+def chat_json_with_fallback(messages: list[dict], provider_names: list[str | None],
+                            transport: httpx.BaseTransport | None = None
+                            ) -> tuple[dict, dict, str]:
+    """Try providers in order (skill binding: extractor -> fallback), skipping
+    any in failure cooldown. Returns (json, usage, provider_used). A provider
+    in cooldown is only used if it is the last remaining option."""
+    chain = [resolve_provider(n) for n in provider_names] or [resolve_provider(None)]
+    errors: list[str] = []
+    candidates = [p for p in chain if cooldown.available(p["name"])] or chain[-1:]
+    for p in candidates:
+        try:
+            data, usage = chat_json(messages, p, transport=transport)
+            return data, usage, p["name"]
+        except ProviderError as e:
+            cooldown.failed(p["name"])
+            errors.append(str(e))
+    raise ProviderError(" | ".join(errors) or "no provider available")
 
 
 def chat_json(messages: list[dict], provider: dict, timeout: float = 120.0,
