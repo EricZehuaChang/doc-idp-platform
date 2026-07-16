@@ -1,5 +1,6 @@
 <template>
-  <main class="wrap">
+  <main class="page">
+    <PageHeader title="平台设置" desc="发信、账号、模型密钥与单点登录的管理入口（仅管理员可见）。" />
     <div class="tabs">
       <button :class="{ primary: tab === 'email' }" @click="tab = 'email'">邮件（SMTP）</button>
       <button :class="{ primary: tab === 'users' }" @click="tab = 'users'">用户</button>
@@ -124,6 +125,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
 import { api, type SmtpInfo } from "../api";
+import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
@@ -259,8 +261,8 @@ watch(tab, (t) => {
 </script>
 
 <style scoped>
-.wrap { padding: 20px; max-width: 1000px; margin: 0 auto; }
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.page { max-width: 1000px; }
 .panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

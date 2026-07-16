@@ -1,38 +1,44 @@
 <template>
-  <main class="wrap">
-    <div class="bar">
-      <h2>技能中心</h2>
-      <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
-      <label class="import-btn">
+  <main class="page">
+    <PageHeader title="技能中心" desc="技能 = 一类文档的抽取契约：字段、校验规则与模型绑定。">
+      <label class="file-btn">
         <input type="file" accept=".yaml,.yml" hidden @change="importYaml" />
         <span class="btn-like">导入 YAML</span>
       </label>
-    </div>
+      <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
+    </PageHeader>
 
-    <table v-if="items.length">
-      <thead>
-        <tr><th>技能代码</th><th>名称</th><th>类型</th><th>状态</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="s in items" :key="s.skill_code">
-          <td class="code">{{ s.skill_code }}</td>
-          <td>{{ s.name }}</td>
-          <td>{{ s.kind === "extract" ? "抽取" : s.kind }}</td>
-          <td><span class="state" :class="s.state">{{ s.state === "active" ? "启用" : s.state }}</span></td>
-          <td class="ops">
-            <router-link :to="`/skills/${s.skill_code}`"><button class="primary">编辑</button></router-link>
-            <button @click="downloadFile(api.skillExportUrl(s.skill_code),
-                                         `${s.skill_code}.yaml`)">导出 YAML</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <Skeleton v-else-if="isLoading" :rows="5" />
-    <div v-else class="empty-state">
-      <p class="big">还没有技能</p>
-      <p>技能 = 一类文档的抽取契约（字段 + 校验规则 + 模型绑定）。定义 1-2 个样本即可上线。</p>
-      <p>点击右上「＋ 新建技能」，或用「导入 YAML」恢复已有技能包。</p>
-    </div>
+    <section class="card-panel">
+      <table v-if="items.length" class="data-table">
+        <thead>
+          <tr><th>技能代码</th><th>名称</th><th>类型</th><th>状态</th><th class="th-act"></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in items" :key="s.skill_code" class="row-link"
+              @click="$router.push(`/skills/${s.skill_code}`)">
+            <td class="code">{{ s.skill_code }}</td>
+            <td>{{ s.name }}</td>
+            <td class="dim">{{ s.kind === "extract" ? "抽取" : s.kind }}</td>
+            <td><span class="chip" :class="`chip-${s.state}`">
+              {{ s.state === "active" ? "启用" : s.state }}</span></td>
+            <td class="row-act" @click.stop>
+              <router-link :to="`/skills/${s.skill_code}`">
+                <button class="ghost slim">编辑</button></router-link>
+              <button class="ghost slim"
+                      @click="downloadFile(api.skillExportUrl(s.skill_code),
+                                           `${s.skill_code}.yaml`)">导出</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <Skeleton v-else-if="isLoading" :rows="5" />
+      <EmptyState v-else title="还没有技能" glyph="⚙️">
+        定义 1-2 个样本即可上线一个技能：上传样本预标注 → 核对字段 → 试跑 → 发布。
+        <template #action>
+          <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
+        </template>
+      </EmptyState>
+    </section>
   </main>
 </template>
 
@@ -41,6 +47,8 @@ import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { api, downloadFile, type SkillInfo } from "../api";
+import EmptyState from "../components/EmptyState.vue";
+import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
@@ -63,19 +71,11 @@ async function importYaml(ev: Event) {
 </script>
 
 <style scoped>
-.wrap { padding: 20px; max-width: 1100px; margin: 0 auto; }
-.bar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
-.bar h2 { margin-right: auto; }
-.import-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
+.file-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
   border-radius: 6px; padding: 6px 14px; cursor: pointer; display: inline-block; }
-.import-btn .btn-like:hover { border-color: var(--accent); }
-table { width: 100%; border-collapse: collapse; background: var(--bg-panel);
-  border-radius: 8px; }
-th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-th { color: var(--text-dim); font-weight: 600; }
+.file-btn .btn-like:hover { border-color: var(--accent); }
 .code { font-family: Consolas, monospace; color: var(--blue); }
-.ops { display: flex; gap: 8px; }
-.state.active { color: var(--green); }
-.empty-state { color: var(--text-dim); line-height: 2; margin-top: 24px; }
-.empty-state .big { font-size: 18px; color: var(--text); }
+.row-link { cursor: pointer; }
+.row-act, .th-act { text-align: right; white-space: nowrap; }
+.slim { padding: 2px 12px; font-size: 12px; }
 </style>

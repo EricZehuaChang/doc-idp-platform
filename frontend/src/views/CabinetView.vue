@@ -1,32 +1,37 @@
 <template>
-  <main class="wrap">
-    <h2>数据柜 Cabinet</h2>
-    <div class="bar">
+  <main class="page">
+    <PageHeader title="数据柜" desc="已通过校验的结构化数据，按技能归档，可导出对接下游。">
       <select v-model="skill">
         <option value="" disabled>选择技能</option>
         <option v-for="s in skills" :key="s.skill_code" :value="s.skill_code">
-          {{ s.name }}（{{ s.skill_code }}）
-        </option>
+          {{ s.name }}（{{ s.skill_code }}）</option>
       </select>
-      <button v-if="skill && rows.length"
+      <button v-if="skill && rows.length" class="primary"
               @click="downloadFile(api.cabinetCsvUrl(skill), `${skill}.csv`)">导出 CSV</button>
-      <span class="dim" v-if="skill">{{ rows.length }} 条</span>
-    </div>
-    <div class="table-scroll" v-if="rows.length">
-      <table>
-        <thead><tr><th v-for="c in columns" :key="c">{{ c }}</th></tr></thead>
-        <tbody>
-          <tr v-for="(r, i) in rows" :key="i">
-            <td v-for="c in columns" :key="c" :title="r[c]">{{ short(r[c]) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <Skeleton v-else-if="skill && isLoading" :rows="6" />
-    <p v-else-if="skill" class="dim">
-      该技能暂无已通过数据——文件在校验页“通过”后会进入数据柜，可导出 CSV。
-    </p>
-    <p v-else class="dim">还没有任何技能。先到技能中心创建并发布一个抽取技能。</p>
+    </PageHeader>
+
+    <section class="card-panel">
+      <div class="count-bar" v-if="skill && rows.length">
+        <span class="dim">{{ rows.length }} 条已通过数据</span>
+      </div>
+      <div class="table-scroll" v-if="rows.length">
+        <table class="data-table">
+          <thead><tr><th v-for="c in columns" :key="c">{{ c }}</th></tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in rows" :key="i">
+              <td v-for="c in columns" :key="c" :title="r[c]" class="cell">{{ short(r[c]) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <Skeleton v-else-if="skill && isLoading" :rows="6" />
+      <EmptyState v-else-if="skill" title="该技能暂无已通过数据" glyph="📦">
+        文件在校验页「通过」后进入数据柜；直通（免人审）完成的文件也会出现在这里。
+      </EmptyState>
+      <EmptyState v-else title="选择一个技能" glyph="📦">
+        数据柜按技能归档。从右上角选择技能查看其结构化数据。
+      </EmptyState>
+    </section>
   </main>
 </template>
 
@@ -34,6 +39,8 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { api, downloadFile, type SkillInfo } from "../api";
+import EmptyState from "../components/EmptyState.vue";
+import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 
 const skill = ref("");
@@ -49,20 +56,12 @@ const { data: cabinetData, isLoading } = useQuery({
   enabled: computed(() => !!skill.value),
 });
 const rows = computed(() => cabinetData.value?.rows ?? []);
-
 const columns = computed(() => (rows.value[0] ? Object.keys(rows.value[0]) : []));
 const short = (v: string) => (v && v.length > 40 ? v.slice(0, 40) + "…" : v);
 </script>
 
 <style scoped>
-.wrap { padding: 20px; max-width: 1300px; margin: 0 auto; }
-.bar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
-select { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 10px; }
-.table-scroll { overflow-x: auto; background: var(--bg-panel); border-radius: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
-  white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
-th { color: var(--text-dim); position: sticky; top: 0; background: var(--bg-panel); }
-.dim { color: var(--text-dim); }
+.count-bar { padding: 10px 14px 0; }
+.table-scroll { overflow-x: auto; padding: 6px 0; }
+.cell { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 </style>

@@ -1,6 +1,6 @@
 <template>
-  <main class="wrap">
-    <h2>看板总览</h2>
+  <main class="page">
+    <PageHeader title="看板" desc="用量趋势与技能质量：credits 消耗、直通率与修正率。" />
 
     <div class="charts">
       <!-- credits by day -->
@@ -63,6 +63,7 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, defineComponent, h, ref } from "vue";
 import { api, type SkillStat } from "../api";
+import PageHeader from "../components/PageHeader.vue";
 
 const RANGES = [{ d: 7, label: "7D" }, { d: 30, label: "1M" }, { d: 365, label: "1Y" }];
 const days = ref(7);
@@ -130,8 +131,7 @@ const BarChart = defineComponent({
 </script>
 
 <style scoped>
-.wrap { padding: 20px 24px; max-width: 1500px; margin: 0 auto; width: 100%; }
-.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .panel { background: var(--bg-panel); border: 1px solid var(--border);
   border-radius: 10px; padding: 14px 16px; }
 .chart-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }

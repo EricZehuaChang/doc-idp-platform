@@ -12,8 +12,8 @@ import TokenPasswordView from "./views/auth/TokenPasswordView.vue";
 import CabinetView from "./views/CabinetView.vue";
 import DashboardView from "./views/DashboardView.vue";
 import HomeView from "./views/HomeView.vue";
-import QueueView from "./views/QueueView.vue";
 import ReviewView from "./views/ReviewView.vue";
+import TasksView from "./views/TasksView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import SkillEditorView from "./views/SkillEditorView.vue";
 import SkillsView from "./views/SkillsView.vue";
@@ -32,7 +32,7 @@ const router = createRouter({
     { path: "/activate", component: TokenPasswordView, props: { mode: "activate" } },
     { path: "/oidc", component: OidcCallbackView },
     { path: "/change-password", component: ChangePasswordView },
-    { path: "/tasks", component: QueueView },
+    { path: "/tasks", component: TasksView },
     { path: "/queue", redirect: "/tasks" },
     { path: "/review/:fileId", component: ReviewView, props: true },
     { path: "/skills", component: SkillsView },

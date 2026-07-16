@@ -10,7 +10,7 @@
                   title="下一份 (→)" @click="goSibling(1)">→</button>
         </div>
         <strong class="fname-head" :title="detail.file_name">{{ detail.file_name }}</strong>
-        <span class="dim">{{ statusLabel }}</span>
+        <span class="chip" :class="`chip-${detail.status}`">{{ statusLabel }}</span>
         <button class="anno" :class="{ primary: annotate }" :disabled="!locked"
                 @click="annotate = !annotate" title="拖拽框选字段位置 (B)">
           ▣ 框选{{ annotate ? "中" : "" }}
@@ -84,13 +84,15 @@
       </div>
 
       <div class="actions">
-        <button v-if="!locked" class="primary" @click="acquire">开始校验（锁定）L</button>
+        <button v-if="!locked" class="primary big" @click="acquire">开始校验（锁定） L</button>
         <template v-else>
-          <button @click="saveEdits" :disabled="!dirty">保存修正 S</button>
-          <button class="confirm" @click="decide('confirm')">✓ 通过 C</button>
+          <button class="ghost" @click="saveEdits" :disabled="!dirty">
+            保存修正 S<span v-if="dirty" class="dot">●</span></button>
+          <span class="spacer" />
           <button class="danger" @click="decide('reject')">拒绝 X</button>
+          <button class="confirm big" @click="decide('confirm')">✓ 通过并下一份 C</button>
         </template>
-        <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出 · T 页签 · B 框选 · L 锁定 · S 保存 · C 通过 · X 拒绝 · ←/→ 上下份">⌨ 快捷键</span>
+        <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出 · T 页签 · B 框选 · L 锁定 · S 保存 · C 通过 · X 拒绝 · ←/→ 上下份">⌨</span>
       </div>
     </section>
   </main>
@@ -400,7 +402,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 .empty-rows { font-size: 12px; margin: 4px 0 0; }
 .actions { display: flex; gap: 10px; align-items: center; padding: 12px;
   border-top: 1px solid var(--border); }
-.keys { margin-left: auto; font-size: 12px; cursor: help; }
+.actions .big { padding: 8px 18px; font-size: 14px; }
+.spacer { flex: 1; }
+.dot { color: var(--accent); margin-left: 4px; font-size: 10px; }
+.keys { font-size: 14px; cursor: help; }
 .dim { color: var(--text-dim); }
 .review-fallback { padding: 24px; }
 .empty-state { display: flex; flex-direction: column; gap: 14px; align-items: flex-start;
