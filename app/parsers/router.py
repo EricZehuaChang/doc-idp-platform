@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.config import get_settings, load_parsers
 from app.parsers import (  # noqa: F401  register plugins
-    electronic, glm_ocr_cloud, monkeyocr_http, rapidocr_http)
+    electronic, glm_ocr_cloud, monkeyocr_http, ofd, rapidocr_http)
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
@@ -51,4 +51,6 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
             return _scan_parse(path)                 # scanned PDF -> OCR chain
     if suffix in _IMAGES:
         return _scan_parse(path)
+    if suffix == ".ofd":
+        return _make("ofd").parse(path)      # three-level handling inside
     raise ParserUnavailable(f"unsupported file type: {suffix}")

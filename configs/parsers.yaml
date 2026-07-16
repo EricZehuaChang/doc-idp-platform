@@ -11,6 +11,9 @@ parsers:
     type: cloud_api
     base_url: https://open.bigmodel.cn/api/paas/v4
     api_key_env: ZHIPU_API_KEY
+  - name: ofd                 # OFD e-invoice/e-ticket: XBRL fast path -> text layer -> raster OCR fallback
+    type: local
+    for: ofd-eticket
   # M2: glm-ocr-local (vLLM + PP-DocLayoutV3), monkeyocr (optional, weights research-licensed), rapidocr (CPU fallback)
 default_parser:
   lite: glm-ocr-cloud

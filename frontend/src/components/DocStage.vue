@@ -15,6 +15,11 @@
       </svg>
     </div>
 
+    <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
+    <div v-else-if="!isPdf" class="no-preview dim">
+      该格式暂不支持原件预览 —— <a :href="src" download>下载原件</a>
+    </div>
+
     <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay -->
     <template v-else>
       <div v-for="p in pdfPages" :key="p.no" class="page-wrap pdf"
@@ -80,6 +85,7 @@ const canvases = new Map<number, HTMLCanvasElement>();
 let loadingTask: ReturnType<PdfjsModule["getDocument"]> | null = null;
 
 const isImage = computed(() => /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
+const isPdf = computed(() => /\.pdf$/i.test(props.fileName));
 
 // UDR page dims are the bbox coordinate base; fall back to the pdf.js viewport
 // when the parser produced no page geometry (e.g. markitdown)
@@ -94,7 +100,7 @@ async function renderPdf() {
   loadingTask?.destroy();
   loadingTask = null;
   pdfPages.value = [];
-  if (isImage.value) return;
+  if (isImage.value || !isPdf.value) return;
   const pdfjs = await loadPdfjs();
   loadingTask = pdfjs.getDocument({ url: new URL(props.src, location.href).href });
   const doc = await loadingTask.promise;
@@ -194,5 +200,7 @@ onBeforeUnmount(() => loadingTask?.destroy());
   stroke-dasharray: 8 5; }
 .page-no { position: absolute; right: 6px; bottom: 6px; font-size: 11px;
   background: rgba(0, 0, 0, 0.55); color: #ddd; padding: 1px 7px; border-radius: 4px; }
+.no-preview { padding: 40px 20px; text-align: center; }
+.no-preview a { color: var(--blue); }
 .dim { color: var(--text-dim); }
 </style>
