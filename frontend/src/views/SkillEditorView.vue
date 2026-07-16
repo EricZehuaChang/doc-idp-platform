@@ -21,11 +21,11 @@
       </div>
     </div>
 
-    <!-- new-skill guidance: the sample-as-model path in 3 steps -->
+    <!-- new-skill guidance -->
     <div v-if="isNew && !pkg.fields.length" class="guide">
-      <span class="step"><b>1</b> 上传一份样本「预标注」，模型自动起草字段</span>
+      <span class="step"><b>1</b> 起草字段：样本预标注 / 自然语言描述 / 表格清单，三选一</span>
       <span class="arrow">→</span>
-      <span class="step"><b>2</b> 核对/补充字段与校验规则</span>
+      <span class="step"><b>2</b> 核对/修改字段与校验规则</span>
       <span class="arrow">→</span>
       <span class="step"><b>3</b> 试跑验证效果，创建并发布</span>
     </div>
@@ -38,12 +38,33 @@
             <h3>字段定义 <span class="count dim" v-if="pkg.fields.length">{{ pkg.fields.length }}</span></h3>
             <label class="file-btn slim">
               <input type="file" hidden @change="probe" :disabled="probing" />
-              <span class="btn-like">{{ probing ? "⏳ 样本分析中…" : "⚡ 样本预标注" }}</span>
+              <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
             </label>
-            <button class="mini" @click="addField">＋ 手动加字段</button>
+            <button class="mini" :class="{ primary: textPanel }"
+                    @click="textPanel = !textPanel">📝 描述生成</button>
+            <label class="file-btn slim">
+              <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
+              <span class="btn-like">📊 表格导入</span>
+            </label>
+            <button class="mini" @click="addField">＋ 手动</button>
           </header>
+
+          <!-- natural-language draft panel: prefills fields, nothing saved
+               until the user reviews and clicks save -->
+          <div v-if="textPanel" class="text-panel">
+            <textarea v-model="draftText" rows="4"
+                      placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）、明细行（品名/数量/单价/金额），并判断是否为红字发票。"></textarea>
+            <div class="text-panel-act">
+              <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
+              <button class="primary" :disabled="drafting || !draftText.trim()"
+                      @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
+            </div>
+          </div>
+
           <p v-if="!pkg.fields.length" class="dim pad">
-            还没有字段。推荐点上方「⚡ 样本预标注」上传一份真实样本，模型会起草字段清单（约 10-30 秒）；也可手动添加。
+            还没有字段。三种起草方式：「⚡ 样本预标注」上传真实样本让模型起草；
+            「📝 描述生成」用一段话描述需求；「📊 表格导入」上传字段清单
+            （表头：字段名/类型/说明/必填/枚举值/所属明细表，中英文均可）。
           </p>
           <div v-for="(f, i) in pkg.fields" :key="i" class="fcard">
             <div class="frow">
@@ -313,19 +334,57 @@ async function publishVersion(v: number) {
 
 // —— studio tools ——
 const probing = ref(false);
+
+/** merge drafted fields into the editor (dedup by name); nothing is persisted
+ * until the user reviews and saves — the "prefill, human confirms" contract */
+function mergeDraft(fields: FieldSpec[], docType?: string): number {
+  if (!pkg.value) return 0;
+  const existing = new Set(pkg.value.fields.map((f) => f.name));
+  const fresh = fields.filter((f) => !existing.has(f.name));
+  pkg.value.fields.push(...fresh);
+  if (docType && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = docType;
+  return fresh.length;
+}
+
 async function probe(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file || !pkg.value) return;
   probing.value = true;
   try {
     const r = await api.skillProbe(file);
-    const existing = new Set(pkg.value.fields.map((f) => f.name));
-    const fresh = r.fields.filter((f) => !existing.has(f.name));
-    pkg.value.fields.push(...fresh);
-    if (r.doc_type && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = r.doc_type;
-    toast.ok(`预标注完成：新增 ${fresh.length} 个字段草稿（${r.provider_used}）`);
+    const n = mergeDraft(r.fields, r.doc_type);
+    toast.ok(`预标注完成：新增 ${n} 个字段草稿（${r.provider_used}），请核对后保存`);
   } catch (e) { toast.error(e); }
   finally { probing.value = false; (ev.target as HTMLInputElement).value = ""; }
+}
+
+// natural-language rule import
+const textPanel = ref(false);
+const draftText = ref("");
+const drafting = ref(false);
+async function draftFromText() {
+  if (!draftText.value.trim()) return;
+  drafting.value = true;
+  try {
+    const r = await api.skillDraftFromText(draftText.value);
+    const n = mergeDraft(r.fields, r.doc_type);
+    toast.ok(`已从描述起草 ${n} 个字段（${r.provider_used}），请核对后保存`);
+    textPanel.value = false;
+    draftText.value = "";
+  } catch (e) { toast.error(e); }
+  finally { drafting.value = false; }
+}
+
+// spreadsheet rule import (pure parsing, no tokens)
+async function tableImport(ev: Event) {
+  const file = (ev.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  try {
+    const r = await api.skillDraftFromTable(file);
+    const n = mergeDraft(r.fields);
+    toast.ok(`表格导入完成：新增 ${n} 个字段，请核对后保存`);
+  } catch (e) { toast.error(e); }
+  finally { (ev.target as HTMLInputElement).value = ""; }
 }
 
 const running = ref(false);
@@ -411,6 +470,10 @@ async function goldenCheck() {
 .count { font-weight: 400; margin-left: 6px; }
 .pad { padding: 12px 14px; margin: 0; }
 .col-gap { display: flex; flex-direction: column; gap: 10px; }
+.text-panel { border-bottom: 1px solid var(--border); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px; background: var(--bg-raised); }
+.text-panel-act { display: flex; gap: 12px; align-items: center;
+  justify-content: space-between; font-size: 12px; }
 .fcard { border-bottom: 1px solid var(--border); padding: 10px 14px;
   display: flex; flex-direction: column; gap: 8px; }
 .fcard:last-child { border-bottom: none; }

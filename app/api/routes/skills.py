@@ -126,6 +126,66 @@ async def probe(file: UploadFile = File(...), provider: str | None = Form(defaul
             "raw_draft": draft, "provider_used": out["provider_used"]}
 
 
+class TextDraftBody(BaseModel):
+    text: str
+    provider: str | None = None
+
+
+@router.post("/draft-from-text")
+async def draft_from_text(body: TextDraftBody):
+    """Rule import channel 2 (§5.1): natural-language requirement -> drafted
+    fields, prefilled into the editor for human review before saving."""
+    if not body.text.strip():
+        raise HTTPException(400, "描述不能为空")
+    await _warm_byok()
+    out = await asyncio.to_thread(studio.draft_from_text, body.text, body.provider)
+    draft = out["draft"]
+    fields = studio.draft_to_fields(draft if isinstance(draft, dict) else {})
+    if not fields:
+        raise HTTPException(422, "未能从描述中起草出字段，请补充更具体的字段说明")
+    return {"doc_type": (draft or {}).get("doc_type", ""),
+            "fields": [f.model_dump() for f in fields],
+            "provider_used": out["provider_used"]}
+
+
+@router.post("/draft-from-table")
+async def draft_from_table(file: UploadFile = File(...)):
+    """Rule import channel 3 (§5.1): spreadsheet/CSV field inventory -> drafted
+    fields (pure parsing, zero tokens). Loose Chinese/English headers;
+    a 所属明细表 column nests rows as table columns."""
+    import csv
+    import io
+
+    name = (file.filename or "").lower()
+    blob = await file.read()
+    try:
+        if name.endswith((".xlsx", ".xlsm")):
+            from openpyxl import load_workbook
+            wb = load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+            ws = wb.active
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+            wb.close()
+        elif name.endswith((".csv", ".tsv", ".txt")):
+            try:
+                text = blob.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = blob.decode("gbk", errors="replace")
+            delim = "\t" if name.endswith(".tsv") else ","
+            rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        else:
+            raise HTTPException(400, "仅支持 .xlsx / .csv / .tsv 字段清单")
+        fields = studio.fields_from_table(rows)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"表格解析失败：{e}")
+    if not fields:
+        raise HTTPException(422, "表格中没有可用的字段行")
+    return {"fields": [f.model_dump() for f in fields]}
+
+
 class DryRunBody(BaseModel):
     package: SkillPackage
     providers: list[str] = []

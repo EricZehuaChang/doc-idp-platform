@@ -192,6 +192,14 @@ export const api = {
     return reqForm<{ doc_type: string; fields: FieldSpec[]; provider_used: string }>(
       "/api/v1/skills/probe", f);
   },
+  skillDraftFromText: (text: string) =>
+    req<{ doc_type: string; fields: FieldSpec[]; provider_used: string }>(
+      "POST", "/api/v1/skills/draft-from-text", { text }),
+  skillDraftFromTable: (file: File) => {
+    const f = new FormData();
+    f.append("file", file);
+    return reqForm<{ fields: FieldSpec[] }>("/api/v1/skills/draft-from-table", f);
+  },
   skillDryRun: (file: File, pkg: SkillPackage, providers: string[]) => {
     const f = new FormData();
     f.append("file", file);
