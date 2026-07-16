@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     deploy_tier: str = "lite"      # lite | standard | air_gapped (design §8)
     default_tenant: str = "default"
 
+    # task queue (§9): "inprocess" = lite tier M1 runner; "celery" ships work
+    # to the resource-pooled queues (requires Redis + at least one worker)
+    queue_backend: str = "inprocess"
+    redis_url: str = "redis://127.0.0.1:6379/0"
+
     # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
     # "on" = /api requires Bearer JWT or API key, tenant comes from credential
     auth_mode: str = "off"

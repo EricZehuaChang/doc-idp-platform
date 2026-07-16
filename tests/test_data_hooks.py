@@ -63,7 +63,12 @@ async def test_hooks_cabinet_stats(tmp_path, monkeypatch):
                     break
             fid = st["files"][0]["file_id"]
 
-            # event 1 fired with valid HMAC
+            # event 1 fired with valid HMAC. Status commits BEFORE the webhook
+            # fires, so polling on status can win the race — wait for delivery.
+            for _ in range(50):
+                if received:
+                    break
+                await asyncio.sleep(0.1)
             assert len(received) == 1
             req = received[0]
             assert req.headers["X-IDP-Event"] == "file.pending_verification"

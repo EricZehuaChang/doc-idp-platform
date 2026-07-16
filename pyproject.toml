@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.9",  # file upload
     "pyjwt>=2.8",               # session JWT (§11.9; fork-and-own KBase pattern)
     "email-validator>=2.0",     # pydantic EmailStr on auth endpoints
+    "celery[redis]>=5.4",       # pooled task queues (§9; Windows dev: -P threads)
 ]
 
 [project.optional-dependencies]
