@@ -82,7 +82,11 @@ async def download(file_id: str):
         f = await s.get(FileRecord, file_id)
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
-        return FileResponse(f.storage_path, filename=f.file_name)
+        # content is immutable per file_id (content-hash storage): let the
+        # browser cache it — second open of the review page renders instantly
+        # (frontend caching design v0.2 §9.0 layer ③)
+        return FileResponse(f.storage_path, filename=f.file_name,
+                            headers={"Cache-Control": "private, max-age=86400, immutable"})
 
 
 @router.get("/status/{transaction_id}")

@@ -75,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, type FieldCell, type ReviewDetail } from "../api";
 
@@ -83,7 +83,10 @@ const props = defineProps<{ fileId: string }>();
 const router = useRouter();
 
 const detail = ref<ReviewDetail | null>(null);
-const tab = ref<"all" | "review">("all");
+// tab preference survives reloads (caching design §9.0 layer ⑤)
+const tab = ref<"all" | "review">(
+  (localStorage.getItem("idp_review_tab") as "all" | "review") || "all");
+watch(tab, (v) => localStorage.setItem("idp_review_tab", v));
 const locked = ref(false);
 const msg = ref("");
 const edits = ref<Record<string, string>>({});
@@ -131,13 +134,32 @@ function onImgLoad() {
   if (imgEl.value) imgSize.value = { w: imgEl.value.naturalWidth, h: imgEl.value.naturalHeight };
 }
 
+// unsaved-draft persistence (caching design §9.0 layer ④): a reviewer's typed
+// corrections survive accidental refresh / crash; cleared on successful save.
+const draftKey = () => `idp_draft_${props.fileId}`;
+function saveDraft() {
+  if (dirty.value) sessionStorage.setItem(draftKey(), JSON.stringify(edits.value));
+}
+function restoreDraft() {
+  const raw = sessionStorage.getItem(draftKey());
+  if (!raw) return;
+  try {
+    const draft = JSON.parse(raw) as Record<string, string>;
+    for (const k of Object.keys(edits.value))
+      if (k in draft && draft[k] !== edits.value[k]) edits.value[k] = draft[k];
+    msg.value = "已恢复未保存的草稿";
+  } catch { sessionStorage.removeItem(draftKey()); }
+}
+
 async function load() {
   detail.value = await api.detail(props.fileId);
   const vals: Record<string, string> = {};
   for (const f of scalarFields.value) vals[f.name] = f.cell.$value ?? "";
   edits.value = { ...vals };
   original.value = { ...vals };
+  restoreDraft();
 }
+watch(edits, saveDraft, { deep: true });
 async function acquire() {
   try { await api.lock(props.fileId); locked.value = true; msg.value = ""; }
   catch (e) { msg.value = String(e); }
@@ -149,6 +171,7 @@ async function saveEdits() {
   if (!changed.length) return;
   try {
     await api.patchFields(props.fileId, changed);
+    sessionStorage.removeItem(draftKey());   // draft fulfilled its purpose
     msg.value = `已保存 ${changed.length} 处修正`;
     await load();
   } catch (e) { msg.value = String(e); }

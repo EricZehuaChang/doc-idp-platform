@@ -6,7 +6,7 @@
         <tr><th>文件名</th><th>技能</th><th>页数</th><th>锁定</th><th>提交时间</th><th></th></tr>
       </thead>
       <tbody>
-        <tr v-for="it in items" :key="it.file_id">
+        <tr v-for="it in items" :key="it.file_id" @mouseenter="prefetch(it)">
           <td>{{ it.file_name }}</td>
           <td>{{ it.skill_code }}</td>
           <td>{{ it.page_count }}</td>
@@ -30,6 +30,19 @@ let timer: number | undefined;
 async function load() {
   try { items.value = await api.queue(); } catch { /* backend offline: keep last */ }
 }
+
+// hover prefetch (caching design §9.0 layer ②): warm the original image via
+// the browser cache (download endpoint is immutable) so the review page's
+// left pane renders instantly when the reviewer clicks Verify.
+const prefetched = new Set<string>();
+function prefetch(it: QueueItem) {
+  if (prefetched.has(it.file_id)) return;
+  prefetched.add(it.file_id);
+  if (/\.(png|jpe?g|bmp|webp)$/i.test(it.file_name)) {
+    new Image().src = api.downloadUrl(it.file_id);
+  }
+}
+
 onMounted(() => { load(); timer = window.setInterval(load, 5000); });
 onUnmounted(() => window.clearInterval(timer));
 </script>
