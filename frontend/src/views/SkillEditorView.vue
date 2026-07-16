@@ -1,0 +1,399 @@
+<template>
+  <main class="editor" v-if="pkg">
+    <!-- header: identity + version + actions -->
+    <div class="head">
+      <div class="id-group">
+        <input v-model="pkg.name" class="name-input" placeholder="技能名称" />
+        <input v-model="pkg.skill_code" class="code-input" placeholder="skill_code（英文）"
+               :disabled="!isNew" />
+        <span v-if="!isNew && currentVersion" class="ver dim">
+          v{{ currentVersion.version }} · {{ verLabel(currentVersion.status) }}</span>
+      </div>
+      <div class="act-group">
+        <input v-model="changelog" class="changelog" placeholder="变更说明（可选）" />
+        <button class="primary" @click="saveDraft">{{ isNew ? "创建技能" : "存为新草稿" }}</button>
+        <button v-if="!isNew && currentVersion?.status === 'draft'" class="confirm"
+                @click="publish">发布 v{{ currentVersion.version }}</button>
+        <a v-if="!isNew" :href="api.skillExportUrl(code)" download>
+          <button>导出 YAML</button></a>
+      </div>
+    </div>
+
+    <div class="cols">
+      <!-- left: the skill package definition -->
+      <section class="def">
+        <h3>字段定义 <button class="mini" @click="addField">＋ 字段</button></h3>
+        <div v-for="(f, i) in pkg.fields" :key="i" class="fcard">
+          <div class="frow">
+            <input v-model="f.name" placeholder="字段名（英文）" class="fname-in" />
+            <select v-model="f.type">
+              <option value="string">文本</option><option value="number">数字</option>
+              <option value="date">日期</option><option value="enum">枚举</option>
+              <option value="table">明细表</option>
+            </select>
+            <select v-model="f.mode">
+              <option value="verbatim">原文抄录</option>
+              <option value="inferred">模型推断</option>
+            </select>
+            <label class="chk"><input type="checkbox" v-model="f.required" />必填</label>
+            <button class="mini danger" @click="pkg.fields.splice(i, 1)">✕</button>
+          </div>
+          <input v-model="f.instruction" placeholder="抽取说明，如：发票右上角的发票号码" />
+          <input v-if="f.type === 'enum'" :value="f.enum_values.join(',')"
+                 placeholder="枚举值，逗号分隔"
+                 @input="f.enum_values = splitCsv(($event.target as HTMLInputElement).value)" />
+          <div v-if="f.type === 'table'" class="cols-editor">
+            <span class="dim">列：</span>
+            <input :value="f.columns.map(c => c.name).join(',')"
+                   placeholder="列名，逗号分隔，如 name,qty,amount"
+                   @input="f.columns = splitCsv(($event.target as HTMLInputElement).value)
+                     .map(n => blankField(n))" />
+          </div>
+        </div>
+        <p v-if="!pkg.fields.length" class="dim">
+          还没有字段——右侧上传样本「预标注」可自动起草，或手动添加。</p>
+
+        <h3>校验规则 <button class="mini" @click="addValidator">＋ 规则</button></h3>
+        <div v-for="(v, i) in pkg.validators" :key="i" class="vrow">
+          <select v-model="v.type">
+            <option value="required">必填</option>
+            <option value="regex">正则</option>
+            <option value="sum_equals">合计勾稽</option>
+          </select>
+          <template v-if="v.type !== 'sum_equals'">
+            <select v-model="v.field">
+              <option v-for="f in pkg.fields" :key="f.name" :value="f.name">{{ f.name }}</option>
+            </select>
+            <input v-if="v.type === 'regex'" v-model="v.pattern" placeholder="正则表达式" />
+          </template>
+          <template v-else>
+            <select v-model="v.target">
+              <option v-for="f in pkg.fields" :key="f.name" :value="f.name">{{ f.name }}</option>
+            </select>
+            <span class="dim">=</span>
+            <input :value="v.parts.join(',')" placeholder="相加字段，逗号分隔"
+                   @input="v.parts = splitCsv(($event.target as HTMLInputElement).value)" />
+          </template>
+          <button class="mini danger" @click="pkg.validators.splice(i, 1)">✕</button>
+        </div>
+
+        <h3>策略与绑定</h3>
+        <div class="grid2">
+          <label>审核策略
+            <select v-model="pkg.review_policy.mode">
+              <option value="auto">自动（按置信）</option>
+              <option value="always">全部人审</option>
+              <option value="never">全部直通</option>
+            </select>
+          </label>
+          <label>置信阈值（低于进人审）
+            <select v-model.number="pkg.review_policy.confidence_threshold">
+              <option :value="1">1</option><option :value="2">2</option><option :value="3">3</option>
+            </select>
+          </label>
+          <label>抽取模型（空=平台默认）
+            <input v-model="pkg.model_binding.extractor" placeholder="如 qwen" /></label>
+          <label>备用模型（fallback）
+            <input :value="pkg.model_binding.fallback ?? ''" placeholder="可空"
+                   @input="pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
+          <label>挑战者模型（challenger 仲裁）
+            <input :value="pkg.model_binding.challenger ?? ''" placeholder="可空；不一致标人审"
+                   @input="pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
+          <label>解析器（空=自动路由）
+            <select :value="pkg.parser ?? ''"
+                    @change="pkg.parser = ($event.target as HTMLSelectElement).value || null">
+              <option value="">自动</option>
+              <option v-for="p in PARSERS" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </label>
+        </div>
+        <label class="block">补充规则（自由文本，进提示词）
+          <textarea v-model="pkg.additional_rules" rows="2"
+                    placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea>
+        </label>
+      </section>
+
+      <!-- right: studio tools -->
+      <section class="studio">
+        <h3>样本预标注（probe）</h3>
+        <p class="dim">上传一份样本，模型起草字段清单，编辑器 80% 填好。</p>
+        <label class="file-btn"><input type="file" hidden @change="probe" />
+          <span class="btn-like">{{ probing ? "分析中…" : "上传样本预标注" }}</span></label>
+
+        <h3>试运行（dry-run）</h3>
+        <p class="dim">当前定义在一份样本上试跑，可多模型并排对比，不产生任务。</p>
+        <input v-model="dryProviders" placeholder="模型列表，逗号分隔；空=默认" />
+        <label class="file-btn"><input type="file" hidden @change="dryRun" />
+          <span class="btn-like">{{ running ? "试跑中…" : "上传样本试跑" }}</span></label>
+        <div v-if="dryRuns.length" class="runs">
+          <div v-for="r in dryRuns" :key="r.provider" class="run">
+            <div class="run-head">
+              <strong>{{ r.provider }}</strong>
+              <span v-if="r.ok" class="dim">
+                {{ r.usage?.prompt_tokens }}+{{ r.usage?.completion_tokens }} tokens</span>
+              <span v-else class="rulefail">{{ r.error }}</span>
+            </div>
+            <table v-if="r.ok && r.result">
+              <tbody>
+                <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
+                  <td class="dim">{{ name }}</td>
+                  <td>{{ cell.$value || "—" }}</td>
+                  <td><span class="conf">c{{ cell.$confidence }}</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <template v-if="!isNew">
+          <h3>金样本回归（发布门禁）</h3>
+          <p class="dim">给技能挂固定样本＋期望值；发布前跑回归对比。</p>
+          <div class="golden-add">
+            <label class="file-btn"><input type="file" hidden @change="pickGolden" />
+              <span class="btn-like">{{ goldenFile ? goldenFile.name : "选择样本文件" }}</span></label>
+            <textarea v-model="goldenExpected" rows="3"
+                      placeholder='期望值 JSON，如 {"invoice_no": "INV-1", "total": "100.00"}'></textarea>
+            <button :disabled="!goldenFile" @click="addGolden">挂载金样本</button>
+          </div>
+          <button v-if="currentVersion" @click="goldenCheck" :disabled="checking">
+            {{ checking ? "回归中…" : `对 v${currentVersion.version} 跑金样本回归` }}</button>
+          <div v-if="goldenReport" class="golden-report">
+            <template v-if="goldenReport.samples === 0">
+              <p class="dim">{{ goldenReport.note }}</p>
+            </template>
+            <template v-else>
+              <p><strong>{{ goldenReport.samples }}</strong> 个样本，平均匹配率
+                <strong :class="{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }">
+                  {{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></p>
+              <div v-for="(rep, i) in goldenReport.reports" :key="i" class="rep">
+                <template v-if="rep.ok">
+                  <span class="dim">样本 {{ i + 1 }}：匹配 {{ Math.round((rep.match_rate ?? 0) * 100) }}%</span>
+                  <div v-for="(d, fname) in rep.diffs" :key="fname" class="rulefail">
+                    {{ fname }}: 期望「{{ d.expected }}」→ 实得「{{ d.got }}」</div>
+                </template>
+                <span v-else class="rulefail">样本 {{ i + 1 }}：{{ rep.error }}</span>
+              </div>
+            </template>
+          </div>
+
+          <h3>历史版本</h3>
+          <table class="vers">
+            <tbody>
+              <tr v-for="v in versions" :key="v.version">
+                <td>v{{ v.version }}</td>
+                <td><span :class="`vs-${v.status}`">{{ verLabel(v.status) }}</span></td>
+                <td class="dim">{{ v.changelog }}</td>
+                <td><button v-if="v.status !== 'published'" class="mini"
+                            @click="publishVersion(v.version)">发布</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+      </section>
+    </div>
+  </main>
+  <main v-else class="editor"><Skeleton :rows="8" /></main>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import { api, type DryRunEntry, type FieldCell, type FieldSpec, type SkillPackage } from "../api";
+import Skeleton from "../components/Skeleton.vue";
+import { toast } from "../toast";
+
+const props = defineProps<{ code: string }>();
+const router = useRouter();
+const isNew = computed(() => props.code === "new");
+
+const PARSERS = ["pdfplumber", "markitdown", "glm-ocr-cloud", "rapidocr", "monkeyocr", "ofd"];
+
+const pkg = ref<SkillPackage | null>(null);
+const versions = ref<{ version: number; status: string; changelog: string }[]>([]);
+const changelog = ref("");
+const currentVersion = computed(() => versions.value[versions.value.length - 1] ?? null);
+
+function blankPkg(): SkillPackage {
+  return { skill_code: "", name: "", kind: "extract", doc_type_hint: "",
+           system_prompt: "", fields: [], few_shot: [], validators: [],
+           review_policy: { mode: "auto", confidence_threshold: 2 },
+           model_binding: { extractor: "", fallback: null, challenger: null },
+           parser: null, additional_rules: "" };
+}
+function blankField(name = ""): FieldSpec {
+  return { name, type: "string", instruction: "", mode: "verbatim", required: false,
+           anchor_hints: [], enum_values: [], columns: [] };
+}
+const splitCsv = (v: string) => v.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+const verLabel = (s: string) =>
+  ({ draft: "草稿", published: "已发布", archived: "已归档" }[s] ?? s);
+
+async function load() {
+  if (isNew.value) {
+    pkg.value = blankPkg();
+    versions.value = [];
+    return;
+  }
+  try {
+    const d = await api.skillDetail(props.code);
+    pkg.value = d.latest_package ?? { ...blankPkg(), skill_code: d.skill_code, name: d.name };
+    versions.value = d.versions;
+  } catch (e) { toast.error(e); }
+}
+watch(() => props.code, load, { immediate: true });
+
+function addField() { pkg.value?.fields.push(blankField()); }
+function addValidator() {
+  pkg.value?.validators.push({ type: "required", field: pkg.value.fields[0]?.name ?? "",
+                               pattern: null, target: null, parts: [] });
+}
+
+async function saveDraft() {
+  if (!pkg.value) return;
+  if (!pkg.value.skill_code) { toast.error("请填写 skill_code"); return; }
+  if (!pkg.value.fields.length) { toast.error("至少定义一个字段"); return; }
+  try {
+    if (isNew.value) {
+      await api.skillCreate(pkg.value, changelog.value);
+      toast.ok("技能已创建（v1 草稿）");
+      router.push(`/skills/${pkg.value.skill_code}`);
+    } else {
+      const r = await api.skillNewDraft(props.code, pkg.value, changelog.value);
+      toast.ok(`已存为 v${r.version} 草稿`);
+      changelog.value = "";
+      await load();
+    }
+  } catch (e) { toast.error(e); }
+}
+async function publish() {
+  if (currentVersion.value) await publishVersion(currentVersion.value.version);
+}
+async function publishVersion(v: number) {
+  try {
+    await api.skillPublish(props.code, v);
+    toast.ok(`v${v} 已发布（旧版本自动归档）`);
+    await load();
+  } catch (e) { toast.error(e); }
+}
+
+// —— studio tools ——
+const probing = ref(false);
+async function probe(ev: Event) {
+  const file = (ev.target as HTMLInputElement).files?.[0];
+  if (!file || !pkg.value) return;
+  probing.value = true;
+  try {
+    const r = await api.skillProbe(file);
+    const existing = new Set(pkg.value.fields.map((f) => f.name));
+    const fresh = r.fields.filter((f) => !existing.has(f.name));
+    pkg.value.fields.push(...fresh);
+    if (r.doc_type && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = r.doc_type;
+    toast.ok(`预标注完成：新增 ${fresh.length} 个字段草稿（${r.provider_used}）`);
+  } catch (e) { toast.error(e); }
+  finally { probing.value = false; (ev.target as HTMLInputElement).value = ""; }
+}
+
+const running = ref(false);
+const dryProviders = ref("");
+const dryRuns = ref<DryRunEntry[]>([]);
+async function dryRun(ev: Event) {
+  const file = (ev.target as HTMLInputElement).files?.[0];
+  if (!file || !pkg.value) return;
+  running.value = true;
+  try {
+    const r = await api.skillDryRun(file, pkg.value, splitCsv(dryProviders.value));
+    dryRuns.value = r.runs;
+  } catch (e) { toast.error(e); }
+  finally { running.value = false; (ev.target as HTMLInputElement).value = ""; }
+}
+function scalarCells(result: Record<string, FieldCell>): Record<string, FieldCell> {
+  const out: Record<string, FieldCell> = {};
+  for (const [k, v] of Object.entries(result))
+    if (!Array.isArray(v)) out[k] = v;
+  return out;
+}
+
+// —— golden samples ——
+const goldenFile = ref<File | null>(null);
+const goldenExpected = ref("");
+const checking = ref(false);
+const goldenReport = ref<Awaited<ReturnType<typeof api.goldenCheck>> | null>(null);
+function pickGolden(ev: Event) {
+  goldenFile.value = (ev.target as HTMLInputElement).files?.[0] ?? null;
+}
+async function addGolden() {
+  if (!goldenFile.value) return;
+  let expected: Record<string, string> = {};
+  try { expected = goldenExpected.value ? JSON.parse(goldenExpected.value) : {}; }
+  catch { toast.error("期望值不是合法 JSON"); return; }
+  try {
+    await api.goldenAdd(props.code, goldenFile.value, expected);
+    toast.ok("金样本已挂载");
+    goldenFile.value = null;
+    goldenExpected.value = "";
+  } catch (e) { toast.error(e); }
+}
+async function goldenCheck() {
+  if (!currentVersion.value) return;
+  checking.value = true;
+  goldenReport.value = null;
+  try { goldenReport.value = await api.goldenCheck(props.code, currentVersion.value.version); }
+  catch (e) { toast.error(e); }
+  finally { checking.value = false; }
+}
+</script>
+
+<style scoped>
+.editor { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+.head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.id-group { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 300px; }
+.name-input { font-size: 16px; font-weight: 600; max-width: 220px; }
+.code-input { font-family: Consolas, monospace; max-width: 220px; }
+.ver { font-size: 12px; white-space: nowrap; }
+.act-group { display: flex; gap: 8px; align-items: center; }
+.changelog { max-width: 200px; }
+.cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 20px; }
+h3 { font-size: 14px; color: var(--accent); margin: 18px 0 8px; display: flex;
+  gap: 10px; align-items: center; }
+.fcard { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+.frow { display: flex; gap: 8px; align-items: center; }
+.fname-in { max-width: 180px; font-family: Consolas, monospace; }
+select { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; }
+.chk { display: flex; gap: 4px; align-items: center; font-size: 13px;
+  color: var(--text-dim); white-space: nowrap; }
+.chk input { width: auto; }
+.mini { padding: 1px 8px; font-size: 12px; }
+.vrow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid2 label, .block { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+  color: var(--text-dim); }
+.block { margin-top: 10px; }
+.studio { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px; align-self: start; display: flex; flex-direction: column; gap: 8px; }
+.file-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
+  border-radius: 6px; padding: 6px 14px; cursor: pointer; display: inline-block;
+  font-size: 13px; }
+.file-btn .btn-like:hover { border-color: var(--accent); }
+.runs { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.run { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.run-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+.run table { font-size: 12px; border-collapse: collapse; width: 100%; }
+.run td { padding: 3px 6px; border-bottom: 1px solid var(--border); }
+.conf { font-size: 11px; color: var(--text-dim); }
+.rulefail { color: var(--red); font-size: 12px; }
+.golden-add { display: flex; flex-direction: column; gap: 8px; }
+.golden-report { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+  font-size: 13px; }
+.warn { color: var(--red); }
+.rep { margin-top: 6px; }
+.vers { font-size: 13px; border-collapse: collapse; width: 100%; }
+.vers td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.vs-published { color: var(--green); }
+.vs-draft { color: var(--accent); }
+.vs-archived { color: var(--text-dim); }
+.dim { color: var(--text-dim); }
+@media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+</style>

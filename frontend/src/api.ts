@@ -27,6 +27,27 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** multipart variant (file uploads); browser sets the boundary header itself */
+async function reqForm<T>(url: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = {
+    "X-Tenant-Id": "default",
+    "X-User": session.email || localStorage.getItem("idp_user") || "reviewer-1",
+  };
+  if (session.token) headers["Authorization"] = `Bearer ${session.token}`;
+  const resp = await fetch(url, { method: "POST", headers, body: form });
+  if (resp.status === 401 && session.authRequired) {
+    clearSession();
+    window.location.hash = "#/login";
+    throw new Error("登录已过期，请重新登录");
+  }
+  if (!resp.ok) {
+    let detail = "";
+    try { detail = (await resp.json()).detail ?? ""; } catch { /* non-JSON body */ }
+    throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
+  }
+  return resp.json() as Promise<T>;
+}
+
 export interface QueueItem {
   file_id: string; file_name: string; skill_code: string;
   transaction_id: string; page_count: number;
@@ -57,6 +78,34 @@ export interface SkillStat {
 
 export interface SkillInfo { skill_code: string; name: string; kind: string; state: string }
 
+// —— Skill Studio types (mirror app/skillengine/schema.py) ——
+export interface FieldSpec {
+  name: string; type: string; instruction: string; mode: string; required: boolean;
+  anchor_hints: string[]; enum_values: string[]; columns: FieldSpec[];
+}
+export interface ValidatorSpec {
+  type: string; field?: string | null; pattern?: string | null;
+  target?: string | null; parts: string[];
+}
+export interface SkillPackage {
+  skill_code: string; name: string; kind: string; doc_type_hint: string;
+  system_prompt: string; fields: FieldSpec[];
+  few_shot: { input_excerpt: string; expected_output: Record<string, unknown> }[];
+  validators: ValidatorSpec[];
+  review_policy: { mode: string; confidence_threshold: number };
+  model_binding: { extractor: string; fallback: string | null; challenger: string | null };
+  parser: string | null; additional_rules: string;
+}
+export interface SkillDetail {
+  skill_code: string; name: string; kind: string; state: string;
+  versions: { version: number; status: string; changelog: string }[];
+  latest_package: SkillPackage | null;
+}
+export interface DryRunEntry {
+  provider: string; ok: boolean; result?: Record<string, FieldCell>;
+  usage?: Record<string, number | string>; error?: string;
+}
+
 export interface LoginResult {
   access_token: string; token_type: string; role: string;
   tenant_id: string; email: string; must_change_password: boolean;
@@ -76,6 +125,47 @@ export const api = {
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
+  // skill studio (batch D)
+  skillDetail: (code: string) => req<SkillDetail>("GET", `/api/v1/skills/${code}`),
+  skillCreate: (pkg: SkillPackage, changelog = "") =>
+    req("POST", "/api/v1/skills", { package: pkg, changelog }),
+  skillNewDraft: (code: string, pkg: SkillPackage, changelog = "") =>
+    req<{ version: number }>("POST", `/api/v1/skills/${code}/versions`,
+                             { package: pkg, changelog }),
+  skillPublish: (code: string, version: number) =>
+    req("POST", `/api/v1/skills/${code}/versions/${version}/publish`),
+  skillExportUrl: (code: string, version?: number) =>
+    `/api/v1/skills/${code}/export${version ? `?version=${version}` : ""}`,
+  skillImport: (file: File) => {
+    const f = new FormData();
+    f.append("file", file);
+    return reqForm<{ skill_code: string; version: number }>("/api/v1/skills/import", f);
+  },
+  skillProbe: (file: File, provider?: string) => {
+    const f = new FormData();
+    f.append("file", file);
+    if (provider) f.append("provider", provider);
+    return reqForm<{ doc_type: string; fields: FieldSpec[]; provider_used: string }>(
+      "/api/v1/skills/probe", f);
+  },
+  skillDryRun: (file: File, pkg: SkillPackage, providers: string[]) => {
+    const f = new FormData();
+    f.append("file", file);
+    f.append("package", JSON.stringify(pkg));
+    f.append("providers", providers.join(","));
+    return reqForm<{ runs: DryRunEntry[] }>("/api/v1/skills/dry-run", f);
+  },
+  goldenAdd: (code: string, file: File, expected: Record<string, string>) => {
+    const f = new FormData();
+    f.append("file", file);
+    f.append("expected", JSON.stringify(expected));
+    return reqForm(`/api/v1/skills/${code}/golden`, f);
+  },
+  goldenCheck: (code: string, version: number) =>
+    req<{ samples: number; avg_match_rate?: number; note?: string;
+          reports?: { ok: boolean; match_rate?: number; error?: string;
+                      diffs?: Record<string, { expected: string; got: string }> }[] }>(
+      "POST", `/api/v1/skills/${code}/versions/${version}/golden-check`),
   // data & stats
   skills: () => req<SkillInfo[]>("GET", "/api/v1/skills"),
   cabinet: (skill: string) =>

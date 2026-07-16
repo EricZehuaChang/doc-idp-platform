@@ -12,6 +12,7 @@ import CabinetView from "./views/CabinetView.vue";
 import QueueView from "./views/QueueView.vue";
 import ReviewView from "./views/ReviewView.vue";
 import SettingsView from "./views/SettingsView.vue";
+import SkillEditorView from "./views/SkillEditorView.vue";
 import SkillsView from "./views/SkillsView.vue";
 import StatsView from "./views/StatsView.vue";
 
@@ -30,6 +31,7 @@ const router = createRouter({
     { path: "/queue", component: QueueView },
     { path: "/review/:fileId", component: ReviewView, props: true },
     { path: "/skills", component: SkillsView },
+    { path: "/skills/:code", component: SkillEditorView, props: true },
     { path: "/cabinet", component: CabinetView },
     { path: "/stats", component: StatsView },
     { path: "/settings", component: SettingsView },
