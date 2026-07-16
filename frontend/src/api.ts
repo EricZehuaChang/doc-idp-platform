@@ -101,6 +101,11 @@ export interface SkillDetail {
   versions: { version: number; status: string; changelog: string }[];
   latest_package: SkillPackage | null;
 }
+export interface SmtpInfo {
+  configured: boolean; has_password?: boolean; host?: string; port?: number;
+  security?: string; username?: string; from_addr?: string; from_name?: string;
+  reply_to?: string;
+}
 export interface DryRunEntry {
   provider: string; ok: boolean; result?: Record<string, FieldCell>;
   usage?: Record<string, number | string>; error?: string;
@@ -182,5 +187,24 @@ export const api = {
     req("POST", "/api/v1/auth/activate", { token, password }),
   changePassword: (old_password: string, new_password: string) =>
     req("POST", "/api/v1/auth/change-password", { old_password, new_password }),
+  // admin: users & platform settings (batch E)
+  listUsers: () => req<{ id: string; email: string; role: string; active: boolean;
+                         pending: boolean; auth_provider: string; created_at: string }[]>(
+    "GET", "/api/v1/auth/users"),
+  createUser: (email: string, password: string, role: string) =>
+    req("POST", "/api/v1/auth/users", { email, password, role }),
+  invite: (email: string, role: string) =>
+    req("POST", "/api/v1/auth/invite", { email, role }),
+  patchUser: (id: string, patch: { active?: boolean; role?: string }) =>
+    req("PATCH", `/api/v1/auth/users/${id}`, patch),
+  getSmtp: () => req<SmtpInfo>("GET", "/api/v1/settings/smtp"),
+  putSmtp: (cfg: Record<string, unknown>) => req<SmtpInfo>("PUT", "/api/v1/settings/smtp", cfg),
+  testSmtp: (to: string) => req("POST", "/api/v1/settings/smtp/test", { to }),
+  listProviders: () => req<{ providers: { name: string; model: string; active: boolean;
+                                          platform_key: boolean; byok_set: boolean }[] }>(
+    "GET", "/api/v1/settings/providers"),
+  putByok: (name: string, api_key: string) =>
+    req("PUT", `/api/v1/settings/providers/${name}/key`, { api_key }),
+  deleteByok: (name: string) => req("DELETE", `/api/v1/settings/providers/${name}/key`),
   get currentUser() { return session.email || localStorage.getItem("idp_user") || "reviewer-1"; },
 };

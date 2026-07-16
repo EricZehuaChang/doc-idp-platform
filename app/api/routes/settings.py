@@ -62,6 +62,71 @@ async def put_smtp(body: SmtpBody):
         return mailer.public_view(cfg)
 
 
+# —— tenant BYOK provider keys (§11.10): bring-your-own model key per tenant ——
+
+@router.get("/providers")
+async def list_providers():
+    """Provider inventory for the BYOK page: platform key presence (env) and
+    whether this tenant has brought its own. Never returns key material."""
+    import os
+
+    from app.config import load_providers
+    from app.extraction import byok
+
+    _require_admin()
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await byok.warm(s, tenant, force=True)
+    cfg = load_providers()
+    out = []
+    for name, p in cfg["providers"].items():
+        out.append({"name": name, "model": p.model, "base_url": p.base_url,
+                    "active": name == cfg["active"],
+                    "platform_key": bool(p.api_key_env and os.environ.get(p.api_key_env)),
+                    "byok_set": byok.has_key(tenant, name)})
+    return {"providers": out}
+
+
+class ByokBody(BaseModel):
+    api_key: str
+
+
+@router.put("/providers/{name}/key")
+async def put_byok(name: str, body: ByokBody):
+    from app.config import load_providers
+    from app.extraction import byok
+
+    _require_admin()
+    if name not in load_providers()["providers"]:
+        raise HTTPException(404, f"unknown provider: {name}")
+    if not body.api_key.strip():
+        raise HTTPException(400, "api_key 不能为空")
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await byok.put(s, tenant, name, body.api_key.strip())
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="settings.byok_set", detail={"provider": name}))
+        await s.commit()
+    return {"provider": name, "byok_set": True}
+
+
+@router.delete("/providers/{name}/key")
+async def delete_byok(name: str):
+    from app.extraction import byok
+
+    _require_admin()
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await byok.remove(s, tenant, name)
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="settings.byok_removed", detail={"provider": name}))
+        await s.commit()
+    return {"provider": name, "byok_set": False}
+
+
 class SmtpTestBody(BaseModel):
     to: EmailStr
 

@@ -80,6 +80,54 @@ async def create_user(body: UserCreate):
         return {"id": user.id, "email": user.email, "role": user.role, "tenant_id": tenant}
 
 
+@router.get("/users")
+async def list_users():
+    """Tenant user roster for the admin settings page."""
+    if not has_role("admin"):
+        raise HTTPException(403, "admin role required")
+    sf = session_factory()
+    async with sf() as s:
+        rows = (await s.execute(
+            select(User).where(User.tenant_id == current_tenant())
+            .order_by(User.created_at))).scalars().all()
+        return [{"id": u.id, "email": u.email, "role": u.role, "active": u.active,
+                 "email_verified": u.email_verified,
+                 "auth_provider": u.auth_provider,
+                 "pending": u.password_hash is None and u.auth_provider == "local",
+                 "created_at": u.created_at.isoformat()} for u in rows]
+
+
+class UserPatch(BaseModel):
+    active: bool | None = None
+    role: str | None = None
+
+
+@router.patch("/users/{user_id}")
+async def patch_user(user_id: str, body: UserPatch):
+    """Deactivate/reactivate or change role (offboarding: 人走号停)."""
+    if not has_role("admin"):
+        raise HTTPException(403, "admin role required")
+    if body.role is not None and body.role not in ("viewer", "operator", "admin"):
+        raise HTTPException(400, "role must be viewer|operator|admin")
+    actor = current_actor()
+    sf = session_factory()
+    async with sf() as s:
+        u = await s.get(User, user_id)
+        if u is None or u.tenant_id != current_tenant():
+            raise HTTPException(404, "user not found")
+        if u.id == actor.get("user_id") and body.active is False:
+            raise HTTPException(400, "不能停用自己的账号")
+        if body.active is not None:
+            u.active = body.active
+        if body.role is not None:
+            u.role = body.role
+        s.add(AuditLog(tenant_id=u.tenant_id, actor=actor["name"],
+                       action="auth.user_updated",
+                       detail={"email": u.email, "active": u.active, "role": u.role}))
+        await s.commit()
+        return {"id": u.id, "email": u.email, "role": u.role, "active": u.active}
+
+
 class InviteBody(BaseModel):
     email: EmailStr
     role: str = "operator"

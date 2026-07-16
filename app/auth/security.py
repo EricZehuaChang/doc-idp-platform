@@ -64,6 +64,23 @@ def hash_api_key(full_key: str) -> str:
     return hashlib.sha256(full_key.encode("utf-8")).hexdigest()
 
 
+# —— symmetric encryption for runtime-mutable secrets at rest (SMTP password,
+#    tenant BYOK provider keys). Key derived from the platform JWT secret. ——
+
+def _fernet():
+    from cryptography.fernet import Fernet
+    key = base64.urlsafe_b64encode(hashlib.sha256(get_secret().encode()).digest())
+    return Fernet(key)
+
+
+def encrypt_value(plain: str) -> str:
+    return _fernet().encrypt(plain.encode()).decode()
+
+
+def decrypt_value(token: str) -> str:
+    return _fernet().decrypt(token.encode()).decode()
+
+
 def get_secret() -> str:
     if _secret is None:
         raise RuntimeError("JWT secret not resolved yet — app startup must call resolve_secret_key")

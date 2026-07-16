@@ -47,7 +47,11 @@ def resolve_provider(name: str | None) -> dict:
     p = cfg["providers"].get(pname)
     if p is None:
         raise ProviderError(f"provider not configured: {pname}")
-    key = os.environ.get(p.api_key_env, "").strip() if p.api_key_env else ""
+    # tenant BYOK first (§11.10; cache warmed by the async caller), platform env second
+    from app.extraction import byok
+    from app.tenancy import current_tenant
+    key = byok.get(current_tenant(), p.name) \
+        or (os.environ.get(p.api_key_env, "").strip() if p.api_key_env else "")
     return {"name": p.name, "model": p.model, "base_url": p.base_url, "api_key": key}
 
 

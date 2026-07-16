@@ -7,8 +7,6 @@ When SMTP is unconfigured the platform runs in "admin activation mode"
 (§11.8 fallback): invite/reset endpoints answer 409 and the admin creates
 accounts with an initial password + forced first-login change instead.
 """
-import base64
-import hashlib
 import logging
 
 from app.auth import security
@@ -23,18 +21,9 @@ class MailerNotConfigured(RuntimeError):
     pass
 
 
-def _fernet():
-    from cryptography.fernet import Fernet
-    key = base64.urlsafe_b64encode(hashlib.sha256(security.get_secret().encode()).digest())
-    return Fernet(key)
-
-
-def encrypt_password(plain: str) -> str:
-    return _fernet().encrypt(plain.encode()).decode()
-
-
-def decrypt_password(token: str) -> str:
-    return _fernet().decrypt(token.encode()).decode()
+# thin aliases: the Fernet primitives live in auth.security (shared with BYOK)
+encrypt_password = security.encrypt_value
+decrypt_password = security.decrypt_value
 
 
 async def load_config(session) -> dict | None:

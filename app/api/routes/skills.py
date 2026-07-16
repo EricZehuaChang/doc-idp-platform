@@ -117,6 +117,7 @@ async def probe(file: UploadFile = File(...), provider: str | None = Form(defaul
     """Sample -> LLM-drafted field list (§5.1 step 2: pre-annotation).
     The editor opens 80% filled instead of blank."""
     udr = await _parse_upload(file, current_tenant())
+    await _warm_byok()
     out = await asyncio.to_thread(studio.probe, udr, provider)
     draft = out["draft"]
     fields = studio.draft_to_fields(draft if isinstance(draft, dict) else {})
@@ -141,6 +142,7 @@ async def dry_run(file: UploadFile = File(...), package: str = Form(...),
         raise HTTPException(400, f"invalid package json: {e}") from e
     plist = [p.strip() for p in providers.split(",") if p.strip()]
     udr = await _parse_upload(file, current_tenant())
+    await _warm_byok()
     runs = await asyncio.to_thread(studio.dry_run, udr, pkg, plist or None)
     return {"runs": runs}
 
@@ -236,6 +238,7 @@ async def golden_check(skill_code: str, version: int):
                                        GoldenSample.tenant_id == tenant))).scalars().all()
     if not goldens:
         return {"samples": 0, "note": "no golden samples attached"}
+    await _warm_byok()
     pkg = SkillPackage(**row.package)
 
     def _run():
@@ -267,3 +270,12 @@ async def publish(skill_code: str, version: int):
         target.status = "published"
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "published"}
+
+
+async def _warm_byok() -> None:
+    """Token-burning studio routes run extraction in worker threads — the
+    tenant BYOK cache must be warm before entering sync land (§11.10)."""
+    from app.extraction import byok
+    sf = session_factory()
+    async with sf() as s:
+        await byok.warm(s, current_tenant())
