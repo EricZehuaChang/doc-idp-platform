@@ -203,6 +203,11 @@ export const api = {
   listProviders: () => req<{ providers: { name: string; model: string; active: boolean;
                                           platform_key: boolean; byok_set: boolean }[] }>(
     "GET", "/api/v1/settings/providers"),
+  oidcEnabled: () => req<{ enabled: boolean }>("GET", "/api/v1/auth/oidc/enabled"),
+  getOidc: () => req<{ enabled: boolean; issuer?: string; client_id?: string;
+                       has_secret?: boolean }>("GET", "/api/v1/settings/oidc"),
+  putOidc: (cfg: { enabled: boolean; issuer: string; client_id: string;
+                   client_secret?: string }) => req("PUT", "/api/v1/settings/oidc", cfg),
   putByok: (name: string, api_key: string) =>
     req("PUT", `/api/v1/settings/providers/${name}/key`, { api_key }),
   deleteByok: (name: string) => req("DELETE", `/api/v1/settings/providers/${name}/key`),

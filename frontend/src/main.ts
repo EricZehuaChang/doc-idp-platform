@@ -7,6 +7,7 @@ import "./style.css";
 import ChangePasswordView from "./views/auth/ChangePasswordView.vue";
 import ForgotView from "./views/auth/ForgotView.vue";
 import LoginView from "./views/auth/LoginView.vue";
+import OidcCallbackView from "./views/auth/OidcCallbackView.vue";
 import TokenPasswordView from "./views/auth/TokenPasswordView.vue";
 import CabinetView from "./views/CabinetView.vue";
 import QueueView from "./views/QueueView.vue";
@@ -17,7 +18,7 @@ import SkillsView from "./views/SkillsView.vue";
 import StatsView from "./views/StatsView.vue";
 
 // entry pages reachable without a session (account flows carry their own token)
-const PUBLIC = new Set(["/login", "/forgot", "/reset", "/activate"]);
+const PUBLIC = new Set(["/login", "/forgot", "/reset", "/activate", "/oidc"]);
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -27,6 +28,7 @@ const router = createRouter({
     { path: "/forgot", component: ForgotView },
     { path: "/reset", component: TokenPasswordView, props: { mode: "reset" } },
     { path: "/activate", component: TokenPasswordView, props: { mode: "activate" } },
+    { path: "/oidc", component: OidcCallbackView },
     { path: "/change-password", component: ChangePasswordView },
     { path: "/queue", component: QueueView },
     { path: "/review/:fileId", component: ReviewView, props: true },

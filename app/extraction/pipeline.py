@@ -3,7 +3,15 @@ the live-verified schema {field: {"$value","$confidence","$bbox","$pages"}} with
 tables as row arrays and inferred fields carrying "$reasoning"+"inferred".
 Pure function of (udr, pkg) — idempotent by design (HA discipline).
 """
+import re
+
 from app.extraction import confidence as conf
+
+
+def _norm(v: str) -> str:
+    """Value comparison for arbitration: whitespace/case/thousand-separator
+    insensitive — two models phrasing '1,026.50' vs '1026.50' still agree."""
+    return re.sub(r"[\s,，]", "", v).lower()
 from app.extraction.provider_client import chat_json_with_fallback
 from app.extraction.validators import run_validators
 from app.parsers.base import UDR
@@ -14,17 +22,33 @@ from app.skillengine.schema import SkillPackage
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
             provider_override: str | None = None) -> tuple[dict, dict, bool]:
     """Returns (result, usage, needs_review). Resilience: extractor -> fallback
-    chain with cooldown (M1 acceptance hit exactly this failure mode)."""
+    chain with cooldown (M1 acceptance hit exactly this failure mode).
+    Challenger arbitration (§5.3 model channel): a second model re-extracts and
+    disagreements are forced into human review."""
     if provider_override:
         chain: list[str | None] = [provider_override]
     else:
         chain = [pkg.model_binding.extractor or None]
         if pkg.model_binding.fallback:
             chain.append(pkg.model_binding.fallback)
-    raw, usage, used = chat_json_with_fallback(
-        compile_messages(pkg, udr), chain, transport=transport)
+    messages = compile_messages(pkg, udr)
+    raw, usage, used = chat_json_with_fallback(messages, chain, transport=transport)
     usage = dict(usage)
     usage["provider_used"] = used
+
+    # challenger pass (skipped for dry-run overrides: they compare providers
+    # explicitly). Best-effort: an unavailable challenger never fails the file.
+    challenger_raw: dict | None = None
+    challenger = pkg.model_binding.challenger
+    if challenger and not provider_override and challenger != used:
+        try:
+            challenger_raw, ch_usage, _ = chat_json_with_fallback(
+                messages, [challenger], transport=transport)
+            usage["challenger_used"] = challenger
+            usage["challenger_prompt_tokens"] = int(ch_usage.get("prompt_tokens") or 0)
+            usage["challenger_completion_tokens"] = int(ch_usage.get("completion_tokens") or 0)
+        except Exception as e:      # arbitration degraded, primary result stands
+            usage["challenger_error"] = str(e)[:200]
 
     # flatten for the rule channel: inferred fields arrive as {value, reasoning}
     flat: dict[str, object] = {}
@@ -59,6 +83,18 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
             "$value": value, "$confidence": score,
             "$bbox": bbox or [], "$pages": page or "",
         }
+        # model channel (§5.3): challenger disagreement caps confidence at 1
+        # (below any sane threshold) and records the second opinion
+        if challenger_raw is not None:
+            ch_val = challenger_raw.get(f.name)
+            if f.mode == "inferred" and isinstance(ch_val, dict):
+                ch_val = ch_val.get("value")
+            ch_str = "" if ch_val is None else str(ch_val)
+            agree = _norm(ch_str) == _norm(value)
+            if not agree:
+                score = min(score, 1)
+                cell["$confidence"] = score
+            cell["$challenger"] = {"value": ch_str, "agree": agree}
         if f.mode == "inferred":
             cell["inferred"] = True        # exports must distinguish extracted vs derived (§5.6)
             cell["$reasoning"] = reasoning or ""

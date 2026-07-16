@@ -51,7 +51,7 @@ const router = useRouter();
 const menuOpen = ref(false);
 const helpOpen = ref(false);
 
-const BARE = new Set(["/login", "/forgot", "/reset", "/activate"]);
+const BARE = new Set(["/login", "/forgot", "/reset", "/activate", "/oidc"]);
 const bare = computed(() => BARE.has(route.path));
 
 const TITLES: Record<string, string> = {

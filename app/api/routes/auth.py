@@ -276,6 +276,67 @@ async def change_password(body: ChangePasswordBody):
     return {"status": "ok"}
 
 
+# —— OIDC SSO (§11.9 JIT tier) ——
+
+@router.get("/oidc/enabled")
+async def oidc_enabled():
+    """Login page probe: show the SSO button or not. Public."""
+    from app.auth import oidc
+
+    sf = session_factory()
+    async with sf() as s:
+        cfg = await oidc.load_config(s)
+    return {"enabled": bool(cfg and cfg.get("enabled"))}
+
+
+@router.get("/oidc/login")
+async def oidc_login():
+    from fastapi.responses import RedirectResponse
+
+    from app.auth import oidc
+
+    sf = session_factory()
+    async with sf() as s:
+        cfg = await oidc.load_config(s)
+    if not cfg or not cfg.get("enabled"):
+        raise HTTPException(404, "SSO 未启用")
+    return RedirectResponse(await oidc.build_login_url(cfg), status_code=302)
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(code: str = "", state: str = ""):
+    """IdP redirects here; we exchange the code, JIT the user (§11.9), issue
+    the PLATFORM session JWT (one session model regardless of login channel)
+    and bounce to the frontend which stores it."""
+    from fastapi.responses import RedirectResponse
+
+    from app.auth import oidc
+
+    if not code or not oidc.check_state(state):
+        return RedirectResponse(f"{_frontend_base()}/#/login?error=sso_state", status_code=302)
+    sf = session_factory()
+    async with sf() as s:
+        cfg = await oidc.load_config(s)
+        if not cfg or not cfg.get("enabled"):
+            raise HTTPException(404, "SSO 未启用")
+        try:
+            ident = await oidc.exchange_code(cfg, code)
+        except Exception as e:
+            import logging
+            logging.getLogger("idp.oidc").warning("code exchange failed: %s", e)
+            return RedirectResponse(f"{_frontend_base()}/#/login?error=sso_exchange",
+                                    status_code=302)
+        user = await oidc.jit_user(s, ident)
+        if user is None:
+            return RedirectResponse(f"{_frontend_base()}/#/login?error=sso_denied",
+                                    status_code=302)
+        token = security.create_session_token(
+            user_id=user.id, tenant_id=user.tenant_id, role=user.role, email=user.email)
+        s.add(AuditLog(tenant_id=user.tenant_id, actor=user.email, action="auth.login_oidc"))
+        await s.commit()
+    return RedirectResponse(f"{_frontend_base()}/#/oidc?token={token}", status_code=302)
+
+
 def _frontend_base() -> str:
     """Base URL used inside emails. Configurable for real deployments; the
     default matches the single-process private deploy (app serves webdist)."""

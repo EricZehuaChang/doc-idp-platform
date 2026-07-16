@@ -4,6 +4,7 @@
       <button :class="{ primary: tab === 'email' }" @click="tab = 'email'">邮件（SMTP）</button>
       <button :class="{ primary: tab === 'users' }" @click="tab = 'users'">用户</button>
       <button :class="{ primary: tab === 'byok' }" @click="tab = 'byok'">模型密钥（BYOK）</button>
+      <button :class="{ primary: tab === 'sso' }" @click="tab = 'sso'">单点登录（SSO）</button>
     </div>
 
     <!-- —— SMTP —— -->
@@ -98,6 +99,25 @@
       </table>
       <Skeleton v-else :rows="4" />
     </section>
+    <!-- —— OIDC SSO —— -->
+    <section v-if="tab === 'sso'" class="panel">
+      <p class="dim">
+        OIDC 单点登录：绑定企业 IdP（Keycloak / Azure AD / Okta / Authing）。
+        用户首次 SSO 登录自动开通账号（JIT），身份以 IdP subject 硬关联。</p>
+      <label class="chk-row">
+        <input type="checkbox" v-model="oidc.enabled" /> 启用 SSO 登录入口
+      </label>
+      <div class="grid2">
+        <label>Issuer 地址
+          <input v-model="oidc.issuer" placeholder="https://idp.example.com/realms/main" /></label>
+        <label>Client ID<input v-model="oidc.client_id" /></label>
+        <label>Client Secret <span class="dim">{{ oidcInfo?.has_secret ? "（已保存，留空不改）" : "" }}</span>
+          <input v-model="oidc.client_secret" type="password" autocomplete="new-password" /></label>
+        <label>回调地址（配到 IdP）
+          <input :value="callbackUrl" readonly /></label>
+      </div>
+      <div class="row"><button class="primary" @click="saveOidc">保存 SSO 配置</button></div>
+    </section>
   </main>
 </template>
 
@@ -107,7 +127,7 @@ import { api, type SmtpInfo } from "../api";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
-const tab = ref<"email" | "users" | "byok">("email");
+const tab = ref<"email" | "users" | "byok" | "sso">("email");
 
 // —— SMTP ——
 const smtpInfo = ref<SmtpInfo | null>(null);
@@ -203,10 +223,38 @@ async function removeKey(name: string) {
   } catch (e) { toast.error(e); }
 }
 
-onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); });
+// —— OIDC ——
+interface OidcInfo { enabled: boolean; issuer?: string; client_id?: string;
+                     has_secret?: boolean }
+const oidcInfo = ref<OidcInfo | null>(null);
+const oidc = reactive({ enabled: false, issuer: "", client_id: "", client_secret: "" });
+const callbackUrl = `${location.origin}/api/v1/auth/oidc/callback`;
+
+async function loadOidc() {
+  try {
+    const d = await api.getOidc();
+    oidcInfo.value = d;
+    oidc.enabled = d.enabled;
+    oidc.issuer = d.issuer ?? "";
+    oidc.client_id = d.client_id ?? "";
+  } catch (e) { toast.error(e); }
+}
+async function saveOidc() {
+  if (!oidc.issuer || !oidc.client_id) { toast.error("Issuer 和 Client ID 必填"); return; }
+  try {
+    oidcInfo.value = await api.putOidc({ enabled: oidc.enabled, issuer: oidc.issuer,
+                                         client_id: oidc.client_id,
+                                         client_secret: oidc.client_secret || undefined }) as OidcInfo;
+    oidc.client_secret = "";
+    toast.ok("SSO 配置已保存");
+  } catch (e) { toast.error(e); }
+}
+
+onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadOidc(); });
 watch(tab, (t) => {
   if (t === "users") loadUsers();
   if (t === "byok") loadProviders();
+  if (t === "sso") loadOidc();
 });
 </script>
 
@@ -233,4 +281,6 @@ th { color: var(--text-dim); }
 .state.off { color: var(--red); border: 1px solid var(--red); }
 .state.pend { color: var(--accent); border: 1px solid var(--accent); }
 .dim { color: var(--text-dim); }
+.chk-row { flex-direction: row; align-items: center; gap: 8px; }
+.chk-row input { width: auto; }
 </style>

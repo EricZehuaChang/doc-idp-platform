@@ -62,6 +62,50 @@ async def put_smtp(body: SmtpBody):
         return mailer.public_view(cfg)
 
 
+# —— OIDC SSO config (§11.9): platform-level IdP binding ——
+
+@router.get("/oidc")
+async def get_oidc():
+    from app.auth import oidc
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        return oidc.public_view(await oidc.load_config(s))
+
+
+class OidcBody(BaseModel):
+    enabled: bool = True
+    issuer: str
+    client_id: str
+    client_secret: str | None = None    # None = keep stored
+
+
+@router.put("/oidc")
+async def put_oidc(body: OidcBody):
+    from app.auth import oidc as oidc_mod
+    from app.auth import security as sec
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        old = await oidc_mod.load_config(s) or {}
+        cfg = {"enabled": body.enabled, "issuer": body.issuer.rstrip("/"),
+               "client_id": body.client_id,
+               "client_secret_enc": old.get("client_secret_enc", "")}
+        if body.client_secret:
+            cfg["client_secret_enc"] = sec.encrypt_value(body.client_secret)
+        row = await s.get(PlatformSetting, oidc_mod.SETTING_KEY)
+        if row is None:
+            s.add(PlatformSetting(key=oidc_mod.SETTING_KEY, value=cfg))
+        else:
+            row.value = cfg
+        s.add(AuditLog(tenant_id=current_tenant(), actor=current_actor()["name"],
+                       action="settings.oidc_updated", detail={"issuer": cfg["issuer"]}))
+        await s.commit()
+        return oidc_mod.public_view(cfg)
+
+
 # —— tenant BYOK provider keys (§11.10): bring-your-own model key per tenant ——
 
 @router.get("/providers")
