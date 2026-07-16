@@ -1,4 +1,5 @@
 """Data & analytics API (design v0.2 §7 groups 4-5):
+- Home: metric strip + the full task ledger (Insavlo home shape)
 - Cabinet: structured results of decided files, per skill, JSON or CSV export
 - Stats: skill quality metrics from day-one data (fill rate / correction rate /
   straight-through rate — PM item #1, the "how accurate is it" answer)
@@ -6,18 +7,99 @@
 import csv
 import io
 import json
+from datetime import datetime, time, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 
 from app.db import session_factory
-from app.models import Correction, FileRecord, Transaction
+from app.models import CreditAccount, CreditLedger, FileRecord, Correction, Transaction
 from app.tenancy import current_tenant
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
 
 _DONE = ("passed", "completed", "exported")
+
+
+@router.get("/files")
+async def list_files(status: str | None = None, page: int = 1, page_size: int = 20):
+    """Task ledger for the Home page: every file, newest first, filterable by
+    status, paged — the Insavlo home-table shape."""
+    tenant = current_tenant()
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+    sf = session_factory()
+    async with sf() as s:
+        base = (select(FileRecord, Transaction.skill_code)
+                .join(Transaction, FileRecord.transaction_id == Transaction.id)
+                .where(FileRecord.tenant_id == tenant))
+        count_q = (select(func.count()).select_from(FileRecord)
+                   .where(FileRecord.tenant_id == tenant))
+        if status:
+            base = base.where(FileRecord.status == status)
+            count_q = count_q.where(FileRecord.status == status)
+        total = (await s.execute(count_q)).scalar_one()
+        rows = (await s.execute(
+            base.order_by(FileRecord.created_at.desc())
+            .offset((page - 1) * page_size).limit(page_size))).all()
+        data = []
+        for f, sc in rows:
+            size = None
+            try:
+                size = Path(f.storage_path).stat().st_size
+            except OSError:
+                pass
+            data.append({
+                "file_id": f.id, "transaction_id": f.transaction_id,
+                "file_name": f.file_name, "skill_code": sc,
+                "type": Path(f.file_name).suffix.lstrip(".").upper(),
+                "size": size, "page_count": f.page_count, "status": f.status,
+                "created_at": f.created_at.isoformat(),
+                "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+                "verified_by": f.verified_by, "error": f.error,
+            })
+    return {"total": total, "page": page, "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size, "data": data}
+
+
+@router.get("/stats/home")
+async def home_stats():
+    """Metric strip (Insavlo home shape): credits, usage, throughput, backlog."""
+    tenant = current_tenant()
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min,
+                                   tzinfo=timezone.utc)
+    sf = session_factory()
+    async with sf() as s:
+        acct = await s.get(CreditAccount, tenant)
+        used = (await s.execute(
+            select(func.coalesce(func.sum(CreditLedger.amount), 0.0))
+            .where(CreditLedger.tenant_id == tenant,
+                   CreditLedger.kind == "shadow_meter"))).scalar_one()
+
+        def _count(*conds):
+            return select(func.count()).select_from(FileRecord).where(
+                FileRecord.tenant_id == tenant, *conds)
+
+        today = (await s.execute(_count(FileRecord.created_at >= today_start))).scalar_one()
+        passed_docs = (await s.execute(_count(FileRecord.status.in_(_DONE)))).scalar_one()
+        passed_pages = (await s.execute(
+            select(func.coalesce(func.sum(FileRecord.page_count), 0))
+            .where(FileRecord.tenant_id == tenant,
+                   FileRecord.status.in_(_DONE)))).scalar_one()
+        pending = (await s.execute(
+            _count(FileRecord.status == "pending_verification"))).scalar_one()
+        queued = (await s.execute(_count(FileRecord.status == "queued"))).scalar_one()
+        processing = (await s.execute(_count(FileRecord.status == "processing"))).scalar_one()
+        today_done = (await s.execute(
+            _count(FileRecord.status.in_(_DONE),
+                   FileRecord.updated_at >= today_start))).scalar_one()
+    return {"remaining_credits": (acct.paid_balance + acct.gift_balance) if acct else 0,
+            "used_credits": round(float(used), 2), "today_usage": today,
+            "passed_pages": int(passed_pages), "passed_docs": passed_docs,
+            "pending_verification": pending, "queued": queued,
+            "processing": processing, "today_completed": today_done}
 
 
 def _flat_value(v) -> str:
@@ -46,6 +128,39 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
                     "status": f.status, "verified_by": f.verified_by,
                     "created_at": f.created_at.isoformat(), **flat})
     return out
+
+
+@router.get("/stats/usage")
+async def usage_stats(days: int = 7, skill_code: str | None = None):
+    """Dashboard charts (Insavlo dashboard shape): credits consumed per day and
+    per skill, from the shadow-billing ledger."""
+    from datetime import timedelta
+    tenant = current_tenant()
+    days = min(max(days, 1), 366)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    sf = session_factory()
+    async with sf() as s:
+        rows = (await s.execute(
+            select(CreditLedger.created_at, CreditLedger.amount, Transaction.skill_code)
+            .join(Transaction, CreditLedger.transaction_id == Transaction.id, isouter=True)
+            .where(CreditLedger.tenant_id == tenant,
+                   CreditLedger.kind == "shadow_meter",
+                   CreditLedger.created_at >= since))).all()
+    by_day: dict[str, float] = {}
+    by_skill: dict[str, float] = {}
+    for created, amount, sc in rows:
+        if skill_code and sc != skill_code:
+            continue
+        day = created.date().isoformat()
+        by_day[day] = by_day.get(day, 0.0) + float(amount)
+        key = sc or "(unknown)"
+        by_skill[key] = by_skill.get(key, 0.0) + float(amount)
+    return {"days": days,
+            "by_day": [{"date": d, "credits": round(v, 2)}
+                       for d, v in sorted(by_day.items())],
+            "by_skill": sorted(({"skill_code": k, "credits": round(v, 2)}
+                                for k, v in by_skill.items()),
+                               key=lambda x: -x["credits"])}
 
 
 @router.get("/cabinet/{skill_code}")

@@ -10,12 +10,13 @@ import LoginView from "./views/auth/LoginView.vue";
 import OidcCallbackView from "./views/auth/OidcCallbackView.vue";
 import TokenPasswordView from "./views/auth/TokenPasswordView.vue";
 import CabinetView from "./views/CabinetView.vue";
+import DashboardView from "./views/DashboardView.vue";
+import HomeView from "./views/HomeView.vue";
 import QueueView from "./views/QueueView.vue";
 import ReviewView from "./views/ReviewView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import SkillEditorView from "./views/SkillEditorView.vue";
 import SkillsView from "./views/SkillsView.vue";
-import StatsView from "./views/StatsView.vue";
 
 // entry pages reachable without a session (account flows carry their own token)
 const PUBLIC = new Set(["/login", "/forgot", "/reset", "/activate", "/oidc"]);
@@ -23,19 +24,22 @@ const PUBLIC = new Set(["/login", "/forgot", "/reset", "/activate", "/oidc"]);
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: "/", redirect: "/queue" },
+    { path: "/", redirect: "/home" },
+    { path: "/home", component: HomeView },
     { path: "/login", component: LoginView },
     { path: "/forgot", component: ForgotView },
     { path: "/reset", component: TokenPasswordView, props: { mode: "reset" } },
     { path: "/activate", component: TokenPasswordView, props: { mode: "activate" } },
     { path: "/oidc", component: OidcCallbackView },
     { path: "/change-password", component: ChangePasswordView },
-    { path: "/queue", component: QueueView },
+    { path: "/tasks", component: QueueView },
+    { path: "/queue", redirect: "/tasks" },
     { path: "/review/:fileId", component: ReviewView, props: true },
     { path: "/skills", component: SkillsView },
     { path: "/skills/:code", component: SkillEditorView, props: true },
     { path: "/cabinet", component: CabinetView },
-    { path: "/stats", component: StatsView },
+    { path: "/dashboard", component: DashboardView },
+    { path: "/stats", redirect: "/dashboard" },
     { path: "/settings", component: SettingsView },
   ],
 });

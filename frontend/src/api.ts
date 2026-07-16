@@ -101,6 +101,20 @@ export interface SkillDetail {
   versions: { version: number; status: string; changelog: string }[];
   latest_package: SkillPackage | null;
 }
+export interface HomeStats {
+  remaining_credits: number; used_credits: number; today_usage: number;
+  passed_pages: number; passed_docs: number; pending_verification: number;
+  queued: number; processing: number; today_completed: number;
+}
+export interface FileRow {
+  file_id: string; transaction_id: string; file_name: string; skill_code: string;
+  type: string; size: number | null; page_count: number; status: string;
+  created_at: string; updated_at: string | null; verified_by: string | null;
+  error: string | null;
+}
+export interface FilesPage {
+  total: number; page: number; page_size: number; total_pages: number; data: FileRow[];
+}
 export interface SmtpInfo {
   configured: boolean; has_password?: boolean; host?: string; port?: number;
   security?: string; username?: string; from_addr?: string; from_name?: string;
@@ -114,6 +128,31 @@ export interface DryRunEntry {
 export interface LoginResult {
   access_token: string; token_type: string; role: string;
   tenant_id: string; email: string; must_change_password: boolean;
+}
+
+/** authenticated binary fetch — <img>/pdf.js/anchor can't carry the Bearer */
+export async function fetchBlob(url: string): Promise<Blob> {
+  const headers: Record<string, string> = { "X-Tenant-Id": "default" };
+  if (session.token) headers["Authorization"] = `Bearer ${session.token}`;
+  const resp = await fetch(url, { headers });
+  if (resp.status === 401 && session.authRequired) {
+    clearSession();
+    window.location.hash = "#/login";
+    throw new Error("登录已过期，请重新登录");
+  }
+  if (!resp.ok) throw new Error(`下载失败（HTTP ${resp.status}）`);
+  return resp.blob();
+}
+
+/** authenticated download-to-disk (export links) */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const blob = await fetchBlob(url);
+  const obj = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = obj;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(obj);
 }
 
 export const api = {
@@ -177,6 +216,14 @@ export const api = {
     req<{ rows: Record<string, string>[] }>("GET", `/api/v1/cabinet/${skill}`),
   cabinetCsvUrl: (skill: string) => `/api/v1/cabinet/${skill}/export.csv`,
   stats: () => req<{ skills: SkillStat[] }>("GET", "/api/v1/stats/skills"),
+  homeStats: () => req<HomeStats>("GET", "/api/v1/stats/home"),
+  usageStats: (days: number, skill_code?: string) =>
+    req<{ by_day: { date: string; credits: number }[];
+          by_skill: { skill_code: string; credits: number }[] }>(
+      "GET", `/api/v1/stats/usage?days=${days}${skill_code ? `&skill_code=${skill_code}` : ""}`),
+  files: (page: number, status?: string) =>
+    req<FilesPage>("GET",
+      `/api/v1/files?page=${page}&page_size=20${status ? `&status=${status}` : ""}`),
   // account (§11.8)
   login: (email: string, password: string) =>
     req<LoginResult>("POST", "/api/v1/auth/login", { email, password }),

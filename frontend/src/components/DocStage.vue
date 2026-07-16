@@ -14,7 +14,7 @@
     <!-- images render directly; single page, UDR dims from pages[0] -->
     <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate && !rotation }"
          @pointerdown="down($event, 1)" @pointermove="move" @pointerup="up">
-      <img :src="src" @load="ready = true" draggable="false" />
+      <img v-if="imgUrl" :src="imgUrl" @load="ready = true" draggable="false" />
       <svg v-if="ready && pageDim(1)" class="overlay"
            :viewBox="`0 0 ${pageDim(1)!.width} ${pageDim(1)!.height}`"
            preserveAspectRatio="none">
@@ -28,7 +28,8 @@
 
     <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
     <div v-else-if="!isPdf" class="no-preview dim">
-      该格式暂不支持原件预览 —— <a :href="src" download>下载原件</a>
+      该格式暂不支持原件预览 ——
+      <a href="#" @click.prevent="downloadFile(src, fileName)">下载原件</a>
     </div>
 
     <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay -->
@@ -59,6 +60,7 @@
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { downloadFile, fetchBlob } from "../api";
 
 // pdf.js must be imported AFTER scrubbing any leaked Node `process` global:
 // Electron-embedded webviews (e.g. IDE preview panes) expose one in the page,
@@ -118,13 +120,24 @@ function pageDim(no: number): { width: number; height: number } | null {
   return v ? { width: v.vpW, height: v.vpH } : null;
 }
 
+// original bytes always come through an authenticated fetch — bare <img src>
+// and pdf.js URL loading can't carry the Bearer token (401 under auth-on)
+const imgUrl = ref("");
+
+async function loadImage() {
+  if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
+  imgUrl.value = URL.createObjectURL(await fetchBlob(props.src));
+}
+
 async function renderPdf() {
   loadingTask?.destroy();
   loadingTask = null;
   pdfPages.value = [];
-  if (isImage.value || !isPdf.value) return;
+  if (isImage.value) { await loadImage(); return; }
+  if (!isPdf.value) return;
+  const blob = await fetchBlob(props.src);
   const pdfjs = await loadPdfjs();
-  loadingTask = pdfjs.getDocument({ url: new URL(props.src, location.href).href });
+  loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer() });
   const doc = await loadingTask.promise;
   pdfPages.value = await Promise.all(
     Array.from({ length: doc.numPages }, async (_, i) => {
@@ -212,7 +225,10 @@ watch(() => props.src, () => {
   rotation.value = 0;
   renderPdfSafe();
 }, { immediate: true });
-onBeforeUnmount(() => loadingTask?.destroy());
+onBeforeUnmount(() => {
+  loadingTask?.destroy();
+  if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
+});
 </script>
 
 <style scoped>

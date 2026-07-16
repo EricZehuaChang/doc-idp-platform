@@ -8,7 +8,7 @@ import logging
 from sqlalchemy import select
 
 from app.db import session_factory
-from app.models import CreditLedger
+from app.models import CreditLedger, FileRecord
 
 log = logging.getLogger("idp.billing")
 
@@ -24,9 +24,11 @@ async def shadow_meter(tenant_id: str, file_id: str, pages: int, usage: dict) ->
             select(CreditLedger.id).where(CreditLedger.idempotency_key == key))).first()
         if exists:                      # replay-safe
             return
+        f = await s.get(FileRecord, file_id)
         s.add(CreditLedger(
             tenant_id=tenant_id, kind="shadow_meter",
             amount=pages * DEFAULT_RATE_PER_PAGE, bucket="paid",
+            transaction_id=f.transaction_id if f else None,   # dashboard per-skill rollup
             idempotency_key=key,
             note=(f"pages={pages} in={usage.get('prompt_tokens', 0)} "
                   f"out={usage.get('completion_tokens', 0)}")))

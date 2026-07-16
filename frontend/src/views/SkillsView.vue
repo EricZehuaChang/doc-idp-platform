@@ -21,7 +21,8 @@
           <td><span class="state" :class="s.state">{{ s.state === "active" ? "启用" : s.state }}</span></td>
           <td class="ops">
             <router-link :to="`/skills/${s.skill_code}`"><button class="primary">编辑</button></router-link>
-            <a :href="api.skillExportUrl(s.skill_code)" download><button>导出 YAML</button></a>
+            <button @click="downloadFile(api.skillExportUrl(s.skill_code),
+                                         `${s.skill_code}.yaml`)">导出 YAML</button>
           </td>
         </tr>
       </tbody>
@@ -39,7 +40,7 @@
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed } from "vue";
 import { useRouter } from "vue-router";
-import { api, type SkillInfo } from "../api";
+import { api, downloadFile, type SkillInfo } from "../api";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 

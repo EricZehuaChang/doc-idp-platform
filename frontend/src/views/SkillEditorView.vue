@@ -16,8 +16,8 @@
         <button class="primary" @click="saveDraft">{{ isNew ? "创建技能" : "存为新草稿" }}</button>
         <button v-if="!isNew && currentVersion?.status === 'draft'" class="confirm"
                 @click="publish">发布 v{{ currentVersion.version }}</button>
-        <a v-if="!isNew" :href="api.skillExportUrl(code)" download>
-          <button>导出 YAML</button></a>
+        <button v-if="!isNew"
+                @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">导出 YAML</button>
       </div>
     </div>
 
@@ -232,7 +232,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { api, type DryRunEntry, type FieldCell, type FieldSpec, type SkillPackage } from "../api";
+import { api, downloadFile, type DryRunEntry, type FieldCell, type FieldSpec,
+         type SkillPackage } from "../api";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 

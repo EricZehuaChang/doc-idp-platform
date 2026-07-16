@@ -8,9 +8,8 @@
           {{ s.name }}（{{ s.skill_code }}）
         </option>
       </select>
-      <a v-if="skill && rows.length" :href="api.cabinetCsvUrl(skill)">
-        <button>导出 CSV</button>
-      </a>
+      <button v-if="skill && rows.length"
+              @click="downloadFile(api.cabinetCsvUrl(skill), `${skill}.csv`)">导出 CSV</button>
       <span class="dim" v-if="skill">{{ rows.length }} 条</span>
     </div>
     <div class="table-scroll" v-if="rows.length">
@@ -34,7 +33,7 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
-import { api, type SkillInfo } from "../api";
+import { api, downloadFile, type SkillInfo } from "../api";
 import Skeleton from "../components/Skeleton.vue";
 
 const skill = ref("");

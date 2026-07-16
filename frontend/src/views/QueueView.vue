@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed } from "vue";
-import { api, type QueueItem } from "../api";
+import { api, fetchBlob, type QueueItem } from "../api";
 import Skeleton from "../components/Skeleton.vue";
 
 // TanStack Query replaces the hand-rolled setInterval poll: same 5s cadence,
@@ -57,7 +57,8 @@ function prefetch(it: QueueItem) {
   if (prefetched.has(it.file_id)) return;
   prefetched.add(it.file_id);
   if (/\.(png|jpe?g|bmp|webp)$/i.test(it.file_name)) {
-    new Image().src = api.downloadUrl(it.file_id);
+    // authenticated fetch warms the HTTP cache; result discarded on purpose
+    fetchBlob(api.downloadUrl(it.file_id)).catch(() => prefetched.delete(it.file_id));
   }
 }
 
