@@ -1,21 +1,28 @@
-// Thin API client. Dev identity headers (X-Tenant-Id / X-User) — replaced by
-// real auth in M1.5; the header names match backend tenancy/review contracts.
-const TENANT = "default";
-const USER = localStorage.getItem("idp_user") || "reviewer-1";
+// API client. Auth-on: Bearer JWT from the session store, 401 kicks back to
+// /login. Auth-off (lite/dev): the M1 dev headers keep working unchanged.
+import { clearSession, session } from "./session";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    "X-Tenant-Id": "default",
+    "X-User": session.email || localStorage.getItem("idp_user") || "reviewer-1",
+    ...(body ? { "Content-Type": "application/json" } : {}),
+  };
+  if (session.token) headers["Authorization"] = `Bearer ${session.token}`;
   const resp = await fetch(url, {
     method,
-    headers: {
-      "X-Tenant-Id": TENANT,
-      "X-User": USER,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (resp.status === 401 && session.authRequired) {
+    clearSession();
+    window.location.hash = "#/login";
+    throw new Error("登录已过期，请重新登录");
+  }
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text.slice(0, 200)}`);
+    let detail = "";
+    try { detail = (await resp.json()).detail ?? ""; } catch { /* non-JSON body */ }
+    throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
   }
   return resp.json() as Promise<T>;
 }
@@ -50,21 +57,40 @@ export interface SkillStat {
 
 export interface SkillInfo { skill_code: string; name: string; kind: string; state: string }
 
+export interface LoginResult {
+  access_token: string; token_type: string; role: string;
+  tenant_id: string; email: string; must_change_password: boolean;
+}
+
 export const api = {
+  // review workbench
   queue: () => req<QueueItem[]>("GET", "/api/v1/review/queue"),
   detail: (id: string) => req<ReviewDetail>("GET", `/api/v1/review/${id}`),
   lock: (id: string) => req("POST", `/api/v1/review/${id}/lock`),
   unlock: (id: string) => req("POST", `/api/v1/review/${id}/unlock`),
+  assign: (id: string, assignee: string) =>
+    req("POST", `/api/v1/review/${id}/assign`, { assignee }),
   patchFields: (id: string,
                 edits: { field: string; value: string; bbox?: number[]; page?: number }[]) =>
     req("PATCH", `/api/v1/review/${id}/fields`, { edits }),
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
+  // data & stats
   skills: () => req<SkillInfo[]>("GET", "/api/v1/skills"),
   cabinet: (skill: string) =>
     req<{ rows: Record<string, string>[] }>("GET", `/api/v1/cabinet/${skill}`),
   cabinetCsvUrl: (skill: string) => `/api/v1/cabinet/${skill}/export.csv`,
   stats: () => req<{ skills: SkillStat[] }>("GET", "/api/v1/stats/skills"),
-  currentUser: USER,
+  // account (§11.8)
+  login: (email: string, password: string) =>
+    req<LoginResult>("POST", "/api/v1/auth/login", { email, password }),
+  forgot: (email: string) => req("POST", "/api/v1/auth/forgot", { email }),
+  reset: (token: string, password: string) =>
+    req("POST", "/api/v1/auth/reset", { token, password }),
+  activate: (token: string, password: string) =>
+    req("POST", "/api/v1/auth/activate", { token, password }),
+  changePassword: (old_password: string, new_password: string) =>
+    req("POST", "/api/v1/auth/change-password", { old_password, new_password }),
+  get currentUser() { return session.email || localStorage.getItem("idp_user") || "reviewer-1"; },
 };

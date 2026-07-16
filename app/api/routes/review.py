@@ -4,8 +4,8 @@ closing segment. Third parties may embed this whole flow (API-first).
 Concepts kept distinct (PM item #2): assignee = who SHOULD review;
 locked_by = who IS reviewing right now (TTL lock, auto-expires — HA §2.6).
 Every field edit writes a Correction row — the accuracy-proxy data feeding the
-skill quality dashboard (PM item #1). M1 identity: X-User header (dev mode);
-TODO(M1.5): real user id from JWT once auth lands.
+skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
+(headers can't impersonate past the credential); X-User header in dev mode.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -13,13 +13,21 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
-from app.tenancy import current_tenant
+from app.tenancy import current_actor, current_tenant
 
 router = APIRouter(prefix="/api/v1/review", tags=["review"])
 
 LOCK_TTL = timedelta(minutes=15)
+
+
+def _identity(x_user: str) -> str:
+    """Reviewer identity for locks/corrections/audit."""
+    if get_settings().auth_mode == "on":
+        return current_actor()["name"]
+    return x_user
 
 
 def _now() -> datetime:
@@ -101,7 +109,7 @@ async def assign(file_id: str, body: AssignBody,
     async with sf() as s:
         f = await _get_file(s, file_id)
         f.assignee = body.assignee
-        s.add(AuditLog(tenant_id=f.tenant_id, actor=x_user, action="review.assign",
+        s.add(AuditLog(tenant_id=f.tenant_id, actor=_identity(x_user), action="review.assign",
                        detail={"file_id": file_id, "assignee": body.assignee}))
         await s.commit()
     return {"file_id": file_id, "assignee": body.assignee}
@@ -111,17 +119,18 @@ async def assign(file_id: str, body: AssignBody,
 async def lock(file_id: str, x_user: str = Header(default="anonymous")):
     """Acquire the review lock. 409 if actively held by someone else;
     expired locks are silently reclaimed (reviewer went offline, §2.6)."""
+    user = _identity(x_user)
     sf = session_factory()
     async with sf() as s:
         f = await _get_file(s, file_id)
         if f.status != "pending_verification":
             raise HTTPException(400, f"file not reviewable, status={f.status}")
-        if f.locked_by and f.locked_by != x_user and not _lock_expired(f):
+        if f.locked_by and f.locked_by != user and not _lock_expired(f):
             raise HTTPException(409, f"locked by {f.locked_by}")
-        f.locked_by = x_user
+        f.locked_by = user
         f.locked_at = _now()
         await s.commit()
-    return {"file_id": file_id, "locked_by": x_user, "ttl_minutes": 15}
+    return {"file_id": file_id, "locked_by": user, "ttl_minutes": 15}
 
 
 @router.post("/{file_id}/unlock")
@@ -129,7 +138,7 @@ async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
     sf = session_factory()
     async with sf() as s:
         f = await _get_file(s, file_id)
-        if f.locked_by == x_user:
+        if f.locked_by == _identity(x_user):
             f.locked_by = None
             f.locked_at = None
             await s.commit()
@@ -154,10 +163,11 @@ async def patch_fields(file_id: str, body: FieldsPatch,
     """Apply human corrections. Business rules: edit requires holding the lock;
     each change writes a Correction row (old->new, reviewer, skill version);
     a human-set value becomes confidence 3 and is marked $corrected."""
+    user = _identity(x_user)
     sf = session_factory()
     async with sf() as s:
         f = await _get_file(s, file_id)
-        if f.locked_by != x_user or _lock_expired(f):
+        if f.locked_by != user or _lock_expired(f):
             raise HTTPException(423, "acquire the lock before editing")
         txn = await s.get(Transaction, f.transaction_id)
         result = dict(f.result or {})
@@ -175,7 +185,7 @@ async def patch_fields(file_id: str, body: FieldsPatch,
                 tenant_id=f.tenant_id, file_id=f.id,
                 skill_code=txn.skill_code if txn else "",
                 skill_version=txn.skill_version if txn else 0,
-                field=e.field, old_value=old, new_value=e.value, reviewer=x_user))
+                field=e.field, old_value=old, new_value=e.value, reviewer=user))
             cell = dict(cell)
             cell["$value"] = e.value
             cell["$confidence"] = 3          # human truth
@@ -198,13 +208,13 @@ class DecisionBody(BaseModel):
 @router.post("/{file_id}/confirm")
 async def confirm(file_id: str, body: DecisionBody | None = None,
                   x_user: str = Header(default="anonymous")):
-    return await _decide(file_id, "passed", x_user, body.comment if body else "")
+    return await _decide(file_id, "passed", _identity(x_user), body.comment if body else "")
 
 
 @router.post("/{file_id}/reject")
 async def reject(file_id: str, body: DecisionBody | None = None,
                  x_user: str = Header(default="anonymous")):
-    return await _decide(file_id, "rejected", x_user, body.comment if body else "")
+    return await _decide(file_id, "rejected", _identity(x_user), body.comment if body else "")
 
 
 async def _decide(file_id: str, new_status: str, actor: str, comment: str) -> dict:

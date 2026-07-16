@@ -55,12 +55,7 @@ function prefetch(it: QueueItem) {
 // claim = set assignee to me (PM item #2: assignee is "whose job", distinct
 // from the review lock which is "who is editing right now")
 async function claim(it: QueueItem) {
-  await fetch(`/api/v1/review/${it.file_id}/assign`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Tenant-Id": "default",
-               "X-User": api.currentUser },
-    body: JSON.stringify({ assignee: api.currentUser }),
-  });
+  await api.assign(it.file_id, api.currentUser);
   await qc.invalidateQueries({ queryKey: ["queue"] });
 }
 </script>
