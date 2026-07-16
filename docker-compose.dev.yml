@@ -1,0 +1,54 @@
+# Dev infrastructure only (design v0.2 §8: lite tier runs without any of this;
+# standard tier gets a full compose in M3 packaging). This file provides the two
+# stateful services that M2 enterprise features depend on:
+#   - PostgreSQL 16  -> RLS tenant isolation (design v0.2 §11.4 pooled+RLS form)
+#   - Redis 7        -> Celery broker/backend for the split worker pools (§9.2)
+#
+# Usage (repo root):
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml down        # data kept in volumes
+#
+# Ports bind to 127.0.0.1 only — this is a developer machine, never expose LAN.
+# Password is a dev default; production compose will demand it via ${...:?}.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: idp-postgres
+    environment:
+      POSTGRES_USER: idp
+      POSTGRES_PASSWORD: ${IDP_PG_PASSWORD:-idp_dev_pw}
+      POSTGRES_DB: idp
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - idp-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idp -d idp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: idp-redis
+    # AOF on: Celery task messages survive a container restart (HA v2.0 §2.4 —
+    # queues are rebuildable but not losing them cheaply is still better).
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - idp-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  idp-pg-data:
+  idp-redis-data:
