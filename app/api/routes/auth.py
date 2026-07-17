@@ -164,10 +164,15 @@ async def invite(body: InviteBody):
             token = await tokens.issue(s, user, "invite")
         except tokens.RateLimited as e:
             raise HTTPException(429, str(e))
-        await mailer.send(
-            s, user.email, "您被邀请加入文档识别平台",
-            "请打开以下链接设置密码并激活账号（24 小时内有效，仅可使用一次）：\n"
-            f"{_frontend_base()}/#/activate?token={token}")
+        try:
+            await mailer.send(
+                s, user.email, "您被邀请加入文档识别平台",
+                "请打开以下链接设置密码并激活账号（24 小时内有效，仅可使用一次）：\n"
+                f"{_frontend_base()}/#/activate?token={token}")
+        except mailer.MailerNotConfigured:
+            raise HTTPException(409, "SMTP 未配置：请先在 设置→邮件 配置发信")
+        except Exception as e:   # SMTP is a network edge: humanize, never 500
+            raise HTTPException(502, f"邀请邮件发送失败（检查发信配置或稍后重试）：{str(e)[:150]}")
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="auth.invite_sent", detail={"email": user.email}))
         await s.commit()
@@ -222,10 +227,15 @@ async def forgot_password(body: ForgotBody):
                 token = await tokens.issue(s, user, "reset")
             except tokens.RateLimited as e:
                 raise HTTPException(429, str(e))
-            await mailer.send(
-                s, user.email, "重置您的密码",
-                "请打开以下链接设置新密码（24 小时内有效，仅可使用一次）：\n"
-                f"{_frontend_base()}/#/reset?token={token}")
+            try:
+                await mailer.send(
+                    s, user.email, "重置您的密码",
+                    "请打开以下链接设置新密码（24 小时内有效，仅可使用一次）：\n"
+                    f"{_frontend_base()}/#/reset?token={token}")
+            except mailer.MailerNotConfigured:
+                raise HTTPException(409, "SMTP 未配置，无法发送重置邮件：请联系管理员重置密码")
+            except Exception as e:
+                raise HTTPException(502, f"重置邮件发送失败，请稍后重试：{str(e)[:150]}")
             await s.commit()
     return {"status": "ok", "message": "若该邮箱存在账号，重置邮件已发送"}
 

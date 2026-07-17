@@ -64,7 +64,8 @@
               <span v-else class="state off">已停用</span>
             </td>
             <td class="dim">{{ u.auth_provider }}</td>
-            <td>
+            <td class="row-ops">
+              <button v-if="u.pending" @click="resend(u)">重发邀请</button>
               <button v-if="u.active" class="danger" @click="toggle(u, false)">停用</button>
               <button v-else @click="toggle(u, true)">恢复</button>
             </td>
@@ -190,6 +191,12 @@ async function createDirect() {
     await loadUsers();
   } catch (e) { toast.error(e); }
 }
+async function resend(u: UserRow) {
+  try {
+    await api.invite(u.email, u.role);   // backend reissues the token (60s cooldown)
+    toast.ok(`邀请已重发至 ${u.email}`);
+  } catch (e) { toast.error(e); }
+}
 async function toggle(u: UserRow, active: boolean) {
   try { await api.patchUser(u.id, { active }); await loadUsers(); }
   catch (e) { toast.error(e); }
@@ -286,4 +293,5 @@ th { color: var(--text-dim); }
 .dim { color: var(--text-dim); }
 .chk-row { flex-direction: row; align-items: center; gap: 8px; }
 .chk-row input { width: auto; }
+.row-ops { display: flex; gap: 6px; }
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <main class="editor" v-if="pkg">
+  <main class="editor" :class="{ 'no-rail': isNew }" v-if="pkg">
     <!-- left rail: version history (Insavlo editor layout) -->
     <aside v-if="!isNew" class="ver-rail">
       <div class="rail-head">版本历史</div>
@@ -434,7 +434,8 @@ async function goldenCheck() {
 <style scoped>
 .editor { display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(280px, 340px);
   gap: 0; align-items: start; min-height: calc(100vh - 52px); }
-.editor:has(.main-col:only-child) { grid-template-columns: 1fr; }
+/* new-skill page has no version rail — drop its column or main lands in 210px */
+.editor.no-rail { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
 
 /* version rail */
 .ver-rail { position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto;

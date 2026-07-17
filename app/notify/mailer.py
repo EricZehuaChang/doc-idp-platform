@@ -72,7 +72,7 @@ async def _deliver(cfg: dict, to: str, subject: str, body: str) -> None:
 
     security_mode = cfg.get("security", "starttls")
     kwargs: dict = {"hostname": cfg["host"], "port": int(cfg.get("port") or 587),
-                    "timeout": 15}
+                    "timeout": 30}
     if security_mode == "ssl":
         kwargs["use_tls"] = True
         kwargs["tls_context"] = ssl.create_default_context()
