@@ -1,6 +1,6 @@
 <template>
   <main class="page">
-    <PageHeader title="总览" desc="平台运行一目了然：用量、吞吐与待办。" />
+    <PageHeader title="主页" desc="平台运行一目了然：用量、吞吐与待办。" />
 
     <!-- metric strip -->
     <div class="strip card-panel">

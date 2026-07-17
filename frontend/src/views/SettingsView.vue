@@ -262,9 +262,10 @@ watch(tab, (t) => {
 
 <style scoped>
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-.page { max-width: 1000px; }
 .panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+/* forms cap their own width for readability; tables stretch full width */
+.grid2 { max-width: 940px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
   color: var(--text-dim); }

@@ -52,8 +52,10 @@ select {
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
 }
 
-/* —— shared page scaffold: every routed page uses the same rhythm —— */
-.page { padding: 20px 24px 32px; max-width: 1440px; margin: 0 auto; width: 100%; }
+/* —— shared page scaffold: every routed page uses the same rhythm ——
+   full-bleed width (Insavlo console shape): data tables and cards stretch to
+   the viewport; only form clusters cap their own width for readability */
+.page { padding: 20px 28px 32px; width: 100%; }
 .card-panel { background: var(--bg-panel); border: 1px solid var(--border);
   border-radius: var(--radius); }
 

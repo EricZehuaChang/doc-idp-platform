@@ -7,7 +7,7 @@
     <header class="navbar">
       <span class="logo">DOC·IDP</span>
       <nav>
-        <router-link to="/home">Home</router-link>
+        <router-link to="/home">主页</router-link>
         <router-link to="/tasks">任务</router-link>
         <router-link to="/skills">技能</router-link>
         <router-link to="/cabinet">数据柜</router-link>

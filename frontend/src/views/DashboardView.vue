@@ -140,7 +140,8 @@ const BarChart = defineComponent({
 .range { padding: 2px 10px; font-size: 12px; }
 .sel { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 4px 8px; max-width: 220px; }
-:deep(.chart) { width: 100%; height: auto; }
+:deep(.chart) { width: 100%; max-width: 900px; height: auto; display: block;
+  margin: 0 auto; }
 :deep(.grid) { stroke: var(--border); stroke-width: 1; }
 :deep(.tick) { fill: var(--text-dim); font-size: 10px; }
 :deep(.val) { fill: var(--text); font-size: 10px; }
