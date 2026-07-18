@@ -28,6 +28,7 @@
           <button class="primary" @click="saveDraft">💾 {{ isNew ? "创建技能" : "保存" }}</button>
           <button v-if="!isNew && selectedStatus === 'draft'" class="confirm"
                   @click="publishSelected">🚀 发布</button>
+          <button v-if="!isNew" @click="apiModal = true">🔌 API 接入</button>
           <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
             导出 YAML</button>
           <button v-if="!isNew" class="danger" @click="removeSkill">删除</button>
@@ -203,6 +204,7 @@
     <FieldEditModal v-if="editing" :field="editing.spec" :is-new="editing.isNew"
                     :is-column="editing.isColumn"
                     @save="commitEdit" @cancel="editing = null" />
+    <SkillApiModal v-if="apiModal" :skill-code="code" @close="apiModal = false" />
   </main>
   <main v-else class="editor"><Skeleton :rows="8" /></main>
 </template>
@@ -214,6 +216,7 @@ import { api, downloadFile, type DryRunEntry, type FieldCell, type FieldSpec,
          type SkillPackage } from "../api";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
+import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { VERSION_LABELS } from "../labels";
 import { toast } from "../toast";
@@ -229,6 +232,7 @@ const versions = ref<{ version: number; status: string; changelog: string;
                        created_at?: string }[]>([]);
 const selectedVersion = ref<number | null>(null);
 const changelog = ref("");
+const apiModal = ref(false);
 const selectedStatus = computed(() =>
   versions.value.find((v) => v.version === selectedVersion.value)?.status ?? null);
 

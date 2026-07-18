@@ -6,6 +6,7 @@
       <button :class="{ primary: tab === 'users' }" @click="tab = 'users'">用户</button>
       <button :class="{ primary: tab === 'byok' }" @click="tab = 'byok'">模型密钥（BYOK）</button>
       <button :class="{ primary: tab === 'sso' }" @click="tab = 'sso'">单点登录（SSO）</button>
+      <button :class="{ primary: tab === 'apikeys' }" @click="tab = 'apikeys'">API 密钥</button>
     </div>
 
     <!-- —— SMTP —— -->
@@ -120,6 +121,41 @@
       </div>
       <div class="row"><button class="primary" @click="saveOidc">保存 SSO 配置</button></div>
     </section>
+
+    <!-- —— API keys —— -->
+    <section v-if="tab === 'apikeys'" class="panel">
+      <p class="dim">
+        集成方调用平台 API（提交文档/查结果/Webhook）所用的凭据。
+        接口文档与示例见 技能编辑器 →「🔌 API 接入」。</p>
+      <div class="row">
+        <input v-model="keyName" placeholder="密钥名称，如：ERP 集成" class="test-to" />
+        <button class="primary" @click="createKey">＋ 创建密钥</button>
+      </div>
+
+      <!-- show-once panel: the only time the full key is visible -->
+      <div v-if="freshKey" class="fresh-key">
+        <p>⚠️ 完整密钥仅显示这一次，请立即复制保存：</p>
+        <div class="key-line">
+          <code>{{ freshKey }}</code>
+          <button class="primary" @click="copyKey">{{ copied ? "✓ 已复制" : "复制" }}</button>
+        </div>
+      </div>
+
+      <table v-if="apiKeys.length">
+        <thead><tr><th>名称</th><th>前缀</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="k in apiKeys" :key="k.id">
+            <td>{{ k.name }}</td>
+            <td class="code">idp_ak_{{ k.prefix }}…</td>
+            <td><span class="state" :class="k.active ? 'ok' : 'off'">
+              {{ k.active ? "启用" : "已吊销" }}</span></td>
+            <td class="dim">{{ k.created_at ? new Date(k.created_at).toLocaleString() : "-" }}</td>
+            <td><button v-if="k.active" class="danger" @click="revokeKey(k)">吊销</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="dim">还没有密钥。创建一把给你的系统接入用。</p>
+    </section>
   </main>
 </template>
 
@@ -130,7 +166,7 @@ import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
-const tab = ref<"email" | "users" | "byok" | "sso">("email");
+const tab = ref<"email" | "users" | "byok" | "sso" | "apikeys">("email");
 
 // —— SMTP ——
 const smtpInfo = ref<SmtpInfo | null>(null);
@@ -259,11 +295,45 @@ async function saveOidc() {
   } catch (e) { toast.error(e); }
 }
 
-onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadOidc(); });
+// —— API keys ——
+interface KeyRow { id: string; name: string; prefix: string; active: boolean;
+                   created_at: string | null }
+const apiKeys = ref<KeyRow[]>([]);
+const keyName = ref("");
+const freshKey = ref("");
+const copied = ref(false);
+
+async function loadKeys() {
+  try { apiKeys.value = await api.listApiKeys(); } catch (e) { toast.error(e); }
+}
+async function createKey() {
+  try {
+    const r = await api.createApiKey(keyName.value);
+    freshKey.value = r.api_key;
+    copied.value = false;
+    keyName.value = "";
+    toast.ok("密钥已创建——完整密钥仅显示这一次");
+    await loadKeys();
+  } catch (e) { toast.error(e); }
+}
+async function copyKey() {
+  try {
+    await navigator.clipboard.writeText(freshKey.value);
+    copied.value = true;
+  } catch { toast.error("复制失败，请手动选择文本"); }
+}
+async function revokeKey(k: KeyRow) {
+  if (!confirm(`吊销密钥「${k.name}」？使用它的集成将立即失效。`)) return;
+  try { await api.revokeApiKey(k.id); toast.ok("已吊销"); await loadKeys(); }
+  catch (e) { toast.error(e); }
+}
+
+onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadOidc(); loadKeys(); });
 watch(tab, (t) => {
   if (t === "users") loadUsers();
   if (t === "byok") loadProviders();
   if (t === "sso") loadOidc();
+  if (t === "apikeys") loadKeys();
 });
 </script>
 
@@ -294,4 +364,10 @@ th { color: var(--text-dim); }
 .chk-row { flex-direction: row; align-items: center; gap: 8px; }
 .chk-row input { width: auto; }
 .row-ops { display: flex; gap: 6px; }
+.fresh-key { border: 1px solid var(--accent); border-radius: 8px; padding: 12px;
+  background: var(--bg-raised); }
+.fresh-key p { margin: 0 0 8px; color: var(--accent); font-size: 13px; }
+.key-line { display: flex; gap: 10px; align-items: center; }
+.key-line code { background: var(--bg); padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; word-break: break-all; flex: 1; }
 </style>

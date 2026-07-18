@@ -64,6 +64,19 @@ def hash_api_key(full_key: str) -> str:
     return hashlib.sha256(full_key.encode("utf-8")).hexdigest()
 
 
+API_KEY_PREFIX = "idp_ak_"
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Returns (full_key, prefix, key_hash). The full key leaves the process
+    exactly once — at creation time; the DB keeps only prefix + sha256.
+    prefix = first 8 chars of the RANDOM part (the literal idp_ak_ head would
+    make every prefix identical and useless for identification)."""
+    random_part = secrets.token_urlsafe(32)[:32]
+    full_key = f"{API_KEY_PREFIX}{random_part}"
+    return full_key, random_part[:8], hash_api_key(full_key)
+
+
 # —— symmetric encryption for runtime-mutable secrets at rest (SMTP password,
 #    tenant BYOK provider keys). Key derived from the platform JWT secret. ——
 

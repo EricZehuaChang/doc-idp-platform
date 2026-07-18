@@ -54,8 +54,12 @@ class ApiKey(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)   # store hash, never the key
+    # first 8 chars of the random part — the only identifying glimpse admins get
+    # in the list UI (KBase pattern: full key is shown exactly once at creation)
+    prefix: Mapped[str] = mapped_column(String(16), default="")
     name: Mapped[str] = mapped_column(String(100), default="")
     scopes: Mapped[str] = mapped_column(String(255), default="process:write,skills:read")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     quota_mode: Mapped[str] = mapped_column(String(16), default="pool")  # pool|allocated (§12.7)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 

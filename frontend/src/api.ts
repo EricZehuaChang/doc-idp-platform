@@ -269,6 +269,13 @@ export const api = {
   listProviders: () => req<{ providers: { name: string; model: string; active: boolean;
                                           platform_key: boolean; byok_set: boolean }[] }>(
     "GET", "/api/v1/settings/providers"),
+  listApiKeys: () => req<{ id: string; name: string; prefix: string; active: boolean;
+                           created_at: string | null }[]>(
+    "GET", "/api/v1/settings/api-keys"),
+  createApiKey: (name: string) =>
+    req<{ id: string; name: string; prefix: string; api_key: string }>(
+      "POST", "/api/v1/settings/api-keys", { name }),
+  revokeApiKey: (id: string) => req("DELETE", `/api/v1/settings/api-keys/${id}`),
   oidcEnabled: () => req<{ enabled: boolean }>("GET", "/api/v1/auth/oidc/enabled"),
   getOidc: () => req<{ enabled: boolean; issuer?: string; client_id?: string;
                        has_secret?: boolean }>("GET", "/api/v1/settings/oidc"),

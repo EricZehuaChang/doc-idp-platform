@@ -62,6 +62,72 @@ async def put_smtp(body: SmtpBody):
         return mailer.public_view(cfg)
 
 
+# —— tenant API keys (API-first §7): mint/list/revoke integration credentials ——
+
+@router.get("/api-keys")
+async def list_api_keys():
+    from sqlalchemy import select
+
+    from app.models import ApiKey
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        rows = (await s.execute(
+            select(ApiKey).where(ApiKey.tenant_id == current_tenant())
+            .order_by(ApiKey.created_at))).scalars().all()
+        return [{"id": k.id, "name": k.name, "prefix": k.prefix, "active": k.active,
+                 "scopes": k.scopes,
+                 "created_at": k.created_at.isoformat() if k.created_at else None}
+                for k in rows]
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = ""
+
+
+@router.post("/api-keys", status_code=201)
+async def create_api_key(body: ApiKeyCreate):
+    """Mint a tenant API key. The FULL key appears in this response only —
+    the DB stores prefix + sha256 (standard show-once credential pattern)."""
+    from app.auth import security
+    from app.models import ApiKey
+
+    _require_admin()
+    full_key, prefix, key_hash = security.generate_api_key()
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        row = ApiKey(tenant_id=tenant, key_hash=key_hash, prefix=prefix,
+                     name=body.name.strip() or "unnamed")
+        s.add(row)
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="settings.api_key_created",
+                       detail={"name": row.name, "prefix": prefix}))
+        await s.commit()
+        return {"id": row.id, "name": row.name, "prefix": prefix,
+                "api_key": full_key}
+
+
+@router.delete("/api-keys/{key_id}")
+async def revoke_api_key(key_id: str):
+    """Revoke (deactivate) — takes effect on the key's next request."""
+    from app.models import ApiKey
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        row = await s.get(ApiKey, key_id)
+        if row is None or row.tenant_id != current_tenant():
+            raise HTTPException(404, "api key not found")
+        row.active = False
+        s.add(AuditLog(tenant_id=row.tenant_id, actor=current_actor()["name"],
+                       action="settings.api_key_revoked",
+                       detail={"name": row.name, "prefix": row.prefix}))
+        await s.commit()
+    return {"id": key_id, "active": False}
+
+
 # —— OIDC SSO config (§11.9): platform-level IdP binding ——
 
 @router.get("/oidc")
