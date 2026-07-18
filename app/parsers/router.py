@@ -7,7 +7,8 @@ from pathlib import Path
 
 from app.config import get_settings, load_parsers
 from app.parsers import (  # noqa: F401  register plugins
-    electronic, glm_ocr_cloud, monkeyocr_http, ofd, rapidocr_http)
+    electronic, glm_ocr_cloud, monkeyocr_http, ofd, opendataloader,
+    rapidocr_http)
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
@@ -46,7 +47,13 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
         return _make("markitdown").parse(path)
     if suffix == ".pdf":
         try:
-            return _make("pdfplumber").parse(path)   # text layer first
+            # Structured text-layer parse first: headings/reading order/
+            # bordered tables with cell-level bbox, zero token cost.
+            return _make("opendataloader").parse(path)
+        except ParserUnavailable:
+            pass                                     # no wheel/Java, or no text
+        try:
+            return _make("pdfplumber").parse(path)   # pre-upgrade text path
         except ParserUnavailable:
             return _scan_parse(path)                 # scanned PDF -> OCR chain
     if suffix in _IMAGES:
@@ -54,3 +61,24 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
     if suffix == ".ofd":
         return _make("ofd").parse(path)      # three-level handling inside
     raise ParserUnavailable(f"unsupported file type: {suffix}")
+
+
+def escalate_if_tables_missing(path: str, udr: UDR) -> UDR:
+    """Economic escalation (measured on Huaqin SGS-CN samples): opendataloader
+    detects bordered tables only — a borderless table degrades to reading-order
+    paragraphs. When the skill declares table fields but the structured parse
+    found no table blocks, spend the scan-tier engine on this document instead;
+    the free first pass already failed to prove table coverage.
+
+    Scoped to opendataloader output on purpose: pdfplumber never emits table
+    blocks, so escalating there would silently reroute every legacy text-PDF
+    flow to paid OCR. Escalation failure keeps the original UDR — a text-only
+    answer still beats an error."""
+    if udr.parser != "opendataloader":
+        return udr
+    if any(b.type == "table" for p in udr.pages for b in p.blocks):
+        return udr
+    try:
+        return _scan_parse(path)
+    except ParserUnavailable:
+        return udr

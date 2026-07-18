@@ -21,8 +21,14 @@ from app.extraction.pipeline import extract
 from app.integrations import webhooks
 from app.models import FileRecord, SkillVersion, Transaction
 from app.parsers.base import UDR
-from app.parsers.router import parse_document
+from app.parsers.router import escalate_if_tables_missing, parse_document
 from app.skillengine.schema import SkillPackage
+
+
+def skill_expects_tables(pkg: SkillPackage) -> bool:
+    """A skill with table-typed fields needs row/column structure from the
+    parser; drives the table-escalation rule in parse_stage."""
+    return any(f.type == "table" for f in pkg.fields)
 
 log = logging.getLogger("idp.runner")
 
@@ -38,7 +44,7 @@ async def process_transaction(transaction_id: str) -> None:
     async def _one(file_id: str) -> None:
         async with sem:
             try:
-                await parse_stage(file_id, pkg.parser)
+                await parse_stage(file_id, pkg.parser, skill_expects_tables(pkg))
                 await extract_stage(file_id, pkg)
             except Exception as e:
                 log.exception("file %s failed", file_id)
@@ -73,8 +79,14 @@ async def _load_package(s, txn: Transaction) -> SkillPackage:
     return SkillPackage(**row.package)
 
 
-async def parse_stage(file_id: str, parser_pin: str | None) -> None:
-    """Stage 1: document -> UDR persisted on disk + page_count in DB."""
+async def parse_stage(file_id: str, parser_pin: str | None,
+                      expects_tables: bool = False) -> None:
+    """Stage 1: document -> UDR persisted on disk + page_count in DB.
+
+    expects_tables (default False keeps old queued Celery messages valid):
+    when the skill declares table fields and the free structured parse found
+    no tables, re-parse via the scan-tier engine (router escalation rule).
+    A pinned parser is an explicit operator choice and is never overridden."""
     sf = session_factory()
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
@@ -84,6 +96,8 @@ async def parse_stage(file_id: str, parser_pin: str | None) -> None:
 
     # blocking parse runs in a worker thread (async app stays responsive)
     udr = await asyncio.to_thread(parse_document, path, parser_pin)
+    if expects_tables and not parser_pin:
+        udr = await asyncio.to_thread(escalate_if_tables_missing, path, udr)
 
     udr_path = Path(get_settings().data_dir) / "udr" / f"{file_id}.json"
     udr_path.parent.mkdir(parents=True, exist_ok=True)

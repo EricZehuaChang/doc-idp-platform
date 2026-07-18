@@ -25,6 +25,10 @@ parsers = [
     "markitdown>=0.1",   # Office family -> Markdown (design §4.2, MIT)
     "pdfplumber>=0.11",  # electronic PDF text layer with bbox (design §4.2, MIT; PyMuPDF is BANNED: AGPL)
     "pypdf>=5.0",        # physical PDF slicing for multi-doc split (BSD)
+    # Electronic-PDF first pass: structured layout + cell-level bbox, zero
+    # transitive deps (bundled JAR, needs a Java 11+ runtime; parser degrades
+    # to pdfplumber without one). Pin 2.x: Apache-2.0 from 2.0 (pre-2.0 = MPL).
+    "opendataloader-pdf>=2.5,<3",
 ]
 pg = ["asyncpg>=0.29", "alembic>=1.13"]
 dev = [
