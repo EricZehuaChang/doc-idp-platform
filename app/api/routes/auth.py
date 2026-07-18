@@ -165,10 +165,17 @@ async def invite(body: InviteBody):
         except tokens.RateLimited as e:
             raise HTTPException(429, str(e))
         try:
-            await mailer.send(
-                s, user.email, "您被邀请加入文档识别平台",
-                "请打开以下链接设置密码并激活账号（24 小时内有效，仅可使用一次）：\n"
-                f"{_frontend_base()}/#/activate?token={token}")
+            await mailer.send_templated(
+                s, user.email, "您被邀请加入智能文档识别平台",
+                title="账号激活邀请",
+                greeting=f"{user.email.split('@')[0]}，您好：",
+                lines=["管理员邀请您加入智能文档识别平台。",
+                       "请点击下方按钮设置您的登录密码并激活账号。"],
+                action_text="激活账号",
+                action_url=f"{_frontend_base()}/#/activate?token={token}",
+                footer_lines=["链接 24 小时内有效，且仅可使用一次。",
+                              "如果这不是您发起的操作，请忽略本邮件。",
+                              "本邮件由系统自动发送，请勿直接回复。"])
         except mailer.MailerNotConfigured:
             raise HTTPException(409, "SMTP 未配置：请先在 设置→邮件 配置发信")
         except Exception as e:   # SMTP is a network edge: humanize, never 500
@@ -228,10 +235,17 @@ async def forgot_password(body: ForgotBody):
             except tokens.RateLimited as e:
                 raise HTTPException(429, str(e))
             try:
-                await mailer.send(
+                await mailer.send_templated(
                     s, user.email, "重置您的密码",
-                    "请打开以下链接设置新密码（24 小时内有效，仅可使用一次）：\n"
-                    f"{_frontend_base()}/#/reset?token={token}")
+                    title="密码重置请求",
+                    greeting=f"{user.email.split('@')[0]}，您好：",
+                    lines=["我们收到了您在智能文档识别平台的密码重置请求。",
+                           "请点击下方按钮设置新密码。"],
+                    action_text="重置密码",
+                    action_url=f"{_frontend_base()}/#/reset?token={token}",
+                    footer_lines=["链接 24 小时内有效，且仅可使用一次。",
+                                  "如果这不是您发起的操作，请忽略本邮件，您的密码不会被更改。",
+                                  "本邮件由系统自动发送，请勿直接回复。"])
             except mailer.MailerNotConfigured:
                 raise HTTPException(409, "SMTP 未配置，无法发送重置邮件：请联系管理员重置密码")
             except Exception as e:

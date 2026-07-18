@@ -26,6 +26,56 @@ encrypt_password = security.encrypt_value
 decrypt_password = security.decrypt_value
 
 
+# —— branded HTML template (Insavlo-style card: logo / title / message /
+#    prominent action or code / footer notes). Inline styles only — email
+#    clients strip <style> blocks. A plain-text part always rides along. ——
+
+def render_email(*, brand: str, title: str, greeting: str, lines: list[str],
+                 action_text: str | None = None, action_url: str | None = None,
+                 footer_lines: list[str] | None = None) -> tuple[str, str]:
+    """Returns (text_part, html_part). The text part carries the raw URL so
+    HTML-blocking clients (and tests) still get a working link."""
+    footer_lines = footer_lines or []
+    text = "\n".join([f"{greeting}\n", *lines,
+                      *( [f"\n{action_text}：{action_url}"] if action_url else [] ),
+                      "", *footer_lines])
+
+    paras = "".join(
+        f'<p style="margin:0 0 14px;color:#333;font-size:15px;line-height:1.7;">{ln}</p>'
+        for ln in lines)
+    action = ""
+    if action_url:
+        action = (
+            f'<div style="text-align:center;margin:28px 0;">'
+            f'<a href="{action_url}" style="display:inline-block;background:#f0b429;'
+            f'color:#1a1a1a;font-weight:700;font-size:15px;text-decoration:none;'
+            f'padding:13px 36px;border-radius:8px;">{action_text}</a></div>'
+            f'<p style="margin:0 0 14px;color:#999;font-size:12px;line-height:1.6;'
+            f'word-break:break-all;">按钮无法点击时，请复制链接到浏览器打开：<br>{action_url}</p>')
+    footer = "".join(
+        f'<p style="margin:0 0 4px;color:#aaa;font-size:12px;line-height:1.6;">{ln}</p>'
+        for ln in footer_lines)
+    html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f4f5f7;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:32px 12px;">
+<tr><td align="center">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0"
+       style="max-width:560px;width:100%;background:#ffffff;border-radius:12px;padding:40px 44px;font-family:'Segoe UI','Microsoft YaHei',Helvetica,Arial,sans-serif;">
+<tr><td>
+  <div style="font-size:26px;font-weight:800;color:#1a1a1a;letter-spacing:0.5px;margin-bottom:28px;">
+    <span style="display:inline-block;width:14px;height:14px;background:#f0b429;border-radius:3px;margin-right:8px;"></span>{brand}</div>
+  <h2 style="margin:0 0 22px;color:#1a1a1a;font-size:20px;font-weight:700;">{title}</h2>
+  <p style="margin:0 0 14px;color:#333;font-size:15px;">{greeting}</p>
+  {paras}
+  {action}
+  <hr style="border:none;border-top:1px solid #eee;margin:26px 0 18px;">
+  {footer}
+</td></tr></table>
+</td></tr></table>
+</body></html>"""
+    return text, html
+
+
 async def load_config(session) -> dict | None:
     from app.models import PlatformSetting
     row = await session.get(PlatformSetting, SETTING_KEY)
@@ -44,16 +94,34 @@ def public_view(cfg: dict | None) -> dict:
     return out
 
 
-async def send(session, to: str, subject: str, body: str) -> None:
-    """Send one plain-text mail through the configured SMTP relay.
-    Raises MailerNotConfigured when no usable config exists."""
+async def send(session, to: str, subject: str, body: str,
+               html: str | None = None) -> None:
+    """Send one mail (text + optional HTML alternative) through the configured
+    SMTP relay. Raises MailerNotConfigured when no usable config exists."""
     cfg = await load_config(session)
     if not cfg or not cfg.get("host"):
         raise MailerNotConfigured("SMTP is not configured")
-    await _deliver(cfg, to, subject, body)
+    await _deliver(cfg, to, subject, body, html)
 
 
-async def _deliver(cfg: dict, to: str, subject: str, body: str) -> None:
+async def send_templated(session, to: str, subject: str, *, title: str,
+                         greeting: str, lines: list[str],
+                         action_text: str | None = None,
+                         action_url: str | None = None,
+                         footer_lines: list[str] | None = None) -> None:
+    """Branded card email; brand name follows the configured from_name."""
+    cfg = await load_config(session)
+    if not cfg or not cfg.get("host"):
+        raise MailerNotConfigured("SMTP is not configured")
+    brand = cfg.get("from_name") or "DOC·IDP"
+    text, html = render_email(brand=brand, title=title, greeting=greeting,
+                              lines=lines, action_text=action_text,
+                              action_url=action_url, footer_lines=footer_lines)
+    await _deliver(cfg, to, subject, text, html)
+
+
+async def _deliver(cfg: dict, to: str, subject: str, body: str,
+                   html: str | None = None) -> None:
     """Actual SMTP delivery — split out so tests can stub the network edge."""
     import ssl
     from email.message import EmailMessage
@@ -69,6 +137,8 @@ async def _deliver(cfg: dict, to: str, subject: str, body: str) -> None:
     if cfg.get("reply_to"):
         msg["Reply-To"] = cfg["reply_to"]
     msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
 
     security_mode = cfg.get("security", "starttls")
     kwargs: dict = {"hostname": cfg["host"], "port": int(cfg.get("port") or 587),

@@ -28,8 +28,8 @@ async def app_client(tmp_path, monkeypatch):
     security._secret = None
     SENT.clear()
 
-    async def fake_deliver(cfg, to, subject, body):
-        SENT.append({"to": to, "subject": subject, "body": body})
+    async def fake_deliver(cfg, to, subject, body, html=None):
+        SENT.append({"to": to, "subject": subject, "body": body, "html": html})
 
     monkeypatch.setattr(mailer, "_deliver", fake_deliver)
 
@@ -57,6 +57,32 @@ async def _configure_smtp(client, hdr) -> None:
 
 def _token_from(body: str) -> str:
     return re.search(r"token=([\w\-]+)", body).group(1)
+
+
+def test_render_email_branded_card():
+    """Invite/reset/test mails ship as a branded HTML card + text fallback."""
+    text, html = mailer.render_email(
+        brand="Ztenith-IDP", title="账号激活邀请", greeting="you，您好：",
+        lines=["管理员邀请您加入。"], action_text="激活账号",
+        action_url="http://x/#/activate?token=abc",
+        footer_lines=["链接 24 小时内有效。"])
+    assert "token=abc" in text          # HTML-blocking clients still get the link
+    assert "Ztenith-IDP" in html and "激活账号" in html
+    assert 'href="http://x/#/activate?token=abc"' in html
+    assert "#f0b429" in html            # brand accent on the action button
+    assert "链接 24 小时内有效。" in html
+
+
+async def test_invite_mail_uses_branded_template(app_client):
+    hdr = await _admin(app_client)
+    await _configure_smtp(app_client, hdr)
+    r = await app_client.post("/api/v1/auth/invite", headers=hdr,
+                              json={"email": "pretty@example.com"})
+    assert r.status_code == 201
+    mail = SENT[-1]
+    assert mail["html"] and "IDP" in mail["html"]      # brand = from_name
+    assert "激活账号" in mail["html"]
+    assert _token_from(mail["body"])                   # text part keeps the token URL
 
 
 async def test_invite_without_smtp_degrades(app_client):

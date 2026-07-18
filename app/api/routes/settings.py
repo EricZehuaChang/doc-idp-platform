@@ -249,8 +249,13 @@ async def test_smtp(body: SmtpTestBody):
     sf = session_factory()
     async with sf() as s:
         try:
-            await mailer.send(s, body.to, "SMTP 测试邮件",
-                              "这是一封来自文档识别平台的测试邮件。收到即代表发信配置可用。")
+            await mailer.send_templated(
+                s, body.to, "SMTP 测试邮件",
+                title="发信配置测试",
+                greeting="您好：",
+                lines=["这是一封来自智能文档识别平台的测试邮件。",
+                       "收到本邮件即代表平台发信配置可用，邀请与密码重置邮件将正常送达。"],
+                footer_lines=["本邮件由系统自动发送，请勿直接回复。"])
         except mailer.MailerNotConfigured:
             raise HTTPException(409, "SMTP 未配置")
         except Exception as e:
