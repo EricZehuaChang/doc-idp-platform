@@ -200,6 +200,26 @@ class CreditLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class GiftRequest(Base):
+    """Marketing credit grants (§12.7): every grant attempt is a request row —
+    small ones auto-approve on the spot, ones above the review threshold wait
+    for a SECOND admin (dual control). tenant_id is the requesting platform
+    tenant (RLS keeps the approval queue on the platform side);
+    target_tenant_id is the beneficiary account."""
+    __tablename__ = "gift_requests"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    target_tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    campaign: Mapped[str] = mapped_column(String(100))
+    reason: Mapped[str] = mapped_column(String(500))
+    requested_by: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|rejected
+    decided_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class PlatformSetting(Base):
     __tablename__ = "platform_settings"    # config layering (§11.10): platform tier
     key: Mapped[str] = mapped_column(String(100), primary_key=True)

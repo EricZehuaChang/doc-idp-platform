@@ -214,6 +214,81 @@ async def test_settle_is_idempotent(tmp_path, monkeypatch):
         assert len(unfreezes) == 1
 
 
+async def test_admin_billing_ops_and_gift_dual_control(tmp_path, monkeypatch):
+    async with booted(tmp_path, monkeypatch) as client:
+        # rate-card config (platform tier §12.1)
+        r = await client.put("/api/v1/billing/config",
+                             json={"mode": "live", "gift_review_threshold": 100,
+                                   "gift_monthly_cap": 300})
+        assert r.status_code == 200 and r.json()["mode"] == "live"
+
+        # topup demands voucher registration (§12.4 对公转账人工确认)
+        r = await client.post("/api/v1/billing/topup", json={"amount": 50})
+        assert r.status_code == 422
+        r = await client.post("/api/v1/billing/topup",
+                              json={"amount": 50, "voucher_ref": "BANK-2026-0719-01"})
+        assert r.status_code == 201 and r.json()["available"] == pytest.approx(50)
+
+        # signed adjustment, reason mandatory
+        r = await client.post("/api/v1/billing/adjust",
+                              json={"amount": -10, "reason": "对账修正"})
+        assert r.status_code == 201 and r.json()["available"] == pytest.approx(40)
+
+        # small gift auto-approves and lands in the gift bucket
+        r = await client.post("/api/v1/billing/gift",
+                              json={"amount": 80, "campaign": "launch", "reason": "试用"})
+        assert r.status_code == 201 and r.json()["status"] == "approved"
+        assert (await _account()).gift_balance == pytest.approx(80)
+
+        # above threshold -> pending; requester cannot self-approve (双人复核)
+        r = await client.post("/api/v1/billing/gift",
+                              json={"amount": 150, "campaign": "launch", "reason": "大客户"})
+        rid = r.json()["request_id"]
+        assert r.json()["status"] == "pending"
+        assert (await _account()).gift_balance == pytest.approx(80)   # no money yet
+        r = await client.post(f"/api/v1/billing/gift-requests/{rid}/approve")
+        assert r.status_code == 403
+
+        # a SECOND admin approves -> money moves exactly once
+        import app.api.routes.billing as broutes
+        import app.tenancy as tenancy
+        monkeypatch.setattr(broutes, "current_actor",
+                            lambda: {"name": "second-admin", "role": "admin",
+                                     "user_id": None})
+        r = await client.post(f"/api/v1/billing/gift-requests/{rid}/approve")
+        assert r.status_code == 200 and r.json()["status"] == "approved"
+        monkeypatch.setattr(broutes, "current_actor", tenancy.current_actor)
+        assert (await _account()).gift_balance == pytest.approx(230)
+        r = await client.post(f"/api/v1/billing/gift-requests/{rid}/approve")
+        assert r.status_code == 409                                   # already decided
+
+        # per-operator monthly ceiling: 80+150 granted, cap 300 -> another 100 fails
+        r = await client.post("/api/v1/billing/gift",
+                              json={"amount": 100, "campaign": "launch", "reason": "x"})
+        assert r.status_code == 400 and "上限" in r.json()["detail"]
+
+        # ledger carries the full trail
+        kinds = [row.kind for row in await _ledger_rows()]
+        assert kinds.count("topup") == 1 and kinds.count("adjust") == 1
+        assert kinds.count("gift") == 2
+
+
+async def test_cross_tenant_topup_and_platform_guard(tmp_path, monkeypatch):
+    async with booted(tmp_path, monkeypatch) as client:
+        # platform admin funds a customer tenant's account
+        r = await client.post("/api/v1/billing/topup",
+                              json={"tenant_id": "cust1", "amount": 20,
+                                    "voucher_ref": "BANK-X"})
+        assert r.status_code == 201
+        assert (await _account("cust1")).paid_balance == pytest.approx(20)
+
+        # money ops are refused outside the platform tenant
+        import app.api.routes.billing as broutes
+        monkeypatch.setattr(broutes, "current_tenant", lambda: "cust1")
+        r = await client.put("/api/v1/billing/config", json={"mode": "live"})
+        assert r.status_code == 403
+
+
 def test_estimate_pages():
     from pypdf import PdfWriter
 

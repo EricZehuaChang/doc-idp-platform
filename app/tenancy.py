@@ -11,6 +11,7 @@ Two modes (IDP_AUTH_MODE):
 
 Repositories must always filter by current_tenant().
 """
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -40,6 +41,20 @@ def current_tenant() -> str:
 def current_actor() -> dict:
     """{"name", "role", "user_id"} — audit trail + role checks read this."""
     return _actor_ctx.get()
+
+
+@contextmanager
+def as_tenant(tenant_id: str):
+    """Platform-operator write scope (§12.4 manual billing ops): sessions
+    opened inside run with the RLS GUC pinned to the TARGET tenant, so a
+    cross-tenant topup/gift insert passes the WITH CHECK policy. Use only for
+    audited platform actions — never to read tenant business data (support
+    access has its own authorization trail, §11.10 rule 2)."""
+    token = _tenant_ctx.set(tenant_id)
+    try:
+        yield
+    finally:
+        _tenant_ctx.reset(token)
 
 
 def has_role(min_role: str) -> bool:
