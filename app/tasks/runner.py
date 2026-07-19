@@ -214,6 +214,15 @@ async def finalize_transaction(transaction_id: str) -> None:
         else:
             txn.status = "completed"
         await s.commit()
+    # live-mode money settlement (§12.2): charge actual pages, release the
+    # freeze. Idempotent no-op in shadow mode. A settle failure must not
+    # corrupt the already-committed status rollup — log and leave the freeze
+    # for manual reconciliation (the ledger has the full trail).
+    try:
+        from app.billing.engine import settle
+        await settle(transaction_id)
+    except Exception:
+        log.exception("billing settle failed txn=%s", transaction_id)
 
 
 async def mark_error(file_id: str, message: str) -> None:

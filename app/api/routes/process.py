@@ -8,11 +8,12 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.billing import engine as billing
 from app.config import get_settings
 from app.db import session_factory
 from app.models import FileRecord, Skill, SkillVersion, Transaction
 from app.tasks import runner
-from app.tenancy import current_tenant
+from app.tenancy import current_actor, current_tenant
 
 router = APIRouter(prefix="/api/v1", tags=["process"])
 
@@ -31,6 +32,13 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     if len(files) > _MAX_FILES:
         raise HTTPException(400, f"max {_MAX_FILES} files per request")
     tenant = current_tenant()
+    # blobs first: the billing gate needs a page estimate before any row lands
+    blobs: list[tuple[str, bytes]] = []
+    for up in files:
+        blob = await up.read()
+        if len(blob) > _MAX_SIZE:
+            raise HTTPException(413, f"file too large: {up.filename}")
+        blobs.append((up.filename or "", blob))
     sf = session_factory()
     async with sf() as s:
         skill = await s.get(Skill, skill_code)
@@ -48,20 +56,32 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         s.add(txn)
         await s.flush()
 
+        # billing gate (§12.2): live mode freezes estimated pages x rate inside
+        # this same DB transaction — a 402 rolls everything back. Owner Root
+        # (unlimited) skips the money gate but stays metered and audited (§12.7).
+        cfg = await billing.load_config(s)
+        if cfg["mode"] == "live" and not current_actor().get("unlimited"):
+            rate = billing.rate_for(cfg, skill.kind,
+                                    await billing.is_byok_tenant(s, tenant))
+            pages_est = sum(billing.estimate_pages(b, Path(n).suffix) for n, b in blobs)
+            try:
+                await billing.freeze(s, tenant, txn.id, pages_est, rate)
+            except billing.InsufficientCredit as e:
+                raise HTTPException(402, "余额不足:本次预估需 "
+                                    f"{e.required:g} credit,当前可用 {e.available:g}。"
+                                    "请充值后重试(失败页不会扣费)。")
+
         out = []
         store_dir = Path(get_settings().data_dir) / "files" / tenant / txn.id
         store_dir.mkdir(parents=True, exist_ok=True)
-        for up in files:
-            blob = await up.read()
-            if len(blob) > _MAX_SIZE:
-                raise HTTPException(413, f"file too large: {up.filename}")
+        for name, blob in blobs:
             # content-hash name: dedupe-friendly, no path injection from filename
             digest = hashlib.sha256(blob).hexdigest()[:16]
-            suffix = Path(up.filename or "file").suffix.lower()
+            suffix = Path(name).suffix.lower()
             path = store_dir / f"{digest}{suffix}"
             path.write_bytes(blob)
             rec = FileRecord(tenant_id=tenant, transaction_id=txn.id,
-                             file_name=up.filename or path.name, storage_path=str(path))
+                             file_name=name or path.name, storage_path=str(path))
             s.add(rec)
             await s.flush()
             out.append({"file_id": rec.id, "original_filename": rec.file_name})

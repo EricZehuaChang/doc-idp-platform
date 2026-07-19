@@ -70,7 +70,8 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
             user = await s.get(User, payload.get("sub"))
         if user is None or not user.active:
             return None
-        return user.tenant_id, {"name": user.email, "role": user.role, "user_id": user.id}
+        return user.tenant_id, {"name": user.email, "role": user.role, "user_id": user.id,
+                                "unlimited": user.unlimited}  # Owner Root flag (§12.7)
 
     # API-key channel (API-first design §7): opaque key, sha256 lookup
     from sqlalchemy import select
