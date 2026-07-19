@@ -96,9 +96,12 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
                                                     ApiKey.active))).scalar_one_or_none()
     if row is None:
         return None
-    # API keys act as operator: they process documents, they don't manage users
+    # API keys act as operator: they process documents, they don't manage users.
+    # Key identity rides along so the billing gate can charge an allocated
+    # key's own budget instead of the tenant pool (§12.7 quota modes).
     return row.tenant_id, {"name": f"apikey:{row.name or row.id}", "role": "operator",
-                           "user_id": None}
+                           "user_id": None, "api_key_id": row.id,
+                           "quota_mode": row.quota_mode}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

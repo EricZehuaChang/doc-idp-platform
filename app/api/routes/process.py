@@ -60,13 +60,21 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         # this same DB transaction — a 402 rolls everything back. Owner Root
         # (unlimited) skips the money gate but stays metered and audited (§12.7).
         cfg = await billing.load_config(s)
-        if cfg["mode"] == "live" and not current_actor().get("unlimited"):
+        actor = current_actor()
+        if cfg["mode"] == "live" and not actor.get("unlimited"):
             rate = billing.rate_for(cfg, skill.kind,
                                     await billing.is_byok_tenant(s, tenant))
             pages_est = sum(billing.estimate_pages(b, Path(n).suffix) for n, b in blobs)
+            # allocated API keys pay from their own carved-out budget (§12.7)
+            key_id = (actor.get("api_key_id")
+                      if actor.get("quota_mode") == "allocated" else None)
             try:
-                await billing.freeze(s, tenant, txn.id, pages_est, rate)
+                await billing.freeze(s, tenant, txn.id, pages_est, rate, key_id=key_id)
             except billing.InsufficientCredit as e:
+                if e.payer == "key":
+                    raise HTTPException(402, "该 API Key 的独立额度不足:本次预估需 "
+                                        f"{e.required:g} credit,Key 可用 {e.available:g}。"
+                                        "请管理员为该 Key 划拨额度。")
                 raise HTTPException(402, "余额不足:本次预估需 "
                                     f"{e.required:g} credit,当前可用 {e.available:g}。"
                                     "请充值后重试(失败页不会扣费)。")

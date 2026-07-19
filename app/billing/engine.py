@@ -27,7 +27,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import session_factory
-from app.models import CreditAccount, CreditLedger, FileRecord, PlatformSetting, TenantSetting
+from app.models import (ApiKey, CreditAccount, CreditLedger, FileRecord,
+                        PlatformSetting, TenantSetting)
 
 log = logging.getLogger("idp.billing")
 
@@ -45,11 +46,13 @@ DEFAULTS = {
 
 
 class InsufficientCredit(Exception):
-    """Submit-time balance gate failure -> HTTP 402 at the API edge."""
+    """Submit-time balance gate failure -> HTTP 402 at the API edge.
+    payer tells the edge whose budget ran dry: "tenant" pool or an
+    allocated API "key" (whose 402 must not implicate sibling keys, §12.7)."""
 
-    def __init__(self, required: float, available: float):
-        self.required, self.available = required, available
-        super().__init__(f"required {required}, available {available}")
+    def __init__(self, required: float, available: float, payer: str = "tenant"):
+        self.required, self.available, self.payer = required, available, payer
+        super().__init__(f"required {required}, available {available} ({payer})")
 
 
 async def load_config(s) -> dict:
@@ -104,29 +107,51 @@ async def available(s, tenant_id: str) -> float:
 
 
 async def freeze(s, tenant_id: str, transaction_id: str,
-                 pages_est: int, rate: float) -> None:
+                 pages_est: int, rate: float, key_id: str | None = None) -> None:
     """Reserve estimated_pages x rate inside the caller's submit transaction —
     the freeze commits (or rolls back) together with the Transaction row.
+    key_id switches the payer to an allocated API key's own budget (§12.7).
     Raises InsufficientCredit when the guarded UPDATE matches no row."""
     amount = round(pages_est * rate, 4)
-    acct = await ensure_account(s, tenant_id)
+    meta: dict = {"rate": rate, "pages_est": pages_est}
+
+    if key_id is not None:
+        key = await s.get(ApiKey, key_id)
+        if amount > 0:
+            res = await s.execute(
+                update(ApiKey)
+                .where(ApiKey.id == key_id,
+                       ApiKey.allocated_balance - ApiKey.allocated_frozen >= amount)
+                .values(allocated_frozen=ApiKey.allocated_frozen + amount))
+            s.expire(key)
+            if res.rowcount == 0:
+                key = await s.get(ApiKey, key_id)
+                free = (key.allocated_balance - key.allocated_frozen) if key else 0.0
+                raise InsufficientCredit(amount, round(free, 4), payer="key")
+        meta["payer"] = f"key:{key_id}"
+    else:
+        acct = await ensure_account(s, tenant_id)
+        if amount <= 0:
+            return
+        res = await s.execute(
+            update(CreditAccount)
+            .where(CreditAccount.tenant_id == tenant_id,
+                   CreditAccount.paid_balance + CreditAccount.gift_balance
+                   - CreditAccount.frozen >= amount)
+            .values(frozen=CreditAccount.frozen + amount))
+        # the core UPDATE bypassed the identity map: expire ONLY the account
+        # object (expire_all would poison the caller's objects, e.g. the
+        # Transaction row)
+        s.expire(acct)
+        if res.rowcount == 0:
+            raise InsufficientCredit(amount, await available(s, tenant_id))
+
     if amount <= 0:
         return
-    res = await s.execute(
-        update(CreditAccount)
-        .where(CreditAccount.tenant_id == tenant_id,
-               CreditAccount.paid_balance + CreditAccount.gift_balance
-               - CreditAccount.frozen >= amount)
-        .values(frozen=CreditAccount.frozen + amount))
-    # the core UPDATE bypassed the identity map: expire ONLY the account object
-    # (expire_all would poison the caller's objects, e.g. the Transaction row)
-    s.expire(acct)
-    if res.rowcount == 0:
-        raise InsufficientCredit(amount, await available(s, tenant_id))
     s.add(CreditLedger(
         tenant_id=tenant_id, kind="freeze", amount=amount,
         transaction_id=transaction_id, idempotency_key=f"freeze:{transaction_id}",
-        note=json.dumps({"rate": rate, "pages_est": pages_est}),
+        note=json.dumps(meta),
         balance_snapshot=await available(s, tenant_id)))
 
 
@@ -162,6 +187,45 @@ async def settle(transaction_id: str) -> None:
             if status in ("completed", "pending_verification", "passed"):
                 pages += page_count or 0
         charge_total = round(pages * rate, 4)
+
+        # allocated-key payer (§12.7): the key's own budget absorbs the charge;
+        # no gift bucket — key budget is carved from the paid pool.
+        payer = str(meta.get("payer") or "")
+        if payer.startswith("key:"):
+            key_id = payer[4:]
+            key = await s.get(ApiKey, key_id)
+            res = await s.execute(
+                update(ApiKey)
+                .where(ApiKey.id == key_id, ApiKey.allocated_frozen >= freeze_amount)
+                .values(allocated_balance=ApiKey.allocated_balance - charge_total,
+                        allocated_frozen=ApiKey.allocated_frozen - freeze_amount))
+            if key is not None:
+                s.expire(key)
+            if res.rowcount == 0:
+                log.error("settle: key budget update failed txn=%s key=%s",
+                          transaction_id, key_id)
+                return
+            key = await s.get(ApiKey, key_id)
+            snapshot = round(key.allocated_balance - key.allocated_frozen, 4)
+            if charge_total > 0:
+                s.add(CreditLedger(tenant_id=tenant, kind="charge", bucket="paid",
+                                   amount=charge_total, transaction_id=transaction_id,
+                                   note=json.dumps({"payer": payer})))
+            s.add(CreditLedger(
+                tenant_id=tenant, kind="unfreeze", amount=freeze_amount,
+                transaction_id=transaction_id,
+                idempotency_key=f"settle:{transaction_id}",
+                note=json.dumps({"pages": pages, "charged": charge_total,
+                                 "payer": payer}),
+                balance_snapshot=snapshot))
+            try:
+                await s.commit()
+            except IntegrityError:       # concurrent settle won the unique key
+                await s.rollback()
+                return
+            log.info("settled txn=%s pages=%s charged=%s payer=%s",
+                     transaction_id, pages, charge_total, payer)
+            return
 
         # bucket split: gift burns first (§12.7). The guarded UPDATE re-checks
         # the gift amount; a racing balance change retries with fresh numbers.

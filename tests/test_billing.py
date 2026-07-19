@@ -31,11 +31,17 @@ def anyio_backend():
 
 
 @asynccontextmanager
-async def booted(tmp_path, monkeypatch, billing_cfg=None, fail_llm=False):
+async def booted(tmp_path, monkeypatch, billing_cfg=None, fail_llm=False, auth=False):
     """App on a fresh sqlite with fake parser/LLM; skill published; optional
-    billing platform config seeded before any submit."""
+    billing platform config seeded before any submit. auth=True boots
+    IDP_AUTH_MODE=on with a bootstrapped admin and a logged-in client."""
     monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/t.db")
     monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    if auth:
+        monkeypatch.setenv("IDP_AUTH_MODE", "on")
+        monkeypatch.setenv("IDP_ADMIN_PASSWORD", "admin-pass-123")
+        from app.auth import security
+        security._secret = None
     import app.config as config
     import app.db as db
     config.get_settings.cache_clear()
@@ -60,6 +66,12 @@ async def booted(tmp_path, monkeypatch, billing_cfg=None, fail_llm=False):
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app),
                                base_url="http://test") as client:
+            if auth:
+                r = await client.post("/api/v1/auth/login",
+                                      json={"email": "admin@example.com",
+                                            "password": "admin-pass-123"})
+                assert r.status_code == 200, r.text
+                client.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
             r = await client.post("/api/v1/skills", json={"package": PKG.model_dump()})
             assert r.status_code == 201, r.text
             r = await client.post(f"/api/v1/skills/{PKG.skill_code}/versions/1/publish")
@@ -287,6 +299,73 @@ async def test_cross_tenant_topup_and_platform_guard(tmp_path, monkeypatch):
         monkeypatch.setattr(broutes, "current_tenant", lambda: "cust1")
         r = await client.put("/api/v1/billing/config", json={"mode": "live"})
         assert r.status_code == 403
+
+
+async def test_allocated_key_pays_from_its_own_budget(tmp_path, monkeypatch):
+    async with booted(tmp_path, monkeypatch, billing_cfg=LIVE, auth=True) as client:
+        await _set_balance(paid=100.0)
+
+        # mint a key, switch it to allocated, carve out 3 credits
+        r = await client.post("/api/v1/settings/api-keys", json={"name": "erp"})
+        key_id, full_key = r.json()["id"], r.json()["api_key"]
+        r = await client.put(f"/api/v1/settings/api-keys/{key_id}/quota",
+                             json={"mode": "allocated"})
+        assert r.status_code == 200
+        r = await client.post(f"/api/v1/settings/api-keys/{key_id}/allocate",
+                              json={"amount": 3})
+        assert r.status_code == 200, r.text
+        assert r.json()["allocated_balance"] == pytest.approx(3)
+        assert (await _account()).paid_balance == pytest.approx(97)
+
+        # the key submits: charged against ITS budget, tenant pool untouched
+        key_client = AsyncClient(transport=client._transport, base_url="http://test",
+                                 headers={"Authorization": f"Bearer {full_key}"})
+        r = await key_client.post(
+            "/api/v1/process",
+            files={"files": ("inv.pdf", b"%PDF-fake", "application/pdf")},
+            data={"skill_code": PKG.skill_code})
+        assert r.status_code == 202, r.text
+        await _wait_done(key_client, r.json()["transaction_id"])
+        r = await client.get("/api/v1/settings/api-keys")
+        k = [x for x in r.json() if x["id"] == key_id][0]
+        assert k["allocated_balance"] == pytest.approx(1)      # 3 - 1page*2.0
+        assert k["allocated_frozen"] == pytest.approx(0)
+        assert (await _account()).paid_balance == pytest.approx(97)
+
+        # drained key 402s ON ITS OWN — the tenant pool stays available (§12.7)
+        r = await key_client.post(
+            "/api/v1/process",
+            files={"files": ("inv.pdf", b"%PDF-fake", "application/pdf")},
+            data={"skill_code": PKG.skill_code})
+        assert r.status_code == 402 and "API Key" in r.json()["detail"]
+        # pool control via a NORMAL operator (the bootstrap admin is Owner
+        # Root/unlimited and would bypass the gate instead of proving the pool)
+        r = await client.post("/api/v1/auth/users",
+                              json={"email": "op@example.com",
+                                    "password": "operator-pw-1", "role": "operator"})
+        assert r.status_code == 201, r.text
+        r = await client.post("/api/v1/auth/login",
+                              json={"email": "op@example.com",
+                                    "password": "operator-pw-1"})
+        op_client = AsyncClient(
+            transport=client._transport, base_url="http://test",
+            headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+        r = await _submit(op_client)                           # operator -> pool
+        assert r.status_code == 202, r.text
+        await _wait_done(op_client, r.json()["transaction_id"])
+        await op_client.aclose()
+
+        # reclaim the remainder back into the pool
+        r = await client.post(f"/api/v1/settings/api-keys/{key_id}/allocate",
+                              json={"amount": -1})
+        assert r.status_code == 200
+        assert r.json()["allocated_balance"] == pytest.approx(0)
+        acct = await _account()
+        assert acct.paid_balance == pytest.approx(96)          # 97 - 2(pool job) + 1
+        r = await client.post(f"/api/v1/settings/api-keys/{key_id}/allocate",
+                              json={"amount": -5})
+        assert r.status_code == 400                            # nothing left to reclaim
+        await key_client.aclose()
 
 
 def test_estimate_pages():

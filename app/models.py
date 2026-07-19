@@ -61,6 +61,10 @@ class ApiKey(Base):
     scopes: Mapped[str] = mapped_column(String(255), default="process:write,skills:read")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     quota_mode: Mapped[str] = mapped_column(String(16), default="pool")  # pool|allocated (§12.7)
+    # allocated mode: budget carved out of the tenant paid pool (key_transfer
+    # ledger rows); this key 402s on its own without touching sibling keys
+    allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    allocated_frozen: Mapped[float] = mapped_column(Float, default=0.0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

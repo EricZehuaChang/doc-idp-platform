@@ -77,7 +77,9 @@ async def list_api_keys():
             select(ApiKey).where(ApiKey.tenant_id == current_tenant())
             .order_by(ApiKey.created_at))).scalars().all()
         return [{"id": k.id, "name": k.name, "prefix": k.prefix, "active": k.active,
-                 "scopes": k.scopes,
+                 "scopes": k.scopes, "quota_mode": k.quota_mode,
+                 "allocated_balance": round(k.allocated_balance or 0.0, 4),
+                 "allocated_frozen": round(k.allocated_frozen or 0.0, 4),
                  "created_at": k.created_at.isoformat() if k.created_at else None}
                 for k in rows]
 
@@ -126,6 +128,106 @@ async def revoke_api_key(key_id: str):
                        detail={"name": row.name, "prefix": row.prefix}))
         await s.commit()
     return {"id": key_id, "active": False}
+
+
+class KeyQuotaBody(BaseModel):
+    mode: str                               # pool | allocated (§12.7)
+
+
+@router.put("/api-keys/{key_id}/quota")
+async def set_key_quota_mode(key_id: str, body: KeyQuotaBody):
+    """Switch a key between shared-pool and allocated-budget billing (§12.7).
+    Switching back to pool keeps any allocated remainder parked on the key —
+    reclaim it explicitly so the money trail stays in the ledger."""
+    from app.models import ApiKey
+
+    _require_admin()
+    if body.mode not in ("pool", "allocated"):
+        raise HTTPException(400, "mode must be pool|allocated")
+    sf = session_factory()
+    async with sf() as s:
+        row = await s.get(ApiKey, key_id)
+        if row is None or row.tenant_id != current_tenant():
+            raise HTTPException(404, "api key not found")
+        row.quota_mode = body.mode
+        s.add(AuditLog(tenant_id=row.tenant_id, actor=current_actor()["name"],
+                       action="settings.api_key_quota_mode",
+                       detail={"name": row.name, "mode": body.mode}))
+        await s.commit()
+    return {"id": key_id, "quota_mode": body.mode}
+
+
+class KeyAllocateBody(BaseModel):
+    amount: float                           # + carve out of tenant pool, - reclaim
+
+
+@router.post("/api-keys/{key_id}/allocate")
+async def allocate_key_budget(key_id: str, body: KeyAllocateBody):
+    """Move budget between the tenant paid pool and a key's allocated budget
+    (§12.7: ERP integrations, tests, temporary partners each get their own
+    envelope). Both directions are guarded atomic updates; every move is a
+    key_transfer ledger row."""
+    import json as _json
+
+    from sqlalchemy import update as _update
+
+    from app.billing import engine as billing
+    from app.models import ApiKey, CreditAccount, CreditLedger
+
+    _require_admin()
+    if body.amount == 0:
+        raise HTTPException(400, "amount must be non-zero")
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        key = await s.get(ApiKey, key_id)
+        if key is None or key.tenant_id != tenant:
+            raise HTTPException(404, "api key not found")
+        key_name = key.name              # capture before expire (async ORM rule)
+        amt = abs(body.amount)
+        acct = await billing.ensure_account(s, tenant)
+        if body.amount > 0:
+            # pool -> key: the pool must actually hold that much unfrozen paid
+            res = await s.execute(
+                _update(CreditAccount)
+                .where(CreditAccount.tenant_id == tenant,
+                       CreditAccount.paid_balance >= amt,
+                       CreditAccount.paid_balance + CreditAccount.gift_balance
+                       - CreditAccount.frozen >= amt)
+                .values(paid_balance=CreditAccount.paid_balance - amt))
+            s.expire(acct)
+            if res.rowcount == 0:
+                raise HTTPException(400, "租户可用余额不足以划拨该金额")
+            await s.execute(_update(ApiKey).where(ApiKey.id == key_id)
+                            .values(allocated_balance=ApiKey.allocated_balance + amt))
+        else:
+            # key -> pool: only the key's unfrozen remainder can come back
+            res = await s.execute(
+                _update(ApiKey)
+                .where(ApiKey.id == key_id,
+                       ApiKey.allocated_balance - ApiKey.allocated_frozen >= amt)
+                .values(allocated_balance=ApiKey.allocated_balance - amt))
+            if res.rowcount == 0:
+                raise HTTPException(400, "该 Key 可用额度不足以回收该金额")
+            await s.execute(_update(CreditAccount)
+                            .where(CreditAccount.tenant_id == tenant)
+                            .values(paid_balance=CreditAccount.paid_balance + amt))
+            s.expire(acct)
+        s.expire(key)
+        direction = "to_key" if body.amount > 0 else "to_tenant"
+        s.add(CreditLedger(
+            tenant_id=tenant, kind="key_transfer", bucket="paid", amount=amt,
+            note=_json.dumps({"direction": direction, "key_id": key_id,
+                              "key_name": key_name}, ensure_ascii=False),
+            balance_snapshot=await billing.available(s, tenant)))
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="settings.api_key_allocate",
+                       detail={"key_id": key_id, "amount": body.amount}))
+        await s.commit()
+        key = await s.get(ApiKey, key_id)
+        return {"id": key_id, "quota_mode": key.quota_mode,
+                "allocated_balance": round(key.allocated_balance, 4),
+                "allocated_frozen": round(key.allocated_frozen, 4)}
 
 
 # —— OIDC SSO config (§11.9): platform-level IdP binding ——
