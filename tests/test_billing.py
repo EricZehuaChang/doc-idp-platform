@@ -368,6 +368,50 @@ async def test_allocated_key_pays_from_its_own_budget(tmp_path, monkeypatch):
         await key_client.aclose()
 
 
+async def test_plan_entitlements_enforced(tmp_path, monkeypatch):
+    async with booted(tmp_path, monkeypatch, auth=True) as client:
+        # tighten the starter template, assign it to the default tenant
+        r = await client.put("/api/v1/billing/plans",
+                             json={"plans": {"starter":
+                                             {"max_members": 2, "max_skills": 1}}})
+        assert r.status_code == 200
+        r = await client.put("/api/v1/billing/plan", json={"plan": "starter"})
+        assert r.status_code == 200
+        r = await client.get("/api/v1/billing/account")
+        assert r.json()["plan"] == "starter"
+
+        # Owner Root (bootstrap admin) is exempt from feature gates (§12.7):
+        # creates a 2nd skill past the cap of 1
+        pkg2 = PKG.model_dump() | {"skill_code": "bill_test2"}
+        r = await client.post("/api/v1/skills", json={"package": pkg2})
+        assert r.status_code == 201, r.text
+
+        # a NORMAL admin hits both caps
+        r = await client.post("/api/v1/auth/users",
+                              json={"email": "admin2@example.com",
+                                    "password": "admin2-pw-123", "role": "admin"})
+        assert r.status_code == 201, r.text          # seat 2 of 2 (root + admin2)
+        r = await client.post("/api/v1/auth/login",
+                              json={"email": "admin2@example.com",
+                                    "password": "admin2-pw-123"})
+        a2 = AsyncClient(transport=client._transport, base_url="http://test",
+                         headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+        pkg3 = PKG.model_dump() | {"skill_code": "bill_test3"}
+        r = await a2.post("/api/v1/skills", json={"package": pkg3})
+        assert r.status_code == 403 and "套餐" in r.json()["detail"]
+        r = await a2.post("/api/v1/auth/users",
+                          json={"email": "op9@example.com",
+                                "password": "operator-pw-9", "role": "operator"})
+        assert r.status_code == 403 and "成员数" in r.json()["detail"]
+
+        # clearing the plan lifts every cap
+        r = await client.put("/api/v1/billing/plan", json={"plan": None})
+        assert r.status_code == 200
+        r = await a2.post("/api/v1/skills", json={"package": pkg3})
+        assert r.status_code == 201, r.text
+        await a2.aclose()
+
+
 def test_estimate_pages():
     from pypdf import PdfWriter
 

@@ -45,6 +45,27 @@ DEFAULTS = {
 }
 
 
+PLANS_KEY = "plans"
+
+# plan templates (§12.3 Starter/Pro/Enterprise): entitlement numbers are
+# business config — these defaults are placeholders until pricing lands (M5).
+# A missing entitlement key means "no cap"; a tenant with NO plan assigned is
+# uncapped (private/POC deployments never hit artificial walls).
+PLAN_DEFAULTS = {
+    "starter": {"max_members": 5, "max_skills": 10},
+    "pro": {"max_members": 50, "max_skills": 100},
+    "enterprise": {},
+}
+
+
+class EntitlementExceeded(Exception):
+    """Plan cap hit -> HTTP 403 at the API edge with an upgrade hint."""
+
+    def __init__(self, plan: str, item: str, limit: int):
+        self.plan, self.item, self.limit = plan, item, limit
+        super().__init__(f"{item} limit {limit} reached on plan {plan}")
+
+
 class InsufficientCredit(Exception):
     """Submit-time balance gate failure -> HTTP 402 at the API edge.
     payer tells the edge whose budget ran dry: "tenant" pool or an
@@ -71,6 +92,57 @@ async def is_byok_tenant(s, tenant_id: str) -> bool:
                                     TenantSetting.key == "byok"))).scalar_one_or_none()
     return bool(row and any(
         isinstance(v, dict) and v.get("api_key_enc") for v in (row.value or {}).values()))
+
+
+async def load_plans(s) -> dict:
+    row = await s.get(PlatformSetting, PLANS_KEY)
+    plans = dict(PLAN_DEFAULTS)
+    if row and isinstance(row.value, dict):
+        plans.update(row.value)
+    return plans
+
+
+async def tenant_plan(s, tenant_id: str) -> tuple[str | None, dict]:
+    """(plan_name, entitlements) for a tenant; (None, {}) = uncapped."""
+    row = (await s.execute(
+        select(TenantSetting).where(TenantSetting.tenant_id == tenant_id,
+                                    TenantSetting.key == "plan"))).scalar_one_or_none()
+    name = (row.value or {}).get("name") if row else None
+    if not name:
+        return None, {}
+    return name, (await load_plans(s)).get(name, {})
+
+
+async def enforce_member_cap(s, tenant_id: str) -> None:
+    """Raise EntitlementExceeded when adding one more member would break the
+    plan. Counts ACTIVE users only — offboarding (人走号停) frees the seat."""
+    from sqlalchemy import func
+
+    from app.models import User
+    name, ent = await tenant_plan(s, tenant_id)
+    limit = ent.get("max_members")
+    if limit is None:
+        return
+    n = (await s.execute(select(func.count()).select_from(User)
+                         .where(User.tenant_id == tenant_id,
+                                User.active))).scalar_one()
+    if n >= limit:
+        raise EntitlementExceeded(name, "成员数", limit)
+
+
+async def enforce_skill_cap(s, tenant_id: str) -> None:
+    from sqlalchemy import func
+
+    from app.models import Skill
+    name, ent = await tenant_plan(s, tenant_id)
+    limit = ent.get("max_skills")
+    if limit is None:
+        return
+    n = (await s.execute(select(func.count()).select_from(Skill)
+                         .where(Skill.tenant_id == tenant_id,
+                                Skill.state != "deleted"))).scalar_one()
+    if n >= limit:
+        raise EntitlementExceeded(name, "技能数", limit)
 
 
 def rate_for(cfg: dict, skill_kind: str, byok: bool) -> float:

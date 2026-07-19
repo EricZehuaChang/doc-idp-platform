@@ -6,9 +6,15 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
 from app.auth import security
+from app.billing import engine as billing
 from app.db import session_factory
 from app.models import AuditLog, User
 from app.tenancy import current_actor, current_tenant, has_role
+
+
+def _enforce_member_seat(e: billing.EntitlementExceeded) -> HTTPException:
+    return HTTPException(403, f"当前套餐({e.plan})成员数已达上限 {e.limit},"
+                              "请停用闲置账号或联系平台升级套餐")
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -67,6 +73,12 @@ async def create_user(body: UserCreate):
                                User.tenant_id == tenant))).scalar_one_or_none()
         if dup is not None:
             raise HTTPException(409, "user already exists in this tenant")
+        # plan seat cap (§12.3); Owner Root is exempt from feature gates (§12.7)
+        if not current_actor().get("unlimited"):
+            try:
+                await billing.enforce_member_cap(s, tenant)
+            except billing.EntitlementExceeded as e:
+                raise _enforce_member_seat(e)
         # admin activation mode (§11.8): initial password + forced change on
         # first login — the SMTP-less path for air-gapped deployments
         user = User(tenant_id=tenant, email=body.email, role=body.role,
@@ -155,6 +167,12 @@ async def invite(body: InviteBody):
                                User.tenant_id == tenant))).scalar_one_or_none()
         if existing is not None and existing.email_verified:
             raise HTTPException(409, "user already exists in this tenant")
+        # re-inviting an existing dormant row doesn't add a seat; new rows do
+        if existing is None and not current_actor().get("unlimited"):
+            try:
+                await billing.enforce_member_cap(s, tenant)
+            except billing.EntitlementExceeded as e:
+                raise _enforce_member_seat(e)
         user = existing or User(tenant_id=tenant, email=body.email, role=body.role,
                                 email_verified=False, password_hash=None)
         if existing is None:

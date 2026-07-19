@@ -20,7 +20,7 @@ from app.billing import engine as billing
 from app.config import get_settings
 from app.db import session_factory
 from app.models import (AuditLog, CreditAccount, CreditLedger, GiftRequest,
-                        PlatformSetting)
+                        PlatformSetting, TenantSetting)
 from app.tenancy import as_tenant, current_actor, current_tenant, has_role
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -67,10 +67,12 @@ async def get_account(tenant_id: str | None = None):
         acct = await s.get(CreditAccount, target)
         cfg = await billing.load_config(s)
         byok = await billing.is_byok_tenant(s, target)
+        plan_name, _ = await billing.tenant_plan(s, target)
     paid = acct.paid_balance if acct else 0.0
     gift = acct.gift_balance if acct else 0.0
     frozen = acct.frozen if acct else 0.0
-    return {"tenant_id": target, "paid_balance": round(paid, 4),
+    return {"tenant_id": target, "plan": plan_name,
+            "paid_balance": round(paid, 4),
             "gift_balance": round(gift, 4), "frozen": round(frozen, 4),
             "available": round(paid + gift - frozen, 4),
             "mode": cfg["mode"], "byok": byok,
@@ -137,6 +139,71 @@ async def put_config(body: ConfigBody):
         await s.commit()
     await _audit("billing.config_updated", patch)
     return cfg
+
+
+# —— plan entitlements (§12.3): templates + tenant assignment —————————————
+
+class PlansBody(BaseModel):
+    plans: dict[str, dict[str, int]]
+
+
+@router.get("/plans")
+async def get_plans():
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        plans = await billing.load_plans(s)
+        name, ent = await billing.tenant_plan(s, current_tenant())
+    return {"plans": plans, "tenant_plan": name, "entitlements": ent}
+
+
+@router.put("/plans")
+async def put_plans(body: PlansBody):
+    """Edit plan templates (merged over defaults). Entitlement values are
+    counts; a key left out of a plan means no cap on that item."""
+    _require_platform_admin()
+    for plan, ent in body.plans.items():
+        if any(v < 0 for v in ent.values()):
+            raise HTTPException(400, f"plan {plan}: entitlements must be >= 0")
+    sf = session_factory()
+    async with sf() as s:
+        plans = await billing.load_plans(s)
+        plans.update(body.plans)
+        row = await s.get(PlatformSetting, billing.PLANS_KEY)
+        if row is None:
+            s.add(PlatformSetting(key=billing.PLANS_KEY, value=plans))
+        else:
+            row.value = plans
+        await s.commit()
+    await _audit("billing.plans_updated", {"plans": list(body.plans)})
+    return {"plans": plans}
+
+
+class PlanAssignBody(BaseModel):
+    tenant_id: str | None = None
+    plan: str | None = None                      # None clears (uncapped)
+
+
+@router.put("/plan")
+async def assign_plan(body: PlanAssignBody):
+    _require_platform_admin()
+    target = _target(body.tenant_id)
+    with as_tenant(target):              # RLS: the row belongs to the target
+        sf = session_factory()
+        async with sf() as s:
+            if body.plan is not None and body.plan not in await billing.load_plans(s):
+                raise HTTPException(400, f"unknown plan: {body.plan}")
+            row = (await s.execute(
+                select(TenantSetting).where(TenantSetting.tenant_id == target,
+                                            TenantSetting.key == "plan"))).scalar_one_or_none()
+            value = {"name": body.plan} if body.plan else {}
+            if row is None:
+                s.add(TenantSetting(tenant_id=target, key="plan", value=value))
+            else:
+                row.value = value
+            await s.commit()
+    await _audit("billing.plan_assigned", {"tenant_id": target, "plan": body.plan})
+    return {"tenant_id": target, "plan": body.plan}
 
 
 # —— manual money movements (platform operator, §12.4) ————————————————————

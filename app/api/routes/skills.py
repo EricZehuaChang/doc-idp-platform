@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.billing import engine as billing
 from app.config import get_settings
 from app.extraction.provider_client import ProviderError
 from app.db import session_factory
@@ -19,7 +20,18 @@ from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app.skillengine import studio
 from app.skillengine.schema import SkillPackage
-from app.tenancy import current_tenant
+from app.tenancy import current_actor, current_tenant
+
+
+async def _enforce_skill_seat(s, tenant: str) -> None:
+    """Plan skill cap (§12.3); Owner Root is exempt from feature gates (§12.7)."""
+    if current_actor().get("unlimited"):
+        return
+    try:
+        await billing.enforce_skill_cap(s, tenant)
+    except billing.EntitlementExceeded as e:
+        raise HTTPException(403, f"当前套餐({e.plan})技能数已达上限 {e.limit},"
+                                 "请删除闲置技能或联系平台升级套餐")
 
 router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 
@@ -49,6 +61,7 @@ async def create_skill(payload: SkillCreate):
     async with sf() as s:
         if await s.get(Skill, pkg.skill_code) is not None:
             raise HTTPException(409, f"skill exists: {pkg.skill_code}")
+        await _enforce_skill_seat(s, tenant)
         s.add(Skill(code=pkg.skill_code, tenant_id=tenant,
                     name=pkg.name or pkg.skill_code, kind=pkg.kind))
         s.add(SkillVersion(tenant_id=tenant, skill_code=pkg.skill_code, version=1,
@@ -305,6 +318,7 @@ async def import_yaml(file: UploadFile = File(...)):
         if skill is not None and skill.tenant_id != tenant:
             raise HTTPException(409, "skill code taken by another tenant")
         if skill is None:
+            await _enforce_skill_seat(s, tenant)   # new code = a new seat
             s.add(Skill(code=pkg.skill_code, tenant_id=tenant,
                         name=pkg.name or pkg.skill_code, kind=pkg.kind))
             next_ver = 1
