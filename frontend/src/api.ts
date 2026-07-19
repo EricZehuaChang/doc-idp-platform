@@ -133,6 +133,25 @@ export interface LoginResult {
   tenant_id: string; email: string; must_change_password: boolean;
 }
 
+// —— billing (§12) ——
+export interface BillingAccount {
+  tenant_id: string; plan: string | null;
+  paid_balance: number; gift_balance: number; frozen: number; available: number;
+  mode: string; byok: boolean;
+  rates: Record<string, number>; rates_byok: Record<string, number>;
+  gift_review_threshold: number; gift_monthly_cap: number;
+}
+export interface LedgerRow {
+  id: string; kind: string; bucket: string; amount: number;
+  transaction_id: string | null; note: string;
+  balance_snapshot: number | null; created_at: string | null;
+}
+export interface GiftRequestRow {
+  id: string; target_tenant_id: string; amount: number; campaign: string;
+  reason: string; requested_by: string; status: string;
+  decided_by: string | null; created_at: string | null;
+}
+
 /** authenticated binary fetch — <img>/pdf.js/anchor can't carry the Bearer */
 export async function fetchBlob(url: string): Promise<Blob> {
   const headers: Record<string, string> = { "X-Tenant-Id": "default" };
@@ -270,8 +289,35 @@ export const api = {
                                           platform_key: boolean; byok_set: boolean }[] }>(
     "GET", "/api/v1/settings/providers"),
   listApiKeys: () => req<{ id: string; name: string; prefix: string; active: boolean;
-                           created_at: string | null }[]>(
+                           quota_mode: string; allocated_balance: number;
+                           allocated_frozen: number; created_at: string | null }[]>(
     "GET", "/api/v1/settings/api-keys"),
+  keyQuotaMode: (id: string, mode: string) =>
+    req("PUT", `/api/v1/settings/api-keys/${id}/quota`, { mode }),
+  keyAllocate: (id: string, amount: number) =>
+    req<{ allocated_balance: number; allocated_frozen: number }>(
+      "POST", `/api/v1/settings/api-keys/${id}/allocate`, { amount }),
+  // billing (§12): visibility + platform money ops
+  billingAccount: () => req<BillingAccount>("GET", "/api/v1/billing/account"),
+  billingLedger: (offset = 0, limit = 20, kind?: string) =>
+    req<{ total: number; items: LedgerRow[] }>(
+      "GET", `/api/v1/billing/ledger?offset=${offset}&limit=${limit}${kind ? `&kind=${kind}` : ""}`),
+  billingConfig: (patch: Record<string, unknown>) =>
+    req("PUT", "/api/v1/billing/config", patch),
+  billingTopup: (amount: number, voucher_ref: string, note = "") =>
+    req<{ available: number }>("POST", "/api/v1/billing/topup",
+                               { amount, voucher_ref, note }),
+  billingAdjust: (amount: number, bucket: string, reason: string) =>
+    req<{ available: number }>("POST", "/api/v1/billing/adjust",
+                               { amount, bucket, reason }),
+  billingGift: (amount: number, campaign: string, reason: string) =>
+    req<{ request_id: string; status: string }>(
+      "POST", "/api/v1/billing/gift", { amount, campaign, reason }),
+  billingGiftRequests: (status?: string) =>
+    req<GiftRequestRow[]>(
+      "GET", `/api/v1/billing/gift-requests${status ? `?status=${status}` : ""}`),
+  billingGiftDecide: (id: string, decision: "approve" | "reject") =>
+    req("POST", `/api/v1/billing/gift-requests/${id}/${decision}`),
   createApiKey: (name: string) =>
     req<{ id: string; name: string; prefix: string; api_key: string }>(
       "POST", "/api/v1/settings/api-keys", { name }),
