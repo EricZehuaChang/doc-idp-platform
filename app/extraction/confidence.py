@@ -92,6 +92,50 @@ def locate_all(value: str, udr: UDR, limit: int = 20) -> tuple[list[dict], bool]
     return hits, False
 
 
+def locate_terms(value: str, udr: UDR, limit: int = 20) -> list[dict]:
+    """Dictionary-masking channel (POST /api/v1/locate): same matching
+    discipline as locate_all — exact pass wins outright over the whole
+    document, the normalized (whitespace/case/separator-insensitive) pass only
+    runs when nothing matched exactly — but each hit additionally carries
+    `tight`: True when the box is a glyph-union from block.chars, False when
+    it fell back to the block bbox. Kept as a parallel thin function instead
+    of widening locate_all's hit shape: locate_all hits are persisted verbatim
+    in result `$hits` payloads, so adding a key there would silently change a
+    stored contract. Must stay in lockstep with locate_all's two-pass logic."""
+    if not value:
+        return []
+    hits: list[dict] = []
+
+    def _scan(normalized: bool) -> None:
+        needle = _norm(value) if normalized else value
+        if not needle:
+            return
+        for page in udr.pages:
+            for block in page.blocks:
+                if normalized:
+                    text, idxmap = _norm_map(block.text or "")
+                else:
+                    text, idxmap = block.text or "", None
+                start = 0
+                while len(hits) < limit:
+                    i = text.find(needle, start)
+                    if i < 0:
+                        break
+                    lo = idxmap[i] if idxmap else i
+                    hi = idxmap[i + len(needle) - 1] if idxmap else i + len(needle) - 1
+                    box = _tight(block, lo, hi)
+                    hits.append({"page": page.page_no, "bbox": box or block.bbox,
+                                 "tight": box is not None})
+                    start = i + len(needle)
+                if len(hits) >= limit:
+                    return
+
+    _scan(normalized=False)
+    if not hits:
+        _scan(normalized=True)
+    return hits
+
+
 def locate(value: str, udr: UDR) -> tuple[int | None, list[float] | None, bool]:
     """First source hit of value (single-value fields). See locate_all."""
     hits, exact = locate_all(value, udr, limit=1)
