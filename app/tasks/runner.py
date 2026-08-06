@@ -27,8 +27,10 @@ from app.skillengine.schema import SkillPackage
 
 def skill_expects_tables(pkg: SkillPackage) -> bool:
     """A skill with table-typed fields needs row/column structure from the
-    parser; drives the table-escalation rule in parse_stage."""
-    return any(f.type == "table" for f in pkg.fields)
+    parser; drives the table-escalation rule in parse_stage. Entity-list
+    tables (PII sweeps) hold document-wide hits, not layout tables — they
+    must not push an electronic document onto the paid OCR tier."""
+    return any(f.type == "table" and not f.entity_list for f in pkg.fields)
 
 log = logging.getLogger("idp.runner")
 

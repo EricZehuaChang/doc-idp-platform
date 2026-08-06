@@ -11,6 +11,11 @@ class Block(BaseModel):
     text: str = ""
     bbox: list[float] | None = None        # [x0, y0, x1, y1] in page pixel space
     confidence: float = 1.0                # 1.0 = unknown (KBase OCR contract semantics)
+    # per-character boxes aligned 1:1 with `text` (None entry = synthetic char,
+    # e.g. a space the text assembler inserted). Optional: parsers that can't
+    # provide glyph geometry leave it None and location falls back to `bbox`.
+    # This is what turns block-level highlight into value-tight redaction boxes.
+    chars: list[list[float] | None] | None = None
 
 
 class Page(BaseModel):

@@ -18,7 +18,10 @@ def _field_lines(fields: list[FieldSpec]) -> str:
         mode = "（推断字段：允许推理，必须给 reasoning）" if f.mode == "inferred" else "（原文字段：值必须来自文档原文，绝不编造）"
         if f.type == "table":
             cols = ", ".join(c.name for c in f.columns)
-            lines.append(f"- {f.name}: 明细表，输出对象数组，列: [{cols}]。{rule}")
+            sweep = ("（实体清单表：逐段扫描全文，找出所有命中值，每个值单独一行，"
+                     "禁止遗漏；值必须逐字来自文档原文，同一值出现多处只输出一行）"
+                     if f.entity_list else "")
+            lines.append(f"- {f.name}: 明细表，输出对象数组，列: [{cols}]。{sweep}{rule}")
         elif f.type == "enum":
             lines.append(f"- {f.name}: 枚举，只能取 {f.enum_values}。{mode}{rule}{anchors}")
         else:

@@ -79,6 +79,21 @@ def test_scan_chain_degrades_to_rapidocr(tmp_path, monkeypatch):
     assert udr.parser == "rapidocr" and "fallback ok" in udr.full_markdown
 
 
+def test_pdfplumber_char_alignment():
+    """Glyph map must stay 1:1 with the assembled text or bail entirely —
+    a misaligned map would draw redaction boxes on the wrong glyphs."""
+    from app.parsers.electronic import _char_boxes
+    chars = [{"text": "A", "x0": 0, "top": 0, "x1": 5, "bottom": 9},
+             {"text": "B", "x0": 5, "top": 0, "x1": 10, "bottom": 9}]
+    # assembler-inserted space -> None placeholder keeps alignment
+    assert _char_boxes("A B", chars) == [
+        [0.0, 0.0, 5.0, 9.0], None, [5.0, 0.0, 10.0, 9.0]]
+    # desync (ligature/stripped glyph) bails to None -> line-bbox fallback
+    assert _char_boxes("AX", chars) is None
+    # trailing unconsumed glyphs (stripped text) also bail
+    assert _char_boxes("A", chars) is None
+
+
 def test_unsupported_type_raises(tmp_path):
     f = tmp_path / "x.xyz"
     f.write_bytes(b"?")

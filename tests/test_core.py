@@ -10,7 +10,7 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.extraction.confidence import score_field
+from app.extraction.confidence import locate_all, score_field
 from app.extraction.validators import run_validators
 from app.parsers.base import UDR, Block, Page
 from app.skillengine.compiler import compile_messages
@@ -59,6 +59,86 @@ def test_confidence_scale():
     # inferred with reasoning -> 2, without -> 0
     assert score_field("差旅", UDR_SAMPLE, False, True, True)[0] == 2
     assert score_field("差旅", UDR_SAMPLE, False, True, False)[0] == 0
+
+
+# ---- masking-grade location (2026-08-06): multi-hit + glyph-tight boxes ----
+
+CHAR_W = 10.0
+
+
+def _charline(text: str, y0: float = 0.0) -> Block:
+    """Block laid out 10px per glyph so tight boxes are computable by eye:
+    char i spans [i*10, y0, i*10+10, y0+20]. Spaces get None entries (the
+    pdfplumber assembler contract for inserted spaces)."""
+    chars = [None if ch == " " else
+             [i * CHAR_W, y0, (i + 1) * CHAR_W, y0 + 20]
+             for i, ch in enumerate(text)]
+    return Block(text=text, bbox=[0, y0, len(text) * CHAR_W, y0 + 20], chars=chars)
+
+
+def test_locate_all_multi_hit_tight_and_block_fallback():
+    udr = UDR(pages=[
+        Page(page_no=1, blocks=[_charline("电话 13800138000 内线")]),
+        Page(page_no=2, blocks=[Block(text="备份电话 13800138000",
+                                      bbox=[7, 8, 9, 10])]),
+    ], full_markdown="", parser="test")
+    hits, exact = locate_all("13800138000", udr)
+    assert exact is True and len(hits) == 2
+    # page 1: glyph-tight box over the 11 digits starting at text index 3
+    assert hits[0] == {"page": 1, "bbox": [30.0, 0.0, 140.0, 20.0]}
+    # page 2: no glyph map -> whole-block bbox fallback
+    assert hits[1] == {"page": 2, "bbox": [7.0, 8.0, 9.0, 10.0]}
+
+
+def test_locate_all_normalized_tight_bbox():
+    line = _charline("总金额 1,026.50")
+    udr = UDR(pages=[Page(page_no=1, blocks=[line])],
+              full_markdown="", parser="test")
+    hits, exact = locate_all("1026.50", udr)   # thousand-separator insensitive
+    assert exact is False and len(hits) == 1
+    # covers the printed "1,026.50" run: text indices 4..11 -> x 40..120
+    assert hits[0]["bbox"] == [40.0, 0.0, 120.0, 20.0]
+
+
+def test_table_rows_carry_cell_locations(monkeypatch):
+    import app.extraction.pipeline as pipe
+    pkg = SkillPackage(skill_code="mask_probe", fields=[
+        FieldSpec(name="打码字段", type="table", entity_list=True, columns=[
+            FieldSpec(name="类型", mode="inferred"),   # derivation: never located
+            FieldSpec(name="内容"),
+        ])])
+    udr = UDR(pages=[Page(page_no=1, blocks=[_charline("电话 13800138000 内线")])],
+              full_markdown="电话 13800138000 内线", parser="test")
+
+    def fake(messages, chain, transport=None):
+        return ({"打码字段": [
+            {"类型": "PHONE", "内容": "13800138000"},
+            {"类型": "NAME", "内容": "查无此人"},      # hallucinated row
+            {"类型": "EMPTY", "内容": ""},             # empty cell: no metadata
+        ]}, {"prompt_tokens": 1, "completion_tokens": 1}, "fake")
+    monkeypatch.setattr(pipe, "chat_json_with_fallback", fake)
+
+    result, _usage, needs_review = pipe.extract(udr, pkg)
+    rows = result["打码字段"]
+    # plain column values untouched (review grid / rows PATCH contract)
+    assert rows[0]["类型"] == "PHONE" and rows[0]["内容"] == "13800138000"
+    meta = rows[0]["$cells"]
+    assert "类型" not in meta                          # inferred column skipped
+    assert meta["内容"]["$confidence"] == 3
+    assert meta["内容"]["$hits"] == [{"page": 1, "bbox": [30.0, 0.0, 140.0, 20.0]}]
+    # hallucinated value: 0-confidence with zero hits — reviewer sees it flagged
+    assert rows[1]["$cells"]["内容"] == {"$confidence": 0, "$hits": []}
+    assert "$cells" not in rows[2]                     # nothing locatable
+    # cell scores never trip the scalar review gate (masking uses mode=always)
+    assert needs_review is False
+
+
+def test_compiler_entity_list_sweep_instruction():
+    pkg = SkillPackage(skill_code="m", fields=[
+        FieldSpec(name="打码字段", type="table", entity_list=True,
+                  columns=[FieldSpec(name="内容")])])
+    body = compile_messages(pkg, UDR_SAMPLE)[-1]["content"]
+    assert "实体清单表" in body and "禁止遗漏" in body
 
 
 @pytest.fixture

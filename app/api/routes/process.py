@@ -131,8 +131,17 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
         for f in rows:
             result = f.result
             if result is not None and not include_confidence_flag:
-                result = {k: (v.get("$value") if isinstance(v, dict) else v)
-                          for k, v in result.items()}
+                # plain-value view: scalars collapse to $value, table rows drop
+                # $-metadata ($cells) so integrators get clean row objects
+                def _plain(v):
+                    if isinstance(v, dict):
+                        return v.get("$value")
+                    if isinstance(v, list):
+                        return [{ck: cv for ck, cv in r.items()
+                                 if not ck.startswith("$")}
+                                if isinstance(r, dict) else r for r in v]
+                    return v
+                result = {k: _plain(v) for k, v in result.items()}
             files.append({
                 "file_id": f.id, "file_name": f.file_name, "status": f.status,
                 "page_count": f.page_count, "msg": f.error or "",

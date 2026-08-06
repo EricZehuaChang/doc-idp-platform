@@ -205,3 +205,9 @@ def test_skill_expects_tables_flag():
         FieldSpec(name="total", type="number")])
     assert skill_expects_tables(with_table) is True
     assert skill_expects_tables(without) is False
+    # entity-list tables are document-wide sweeps, not layout tables: they must
+    # not push an electronic doc to the paid OCR tier (masking-skill economics)
+    entity_sweep = SkillPackage(skill_code="s3", fields=[
+        FieldSpec(name="打码字段", type="table", entity_list=True,
+                  columns=[FieldSpec(name="类型"), FieldSpec(name="内容")])])
+    assert skill_expects_tables(entity_sweep) is False

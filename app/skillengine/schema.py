@@ -16,6 +16,10 @@ class FieldSpec(BaseModel):
     anchor_hints: list[str] = Field(default_factory=list)
     enum_values: list[str] = Field(default_factory=list)
     columns: list["FieldSpec"] = Field(default_factory=list)   # for type=table
+    # entity-list table (PII/masking sweeps): rows are document-wide hits, not a
+    # layout table — exempt from the paid-OCR table escalation (§4.3) and the
+    # compiler adds a full-document enumeration instruction.
+    entity_list: bool = False
 
 
 class Validator(BaseModel):

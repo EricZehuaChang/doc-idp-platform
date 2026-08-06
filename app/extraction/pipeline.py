@@ -19,6 +19,36 @@ from app.skillengine.compiler import compile_messages
 from app.skillengine.schema import SkillPackage
 
 
+def _locate_rows(rows: list, spec, udr: UDR) -> list:
+    """Attach per-cell source locations to table rows as $-prefixed metadata
+    (mirroring the scalar cell contract): row["$cells"][col] =
+    {"$confidence", "$hits" [{page, bbox}...]}. Rows keep their plain column
+    values — the review grid and rows PATCH are untouched; masking consumers
+    read every occurrence from $hits. Inferred columns are derivations
+    (nothing to locate); empty cells carry no metadata. Cell scores never
+    feed the needs_review gate — masking skills enforce human review via
+    review_policy.mode="always" instead (§5.6 discipline stays scalar-only)."""
+    out = []
+    for row in rows:
+        if isinstance(row, dict):
+            cells = {}
+            for c in spec.columns:
+                if c.mode == "inferred" or c.type == "table":
+                    continue
+                v = row.get(c.name)
+                if v is None or isinstance(v, (dict, list)):
+                    continue
+                sval = str(v).strip()
+                if not sval:
+                    continue
+                score, hits = conf.score_cell(sval, udr)
+                cells[c.name] = {"$confidence": score, "$hits": hits}
+            if cells:
+                row = {**row, "$cells": cells}
+        out.append(row)
+    return out
+
+
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
             provider_override: str | None = None) -> tuple[dict, dict, bool]:
     """Returns (result, usage, needs_review). Resilience: extractor -> fallback
@@ -66,7 +96,7 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         raw_val = raw.get(f.name)
         if f.type == "table":
             rows = raw_val if isinstance(raw_val, list) else []
-            result[f.name] = rows          # table rows pass through as objects
+            result[f.name] = _locate_rows(rows, f, udr)
             continue
         reasoning = None
         if f.mode == "inferred" and isinstance(raw_val, dict):

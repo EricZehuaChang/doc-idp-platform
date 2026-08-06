@@ -176,7 +176,8 @@ const tableNames = computed(() => {
 function tableCols(t: string): string[] {
   const rows = tableEdits.value[t] ?? [];
   const cols = new Set<string>();
-  for (const r of rows) Object.keys(r).forEach((c) => cols.add(c));
+  // $-prefixed keys are engine metadata ($cells locations), not columns
+  for (const r of rows) Object.keys(r).filter((c) => !c.startsWith("$")).forEach((c) => cols.add(c));
   return [...cols];
 }
 function tableDirty(t: string): boolean {
