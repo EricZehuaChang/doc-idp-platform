@@ -73,9 +73,15 @@ class OpenDataLoaderParser:
             try:
                 # image_output="off": figures are not extracted — extraction
                 # works on text; keeps temp I/O minimal and deterministic.
+                # include_header_footer: ODL drops repeating page headers and
+                # footers by default (they are chrome for a reading-order
+                # product).  Here they are content — a page-footer URL or a
+                # letterhead is exactly the kind of value a masking or
+                # extraction skill must see, and losing it is silent.
                 opendataloader_pdf.convert(
                     input_path=str(path), output_dir=tmp,
-                    format="json,markdown", image_output="off", quiet=True)
+                    format="json,markdown", image_output="off", quiet=True,
+                    include_header_footer=True)
             except Exception as e:
                 raise ParserUnavailable(f"opendataloader failed: {e}") from e
             files = list(Path(tmp).iterdir())
@@ -97,11 +103,15 @@ class OpenDataLoaderParser:
         return UDR(pages=pages, full_markdown=markdown, parser="opendataloader")
 
     def _walk(self, nodes, pages: list[Page], in_table: bool) -> None:
-        """Flatten the element tree into per-page UDR blocks. Nesting keys in
-        the JSON are "kids" (containers/cell content) and "rows"/"cells"
-        (tables); descending all three keeps us robust to schema drift.
-        Blocks inside a table keep type="table" so the escalation rule and
-        cell-level highlight anchors can see table coverage."""
+        """Flatten the element tree into per-page UDR blocks.
+
+        Children hang off several keys depending on the element: "kids" for
+        containers, "rows"/"cells" for tables, "list items" for lists.  Rather
+        than enumerate them (an omission is a silent content loss — lists cost
+        us every numbered clause until this was found), descend EVERY list-of-
+        objects value; scalar arrays like "bounding box" are skipped by the
+        dict check.  Blocks inside a table keep type="table" so the escalation
+        rule and cell-level highlight anchors can see table coverage."""
         for node in nodes:
             if not isinstance(node, dict):
                 continue
@@ -121,7 +131,6 @@ class OpenDataLoaderParser:
                     type=btype, text=strip_cjk_gaps(str(content)),
                     bbox=flip_bbox(bbox, page.height) if bbox else None))
             now_in_table = in_table or ntype in ("table", "table cell")
-            for key in ("kids", "rows", "cells"):
-                sub = node.get(key)
-                if isinstance(sub, list):
+            for sub in node.values():
+                if isinstance(sub, list) and any(isinstance(x, dict) for x in sub):
                     self._walk(sub, pages, now_in_table)

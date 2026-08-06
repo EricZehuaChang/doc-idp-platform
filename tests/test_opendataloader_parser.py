@@ -10,10 +10,13 @@ from app.parsers.opendataloader import (
     OpenDataLoaderParser, flip_bbox, strip_cjk_gaps)
 
 
-def _text_pdf(path, page_texts: list[str]) -> None:
+def _text_pdf(path, page_texts: list[str], header: str = "", footer: str = "") -> None:
     """Handcrafted minimal text-layer PDF (Helvetica/ASCII, exact xref
     offsets) — avoids a reportlab/fpdf test dependency; both pdfplumber and
-    the opendataloader JVM accept it as a valid document."""
+    the opendataloader JVM accept it as a valid document.
+
+    `header`/`footer` repeat on every page, which is what makes ODL classify
+    them as page chrome (a single page cannot be told apart from body text)."""
     objs: list[bytes] = []
     n = len(page_texts)
     font_num = 2 + 2 * n + 1
@@ -25,7 +28,12 @@ def _text_pdf(path, page_texts: list[str]) -> None:
         objs.append((f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
                      f"/Contents {content_num} 0 R "
                      f"/Resources << /Font << /F1 {font_num} 0 R >> >> >>").encode())
-        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        lines = [f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET"]
+        if header:
+            lines.append(f"BT /F1 8 Tf 72 760 Td ({header}) Tj ET")
+        if footer:
+            lines.append(f"BT /F1 8 Tf 72 40 Td ({footer}) Tj ET")
+        stream = "\n".join(lines).encode()
         objs.append(b"<< /Length " + str(len(stream)).encode()
                     + b" >>\nstream\n" + stream + b"\nendstream")
     objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
@@ -137,6 +145,39 @@ def test_parse_real_pdf_pages_blocks_and_bbox(tmp_path):
         assert 0 <= top < bottom <= 792.0      # top-left origin: top < bottom
     # text was drawn at y=720pt from the bottom -> near the top after flip
     assert blocks[0].bbox[1] < 100.0
+
+
+def test_walk_descends_list_containers():
+    """ODL nests list content under "list items", not "kids".  Descending only
+    kids/rows/cells silently drops every numbered or bulleted line — and audit
+    papers are mostly numbered clauses, so the loss is invisible and large."""
+    doc = {"kids": [
+        {"type": "list", "page number": 1, "list items": [
+            {"type": "list item", "page number": 1, "content": "条款一 住址 北京市朝阳区",
+             "bounding box": [72.0, 700.0, 540.0, 730.0]},
+        ]},
+    ]}
+    pages = [Page(page_no=1, width=612.0, height=792.0)]
+    OpenDataLoaderParser()._walk(doc["kids"], pages, in_table=False)
+    # CJK-to-CJK spaces are line-join artifacts and get stripped on the way in
+    assert [b.text for b in pages[0].blocks] == ["条款一住址北京市朝阳区"]
+    assert pages[0].blocks[0].bbox == [72.0, 62.0, 540.0, 92.0]
+
+
+@needs_java
+def test_parse_real_pdf_keeps_headers_and_footers(tmp_path):
+    """Repeating page headers/footers are dropped by ODL unless
+    include_header_footer is set.  For masking they are content, not chrome:
+    the customer's own scanned sample hides its planted URL in the footer."""
+    f = tmp_path / "hf.pdf"
+    _text_pdf(f, [f"Body line page {i} with content" for i in range(1, 5)],
+              header="Confidential KPMG working paper 2026",
+              footer="https://law.example.com/detail/ABC123")
+    udr = OpenDataLoaderParser().parse(str(f))
+    text = udr.full_text()
+    assert "Body line page 1" in text
+    assert "https://law.example.com/detail/ABC123" in text, "footer must survive"
+    assert "Confidential KPMG working paper" in text, "header must survive"
 
 
 @needs_java
