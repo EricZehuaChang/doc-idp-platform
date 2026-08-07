@@ -133,6 +133,31 @@ def test_table_rows_carry_cell_locations(monkeypatch):
     assert needs_review is False
 
 
+def test_table_cell_hits_carry_percent_coords_when_page_has_dims(monkeypatch):
+    """Masking consumers (mask-guard route-A wiring) need page-percent boxes;
+    raw parser-space bbox alone is unusable downstream because /status carries
+    no page dims. When the UDR page has dims, every hit gains x/y/w/h percent
+    (top-left origin); zero-dim pages (markitdown) keep the bare contract."""
+    import app.extraction.pipeline as pipe
+    pkg = SkillPackage(skill_code="mask_probe", fields=[
+        FieldSpec(name="打码字段", type="table", entity_list=True,
+                  columns=[FieldSpec(name="内容")])])
+    udr = UDR(pages=[Page(page_no=1, width=200.0, height=400.0,
+                          blocks=[_charline("电话 13800138000 内线")])],
+              full_markdown="电话 13800138000 内线", parser="test")
+
+    def fake(messages, chain, transport=None):
+        return ({"打码字段": [{"内容": "13800138000"}]},
+                {"prompt_tokens": 1, "completion_tokens": 1}, "fake")
+    monkeypatch.setattr(pipe, "chat_json_with_fallback", fake)
+
+    result, _usage, _ = pipe.extract(udr, pkg)
+    hit = result["打码字段"][0]["$cells"]["内容"]["$hits"][0]
+    assert hit["bbox"] == [30.0, 0.0, 140.0, 20.0]      # raw space untouched
+    assert hit["x"] == 15.0 and hit["y"] == 0.0          # 30/200, 0/400
+    assert hit["w"] == 55.0 and hit["h"] == 5.0          # 110/200, 20/400
+
+
 def test_compiler_entity_list_sweep_instruction():
     pkg = SkillPackage(skill_code="m", fields=[
         FieldSpec(name="打码字段", type="table", entity_list=True,

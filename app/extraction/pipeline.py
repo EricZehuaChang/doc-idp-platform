@@ -19,6 +19,34 @@ from app.skillengine.compiler import compile_messages
 from app.skillengine.schema import SkillPackage
 
 
+def _percent_hits(hits: list, udr: UDR) -> list:
+    """Enrich each hit with page-percent x/y/w/h (top-left origin, 0-100).
+
+    /status carries no page dims, so a masking consumer (mask-guard route-A)
+    cannot convert parser-space bbox itself — and the parser space varies
+    (pdfplumber = PDF points, OCR = render pixels). Converting here, where the
+    UDR is in hand, is the only place both sides of the ratio are known.
+    Zero-dim pages (markitdown has no geometry) keep the bare {page, bbox}
+    contract: emitting percent against a fake size would be a wrong box, and a
+    wrong box gets masked as if it were right."""
+    out = []
+    for h in hits:
+        entry = dict(h)
+        bbox, page_no = h.get("bbox"), h.get("page")
+        if (bbox and len(bbox) == 4 and isinstance(page_no, int)
+                and 1 <= page_no <= len(udr.pages)):
+            p = udr.pages[page_no - 1]
+            if p.width and p.height:
+                x0, top, x1, bottom = bbox
+                entry.update(
+                    x=round(x0 / p.width * 100, 2),
+                    y=round(top / p.height * 100, 2),
+                    w=round((x1 - x0) / p.width * 100, 2),
+                    h=round((bottom - top) / p.height * 100, 2))
+        out.append(entry)
+    return out
+
+
 def _locate_rows(rows: list, spec, udr: UDR) -> list:
     """Attach per-cell source locations to table rows as $-prefixed metadata
     (mirroring the scalar cell contract): row["$cells"][col] =
@@ -42,7 +70,8 @@ def _locate_rows(rows: list, spec, udr: UDR) -> list:
                 if not sval:
                     continue
                 score, hits = conf.score_cell(sval, udr)
-                cells[c.name] = {"$confidence": score, "$hits": hits}
+                cells[c.name] = {"$confidence": score,
+                                 "$hits": _percent_hits(hits, udr)}
             if cells:
                 row = {**row, "$cells": cells}
         out.append(row)
