@@ -10,8 +10,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api.routes import (auth, billing, data, hooks, locate, process,
-                            review, settings as settings_routes, skills)
+from app.api.routes import (auth, billing, data, detect, hooks, locate,
+                            process, review, settings as settings_routes,
+                            skills)
 from app.auth import security
 from app.config import get_settings
 from app.db import get_engine, init_db, session_factory
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_routes.router)
     app.include_router(process.router)
     app.include_router(locate.router)
+    app.include_router(detect.router)
     app.include_router(skills.router)
     app.include_router(review.router)
     app.include_router(data.router)

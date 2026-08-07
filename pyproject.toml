@@ -30,6 +30,15 @@ parsers = [
     # to pdfplumber without one). Pin 2.x: Apache-2.0 from 2.0 (pre-2.0 = MPL).
     "opendataloader-pdf>=2.5,<3",
 ]
+# seal/signature visual detection (/detect channel, design 2026-08-07).
+# Model weights are NOT pip-shipped: PP-DocLayoutV3-ONNX (261MB, Apache-2.0)
+# goes to data/models/ — see configs/detectors.yaml model_source.
+vision = [
+    "onnxruntime>=1.17",   # MIT; CPU inference for the layout ONNX
+    "pypdfium2>=4",        # PDFium (BSD/Apache-2.0); PDF rasterizer — fitz is BANNED (AGPL)
+    "pillow>=10",          # HPND; image IO + HSV for the red-seal CV fallback
+    "numpy>=1.26",         # pre/post-processing
+]
 pg = ["asyncpg>=0.29", "alembic>=1.13"]
 dev = [
     "pytest>=8.2",

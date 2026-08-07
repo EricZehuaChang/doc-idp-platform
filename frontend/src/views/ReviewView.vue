@@ -15,11 +15,17 @@
                 @click="annotate = !annotate" title="拖拽框选字段位置 (B)">
           ▣ 框选{{ annotate ? "中" : "" }}
         </button>
+        <button class="anno" :class="{ primary: !!sealRegions }"
+                :disabled="detecting || !detectSupported" @click="toggleDetect"
+                :title="detectSupported ? '检测印章/签名并在原图上叠框（再点一次清除）'
+                                        : '该格式不支持印章检测（仅 PDF 与图片）'">
+          ◉ 印章{{ detecting ? "…" : sealRegions ? ` ×${sealRegions.length}` : "" }}
+        </button>
       </div>
       <div class="doc-body">
         <DocStage :src="api.downloadUrl(fileId)" :file-name="detail.file_name"
                   :pages="detail.pages" :active-box="activeBox" :active-page="activePage"
-                  :annotate="annotate" @box="onBoxDrawn" />
+                  :annotate="annotate" :regions="sealRegions" @box="onBoxDrawn" />
       </div>
     </section>
 
@@ -114,7 +120,7 @@
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { api, type FieldCell } from "../api";
+import { api, fetchBlob, type FieldCell, type RegionOverlay } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
@@ -155,6 +161,45 @@ const activeBox = ref<number[] | null>(null);
 const activePage = ref(1);
 const annotate = ref(false);
 const pendingBoxes = ref<Record<string, { page: number; bbox: number[] }>>({});
+
+// —— seal/signature detection overlay (/detect, design 2026-08-07 §3) ——
+const detecting = ref(false);
+const sealRegions = ref<RegionOverlay[] | null>(null);
+// suffix gate mirrors the backend's (detect.py): other formats would only
+// round-trip to a guaranteed 422, so the button greys out with a tooltip
+const detectSupported = computed(() =>
+  !!detail.value && /\.(pdf|png|jpe?g|bmp|webp)$/i.test(detail.value.file_name));
+async function toggleDetect() {
+  if (sealRegions.value) { sealRegions.value = null; return; }   // second click clears
+  if (!detail.value) return;
+  // capture identity at call start: detection takes seconds and the reviewer
+  // can ←/→ away mid-flight — a settling stale response must never overlay
+  // another document's boxes (the fileId watch reset alone can't stop that)
+  const fid = props.fileId;
+  const fname = detail.value.file_name;
+  detecting.value = true;
+  try {
+    // re-fetch the original through the authenticated blob channel and run
+    // the pure-compute /detect on it (no Transaction, no charge)
+    const blob = await fetchBlob(api.downloadUrl(fid));
+    const res = await api.detect(blob, fname);
+    if (props.fileId !== fid) return;      // switched away: discard stale result
+    sealRegions.value = res.regions.map((r) => {
+      const p = res.pages.find((x) => x.page === r.page);
+      return { ...r, pageWidth: p?.width ?? 0, pageHeight: p?.height ?? 0 };
+    });
+    const seals = res.regions.filter((r) => r.label === "seal").length;
+    const sigs = res.regions.filter((r) => r.label === "signature").length;
+    const cut = res.truncated ? `；文档共 ${res.page_count} 页，仅检测前 ${res.pages_scanned} 页` : "";
+    toast.ok(res.regions.length
+      ? `检测到 ${seals} 处印章、${sigs} 处签名（${res.detector}）${cut}`
+      : `未检测到印章/签名${cut}`);
+  } catch (e) {
+    if (props.fileId === fid) toast.error(e);
+  } finally {
+    detecting.value = false;
+  }
+}
 const fieldsEl = ref<HTMLDivElement>();
 const inputEls = new Map<number, HTMLInputElement>();
 function setInput(i: number, el: HTMLInputElement | null) {
@@ -353,6 +398,7 @@ watch(() => props.fileId, () => {
   activeBox.value = null;
   activePage.value = 1;
   annotate.value = false;
+  sealRegions.value = null;      // detection overlay belongs to one file
   pendingBoxes.value = {};
   inputEls.clear();
 });

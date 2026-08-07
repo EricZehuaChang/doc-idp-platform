@@ -128,6 +128,28 @@ export interface DryRunEntry {
   usage?: Record<string, number | string>; error?: string;
 }
 
+// —— /detect: seal/signature visual detection (design 2026-08-07) ——
+export interface DetectRegion {
+  page: number; label: string; score: number;
+  x: number; y: number; w: number; h: number;   // percent (masking contract)
+  bbox_px: number[];                            // page pixels (overlay contract)
+  mask: number[][] | null;
+}
+export interface DetectResult {
+  page_count: number;          // total pages in the document
+  pages_scanned: number;       // rasterized+detected pages (≤100)
+  truncated: boolean;          // true => pages past the cap were NOT examined
+  detector: string;
+  pages: { page: number; width: number; height: number }[];
+  regions: DetectRegion[]; misses: string[];
+}
+/** DetectRegion + the raster page dims its bbox_px lives in, so DocStage can
+ *  rescale into the UDR viewBox (detect rasters at 200 DPI, UDR pages may be
+ *  PDF points — the two pixel spaces differ by a constant factor per page). */
+export interface RegionOverlay extends DetectRegion {
+  pageWidth: number; pageHeight: number;
+}
+
 export interface LoginResult {
   access_token: string; token_type: string; role: string;
   tenant_id: string; email: string; must_change_password: boolean;
@@ -262,6 +284,13 @@ export const api = {
   files: (page: number, status?: string) =>
     req<FilesPage>("GET",
       `/api/v1/files?page=${page}&page_size=20${status ? `&status=${status}` : ""}`),
+  // seal/signature detection (pure compute, no billing — /locate's visual twin)
+  detect: (file: Blob, fileName: string, kinds = "seal,signature") => {
+    const f = new FormData();
+    f.append("file", file, fileName);
+    f.append("kinds", kinds);
+    return reqForm<DetectResult>("/api/v1/detect", f);
+  },
   // account (§11.8)
   login: (email: string, password: string) =>
     req<LoginResult>("POST", "/api/v1/auth/login", { email, password }),

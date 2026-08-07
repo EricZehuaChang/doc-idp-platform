@@ -1,0 +1,24 @@
+# Detector plugins (integration design 2026-08-07: seal/signature visual
+# detection channel — /detect, the visual twin of /locate).
+detectors:
+  - name: pp-doclayout        # PP-DocLayoutV3 ONNX, Apache-2.0 code+weights, CPU
+    type: onnx
+    # weights are NOT shipped (261MB): download once from model_source into
+    # data/models/ (gitignored); air_gapped deployments MUST pre-seed the file.
+    # Override per-host via IDP_SEAL_MODEL_PATH / IDP_SEAL_MODEL_SOURCE.
+    model_path: data/models/PP-DocLayoutV3.onnx
+    model_source: https://huggingface.co/alex-dinh/PP-DocLayoutV3-ONNX/resolve/main/PP-DocLayoutV3.onnx
+    score_threshold: 0.5
+    # official 25-class id2label (PaddlePaddle/PP-DocLayoutV3_safetensors
+    # config.json, verified 2026-08-07): seal = 20. NOTE the official class
+    # set has NO signature class — signature coverage needs its own detector
+    # (design §5 phase 5); requesting kinds=signature reports it under misses.
+    # Still canary a real stamped sample before production (§5 phase 3).
+    class_map:
+      20: seal
+  - name: red-seal-cv         # zero-model HSV red-seal fallback, works today
+    type: cv
+default_detector:
+  lite: pp-doclayout
+  standard: pp-doclayout
+  air_gapped: pp-doclayout

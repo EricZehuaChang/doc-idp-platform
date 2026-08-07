@@ -30,6 +30,16 @@ class ParserCfg(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class DetectorCfg(BaseModel):
+    """Visual detector plugin config (detectors.yaml, design 2026-08-07 §2.5)."""
+    name: str
+    type: str = "onnx"             # onnx | cv
+    model_path: str | None = None  # relative paths resolve against REPO_ROOT
+    model_source: str | None = None
+    score_threshold: float = 0.5
+    class_map: dict[int, str] = {}  # model class id -> seal|signature
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="IDP_", env_file=".env", extra="ignore")
 
@@ -46,6 +56,12 @@ class Settings(BaseSettings):
     # multi-doc split (M2 item 7): "auto" = LLM page classification on
     # multi-page files (one cheap call per file); "off" = never split
     multi_doc_split: str = "auto"
+
+    # seal/signature detection (design 2026-08-07): per-host overrides for the
+    # detectors.yaml model location — air_gapped pre-seeds an absolute path,
+    # mirrors point model_source at an internal artifact store
+    seal_model_path: str = ""
+    seal_model_source: str = ""
 
     # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
     # "on" = /api requires Bearer JWT or API key, tenant comes from credential
@@ -81,3 +97,10 @@ def load_parsers() -> dict:
         p["for_"] = p.pop("for", None)
         parsers[p["name"]] = ParserCfg(**p)
     return {"parsers": parsers, "default_parser": raw["default_parser"]}
+
+
+@lru_cache
+def load_detectors() -> dict:
+    raw = yaml.safe_load((REPO_ROOT / "configs" / "detectors.yaml").read_text(encoding="utf-8"))
+    detectors = {d["name"]: DetectorCfg(**d) for d in raw["detectors"]}
+    return {"detectors": detectors, "default_detector": raw["default_detector"]}

@@ -21,6 +21,11 @@
         <rect v-if="activeBox && activePage === 1" :x="activeBox[0]" :y="activeBox[1]"
               :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
               class="hl" />
+        <template v-for="(rg, ri) in regionsOn(1)" :key="`rg1-${ri}`">
+          <polygon v-if="rg.mask?.length" :points="regionPoints(rg, 1)"
+                   class="region" :class="rg.label" />
+          <rect v-else v-bind="regionRect(rg, 1)" class="region" :class="rg.label" />
+        </template>
         <rect v-if="drag && drag.page === 1" :x="dragRect[0]" :y="dragRect[1]"
               :width="dragRect[2]" :height="dragRect[3]" class="draw" />
       </svg>
@@ -44,6 +49,11 @@
           <rect v-if="activeBox && activePage === p.no" :x="activeBox[0]" :y="activeBox[1]"
                 :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
                 class="hl" />
+          <template v-for="(rg, ri) in regionsOn(p.no)" :key="`rg${p.no}-${ri}`">
+            <polygon v-if="rg.mask?.length" :points="regionPoints(rg, p.no)"
+                     class="region" :class="rg.label" />
+            <rect v-else v-bind="regionRect(rg, p.no)" class="region" :class="rg.label" />
+          </template>
           <rect v-if="drag && drag.page === p.no" :x="dragRect[0]" :y="dragRect[1]"
                 :width="dragRect[2]" :height="dragRect[3]" class="draw" />
         </svg>
@@ -60,7 +70,7 @@
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { downloadFile, fetchBlob } from "../api";
+import { downloadFile, fetchBlob, type RegionOverlay } from "../api";
 
 // pdf.js must be imported AFTER scrubbing any leaked Node `process` global:
 // Electron-embedded webviews (e.g. IDE preview panes) expose one in the page,
@@ -89,6 +99,7 @@ const props = defineProps<{
   activeBox: number[] | null;
   activePage: number;
   annotate: boolean;
+  regions?: RegionOverlay[] | null;   // seal/signature overlay (/detect)
 }>();
 const emit = defineEmits<{ (e: "box", page: number, bbox: number[]): void }>();
 
@@ -117,7 +128,13 @@ function pageDim(no: number): { width: number; height: number } | null {
   const p = props.pages.find((x) => x.page_no === no);
   if (p && p.width > 0 && p.height > 0) return p;
   const v = pdfPages.value.find((x) => x.no === no);
-  return v ? { width: v.vpW, height: v.vpH } : null;
+  if (v) return { width: v.vpW, height: v.vpH };
+  // last resort: seed the viewBox from the /detect raster dims — geometry-less
+  // parses (OCR chain without page info) leave UDR pages at 0x0, which would
+  // otherwise suppress the overlay SVG entirely while the toast reports hits;
+  // regionScale then resolves to 1 and detect boxes draw in their own space
+  const r = (props.regions ?? []).find((x) => x.page === no && x.pageWidth > 0);
+  return r ? { width: r.pageWidth, height: r.pageHeight } : null;
 }
 
 // original bytes always come through an authenticated fetch — bare <img src>
@@ -173,6 +190,27 @@ function renderPdfSafe() {
 
 function setCanvas(no: number, el: HTMLCanvasElement | null) {
   if (el) canvases.set(no, el);
+}
+
+// —— seal/signature overlay: detect raster px -> UDR viewBox px ——
+// /detect boxes live in the 200-DPI raster space (RegionOverlay.pageWidth/
+// Height); the SVG viewBox is UDR page space — rescale by the per-page ratio.
+function regionsOn(no: number): RegionOverlay[] {
+  return (props.regions ?? []).filter((r) => r.page === no);
+}
+function regionScale(rg: RegionOverlay, no: number): [number, number] {
+  const dim = pageDim(no);
+  if (!dim || !rg.pageWidth || !rg.pageHeight) return [1, 1];
+  return [dim.width / rg.pageWidth, dim.height / rg.pageHeight];
+}
+function regionRect(rg: RegionOverlay, no: number) {
+  const [sx, sy] = regionScale(rg, no);
+  const [x0, y0, x1, y1] = rg.bbox_px;
+  return { x: x0 * sx, y: y0 * sy, width: (x1 - x0) * sx, height: (y1 - y0) * sy };
+}
+function regionPoints(rg: RegionOverlay, no: number): string {
+  const [sx, sy] = regionScale(rg, no);
+  return (rg.mask ?? []).map(([x, y]) => `${x * sx},${y * sy}`).join(" ");
 }
 
 // —— box-select (annotate mode): pointer px -> UDR page-pixel space ——
@@ -245,6 +283,9 @@ onBeforeUnmount(() => {
   user-select: none; -webkit-user-drag: none; }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .hl { fill: rgba(240, 180, 41, 0.25); stroke: var(--accent); stroke-width: 4; }
+.region { stroke-width: 4; pointer-events: none; }
+.region.seal { fill: rgba(229, 72, 77, 0.18); stroke: #e5484d; }
+.region.signature { fill: rgba(90, 170, 255, 0.16); stroke: var(--blue); }
 .draw { fill: rgba(90, 170, 255, 0.15); stroke: var(--blue); stroke-width: 3;
   stroke-dasharray: 8 5; }
 .page-no { position: absolute; right: 6px; bottom: 6px; font-size: 11px;
