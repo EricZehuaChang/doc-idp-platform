@@ -117,12 +117,38 @@ class _FakeBroken:
         raise DetectorUnavailable("weights gone fishing")
 
 
+@registry.register("detector", "fake-sig")
+class _FakeSig:
+    def detect(self, pages):
+        return [Region(page=1, label="signature", bbox=[5, 5, 50, 30], score=0.7)]
+
+
+_TIERS = ("lite", "standard", "air_gapped")
+
+
 def _fake_cfgs():
-    return {"detectors": {n: DetectorCfg(name=n, type="cv")
-                          for n in ("fake-fixed", "fake-broken", "red-seal-cv")},
-            # all tiers mapped: a leaked IDP_DEPLOY_TIER must not skew routing
-            "default_detector": {t: "fake-fixed"
-                                 for t in ("lite", "standard", "air_gapped")}}
+    """Single default detector covering both kinds (the pre-split shape)."""
+    cfgs = {
+        "fake-fixed": DetectorCfg(name="fake-fixed", type="cv",
+                                  labels=["seal", "signature"]),
+        "fake-broken": DetectorCfg(name="fake-broken", type="cv",
+                                   labels=["seal", "signature"]),
+        "red-seal-cv": DetectorCfg(name="red-seal-cv", type="cv", labels=["seal"]),
+    }
+    # all tiers mapped: a leaked IDP_DEPLOY_TIER must not skew routing
+    return {"detectors": cfgs,
+            "default_detectors": {t: ["fake-fixed"] for t in _TIERS}}
+
+
+def _split_cfgs(seal_det: str = "red-seal-cv"):
+    """Production shape: separate seal and signature default detectors."""
+    cfgs = {
+        "red-seal-cv": DetectorCfg(name="red-seal-cv", type="cv", labels=["seal"]),
+        "fake-broken": DetectorCfg(name="fake-broken", type="cv", labels=["seal"]),
+        "fake-sig": DetectorCfg(name="fake-sig", type="cv", labels=["signature"]),
+    }
+    return {"detectors": cfgs,
+            "default_detectors": {t: [seal_det, "fake-sig"] for t in _TIERS}}
 
 
 def _png_bytes(width=200, height=100, draw_stamp=False) -> bytes:
@@ -251,6 +277,76 @@ async def test_detect_pdf_rasterization_dims(client, monkeypatch):
     assert round(page["width"]) == 1700 and round(page["height"]) == 2200
     seal = next(e for e in body["regions"] if e["label"] == "seal")
     assert seal["x"] == round(10 / page["width"] * 100, 2)
+
+
+async def test_detect_kind_routing_runs_matching_detectors(client, monkeypatch):
+    """kinds route to the default detectors whose labels intersect: signature
+    only -> only the signature model runs; both kinds -> both run and the
+    response names the combined detector set."""
+    pytest.importorskip("PIL")
+    pytest.importorskip("numpy")
+    monkeypatch.setattr(detect_route, "load_detectors", lambda: _split_cfgs())
+    r = await client.post(
+        "/api/v1/detect",
+        files={"file": ("page.png", _png_bytes(), "image/png")},
+        data={"kinds": "signature"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["detector"] == "fake-sig"          # seal detector never ran
+    assert [e["label"] for e in body["regions"]] == ["signature"]
+
+    r = await client.post(
+        "/api/v1/detect",
+        files={"file": ("page.png", _png_bytes(), "image/png")})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["detector"] == "red-seal-cv+fake-sig"
+    assert body["misses"] == ["seal"]              # blank page: CV finds none
+
+
+async def test_detect_broken_detector_only_blocks_its_kind(client, monkeypatch):
+    """A down seal model must 422 loudly when seal is requested — but must
+    not block a signature-only request it would never serve."""
+    pytest.importorskip("PIL")
+    monkeypatch.setattr(detect_route, "load_detectors",
+                        lambda: _split_cfgs(seal_det="fake-broken"))
+    r = await client.post(
+        "/api/v1/detect",
+        files={"file": ("page.png", _png_bytes(), "image/png")},
+        data={"kinds": "signature"})
+    assert r.status_code == 200                    # broken seal det skipped
+    r = await client.post(
+        "/api/v1/detect",
+        files={"file": ("page.png", _png_bytes(), "image/png")})
+    assert r.status_code == 422                    # seal requested -> loud fail
+    assert "fake-broken" in r.json()["detail"]
+
+
+def test_suppress_seal_echoes():
+    """A signature region mostly inside seal regions is the chop's own
+    strokes, not a signature — dropped; a free-standing signature stays."""
+    from app.api.routes.detect import _suppress_seal_echoes
+    seal = Region(page=1, label="seal", bbox=[100, 100, 300, 300], score=0.9)
+    echo = Region(page=1, label="signature", bbox=[120, 120, 280, 280], score=0.2)
+    real = Region(page=1, label="signature", bbox=[500, 500, 700, 560], score=0.4)
+    other_page = Region(page=2, label="signature",
+                        bbox=[120, 120, 280, 280], score=0.2)
+    kept = _suppress_seal_echoes([seal, echo, real, other_page])
+    assert kept == [seal, real, other_page]      # echo gone, page 2 untouched
+
+
+def test_yolos_boxes_to_regions_denormalizes_and_clamps():
+    from app.detectors.yolos_signature import _boxes_to_regions
+    page = PageImage(page_no=1, image=None, width=1000.0, height=500.0)
+    scores = [0.9, 0.3, 0.8]
+    boxes = [(0.5, 0.5, 0.2, 0.4),     # kept: center box
+             (0.1, 0.1, 0.05, 0.05),   # below threshold
+             (0.0, 0.0, 0.4, 0.4)]     # clamps to page origin
+    regions = _boxes_to_regions(scores, boxes, 0.5, "signature", page)
+    assert [r.score for r in regions] == [0.9, 0.8]
+    assert regions[0].bbox == [400.0, 150.0, 600.0, 350.0]
+    assert regions[1].bbox == [0.0, 0.0, 200.0, 100.0]
+    assert all(r.label == "signature" for r in regions)
 
 
 async def test_detect_truncation_is_explicit(client, monkeypatch):
@@ -417,10 +513,12 @@ async def test_detect_requires_credential_when_auth_on(tmp_path, monkeypatch):
 
 # ---------------- opt-in canary: real ONNX weights --------------------------
 
-_MODEL = Path(__file__).resolve().parents[1] / "data" / "models" / "PP-DocLayoutV3.onnx"
+_MODELS = Path(__file__).resolve().parents[1] / "data" / "models"
+_PP = _MODELS / "PP-DocLayoutV3.onnx"
+_YOLOS = _MODELS / "yolos-signature.onnx"
 
 
-@pytest.mark.skipif(not _MODEL.exists(),
+@pytest.mark.skipif(not _PP.exists(),
                     reason="PP-DocLayoutV3.onnx not downloaded (opt-in canary; "
                            "see configs/detectors.yaml model_source)")
 async def test_canary_pp_doclayout_real_inference(client):
@@ -438,3 +536,21 @@ async def test_canary_pp_doclayout_real_inference(client):
         assert e["label"] in {"seal", "signature"}
         assert 0 <= e["x"] and e["x"] + e["w"] <= 100
         assert len(e["bbox_px"]) == 4
+
+
+@pytest.mark.skipif(not (_PP.exists() and _YOLOS.exists()),
+                    reason="detector weights not fully seeded (opt-in canary)")
+async def test_canary_default_routing_both_models(client):
+    """Default kinds route through BOTH real models in one request — the
+    single-call seal+signature contract that replaces the Insavlo pattern."""
+    pytest.importorskip("onnxruntime")
+    r = await client.post(
+        "/api/v1/detect",
+        files={"file": ("stamp.png", _png_bytes(800, 600, draw_stamp=True),
+                        "image/png")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["detector"] == "pp-doclayout+yolos-signature"
+    for e in body["regions"]:
+        assert e["label"] in {"seal", "signature"}
+        assert 0 <= e["x"] and e["x"] + e["w"] <= 100

@@ -1,5 +1,7 @@
 # Detector plugins (integration design 2026-08-07: seal/signature visual
 # detection channel — /detect, the visual twin of /locate).
+# `labels` is the routing key: with no explicit detector override, /detect
+# runs every tier-default detector whose labels intersect the requested kinds.
 detectors:
   - name: pp-doclayout        # PP-DocLayoutV3 ONNX, Apache-2.0 code+weights, CPU
     type: onnx
@@ -11,14 +13,30 @@ detectors:
     score_threshold: 0.5
     # official 25-class id2label (PaddlePaddle/PP-DocLayoutV3_safetensors
     # config.json, verified 2026-08-07): seal = 20. NOTE the official class
-    # set has NO signature class — signature coverage needs its own detector
-    # (design §5 phase 5); requesting kinds=signature reports it under misses.
-    # Still canary a real stamped sample before production (§5 phase 3).
+    # set has NO signature class — that is what yolos-signature is for.
     class_map:
       20: seal
+    labels: [seal]
+  - name: yolos-signature     # YOLOS (hustvl ViT detector — NOT Ultralytics,
+    type: onnx                # no AGPL) fine-tuned on tech4humans signature
+    # dataset; official onnx-community conversion, Apache-2.0 code+weights.
+    # 511MB fp32: same seeding discipline as above; override per-host via
+    # IDP_SIGNATURE_MODEL_PATH / IDP_SIGNATURE_MODEL_SOURCE.
+    model_path: data/models/yolos-signature.onnx
+    model_source: https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/model.onnx
+    # measured on the handwritten ITGC workpaper (2026-08-07): the fixed
+    # 640x640 resize turns page-scale signatures into small objects, pressing
+    # true-signature scores down to 0.13-0.46 while the noise floor across 10
+    # negative pages stays <=0.025 — 0.1 keeps ~5x separation. Do NOT bump
+    # back to the DETR-default 0.5: it zeroes recall on full-page documents.
+    score_threshold: 0.1
+    class_map:
+      0: signature
+    labels: [signature]
   - name: red-seal-cv         # zero-model HSV red-seal fallback, works today
     type: cv
-default_detector:
-  lite: pp-doclayout
-  standard: pp-doclayout
-  air_gapped: pp-doclayout
+    labels: [seal]
+default_detectors:
+  lite: [pp-doclayout, yolos-signature]
+  standard: [pp-doclayout, yolos-signature]
+  air_gapped: [pp-doclayout, yolos-signature]

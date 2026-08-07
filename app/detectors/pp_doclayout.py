@@ -14,22 +14,16 @@ PaddlePaddle/PP-DocLayoutV3_safetensors config.json, checked 2026-08-07):
   signature needs its own detector, phase 5). class_map stays config-driven
   so a re-export or fine-tune only touches configs/detectors.yaml.
 
-The ORT session is cached at module level (same lazy-client discipline as
-parsers/glm_ocr_cloud.py) — model load is ~seconds, requests are ~ms.
+The ORT session is cached process-wide via onnx_util (same lazy-client
+discipline as parsers/glm_ocr_cloud.py) — model load is ~seconds, requests ~ms.
 """
-import threading
-from pathlib import Path
-
-from app.config import REPO_ROOT
+from app.detectors import onnx_util
 from app.detectors.base import DetectorUnavailable, PageImage, Region
 from app.plugins.registry import registry
 
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
 _DEFAULT_INPUT = 800                     # fallback when the graph is dynamic
-
-_lock = threading.Lock()
-_session_cache: dict[str, object] = {}   # resolved model path -> ort.InferenceSession
 
 
 def _rows_to_regions(rows, class_map: dict[int, str], threshold: float,
@@ -63,35 +57,6 @@ class PPDocLayoutDetector:
         self.score_threshold = score_threshold
         self.class_map = {int(k): v for k, v in (class_map or {20: "seal"}).items()}
 
-    def _resolve_path(self) -> Path:
-        p = Path(self.model_path)
-        return p if p.is_absolute() else REPO_ROOT / p
-
-    def _get_session(self):
-        """Load-once ORT session. Weights are NOT pip-shipped (261MB): ops
-        download them once from model_source; air_gapped tier MUST pre-seed."""
-        try:
-            import onnxruntime as ort
-        except ImportError as e:
-            raise DetectorUnavailable(
-                "onnxruntime not installed — pip install '.[vision]'") from e
-        path = self._resolve_path()
-        key = str(path)
-        with _lock:
-            sess = _session_cache.get(key)
-            if sess is None:
-                if not path.exists():
-                    hint = f",从 {self.model_source} 下载" if self.model_source else ""
-                    raise DetectorUnavailable(
-                        f"模型权重缺失: {path}{hint} 后重试(air_gapped 部署须预置)")
-                try:
-                    sess = ort.InferenceSession(
-                        key, providers=["CPUExecutionProvider"])
-                except Exception as e:
-                    raise DetectorUnavailable(f"cannot load onnx model: {e}") from e
-                _session_cache[key] = sess
-        return sess
-
     def _input_size(self, sess) -> int:
         """Static H from the 4-D image input ([1,3,800,800]); 800 if dynamic."""
         for inp in sess.get_inputs():
@@ -113,7 +78,7 @@ class PPDocLayoutDetector:
 
     def detect(self, pages: list[PageImage]) -> list[Region]:
         import numpy as np
-        sess = self._get_session()
+        sess = onnx_util.load_session(self.model_path, self.model_source)
         size = self._input_size(sess)
         input_names = [i.name for i in sess.get_inputs()]
         regions: list[Region] = []

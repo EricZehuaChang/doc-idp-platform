@@ -38,6 +38,7 @@ class DetectorCfg(BaseModel):
     model_source: str | None = None
     score_threshold: float = 0.5
     class_map: dict[int, str] = {}  # model class id -> seal|signature
+    labels: list[str] = []          # kinds this detector can produce (routing key)
 
 
 class Settings(BaseSettings):
@@ -58,10 +59,12 @@ class Settings(BaseSettings):
     multi_doc_split: str = "auto"
 
     # seal/signature detection (design 2026-08-07): per-host overrides for the
-    # detectors.yaml model location — air_gapped pre-seeds an absolute path,
+    # detectors.yaml model locations — air_gapped pre-seeds absolute paths,
     # mirrors point model_source at an internal artifact store
     seal_model_path: str = ""
     seal_model_source: str = ""
+    signature_model_path: str = ""
+    signature_model_source: str = ""
 
     # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
     # "on" = /api requires Bearer JWT or API key, tenant comes from credential
@@ -103,4 +106,8 @@ def load_parsers() -> dict:
 def load_detectors() -> dict:
     raw = yaml.safe_load((REPO_ROOT / "configs" / "detectors.yaml").read_text(encoding="utf-8"))
     detectors = {d["name"]: DetectorCfg(**d) for d in raw["detectors"]}
-    return {"detectors": detectors, "default_detector": raw["default_detector"]}
+    # per-tier default detector set (str or list in yaml -> always a list):
+    # one detector per kind family — seal (layout model) + signature (YOLOS)
+    defaults = {tier: [v] if isinstance(v, str) else list(v)
+                for tier, v in raw["default_detectors"].items()}
+    return {"detectors": detectors, "default_detectors": defaults}
