@@ -22,7 +22,14 @@ dependencies = [
 
 [project.optional-dependencies]
 parsers = [
-    "markitdown>=0.1",   # Office family -> Markdown (design §4.2, MIT)
+    # Office family -> Markdown (design §4.2, MIT).  The extras are the actual
+    # format readers (docx=mammoth, xlsx=openpyxl, pptx=python-pptx): bare
+    # `markitdown` imports fine but throws MissingDependencyException on every
+    # Office file at runtime.  Found the hard way on the first clean install
+    # (2026-08-11 production): the dev venv had accumulated these packages over
+    # months, so the gap never showed locally — the docx semantic channel
+    # silently degraded to regex-only on the server.
+    "markitdown[docx,xlsx,pptx]>=0.1",
     "pdfplumber>=0.11",  # electronic PDF text layer with bbox (design §4.2, MIT; PyMuPDF is BANNED: AGPL)
     "pypdf>=5.0",        # physical PDF slicing for multi-doc split (BSD)
     # Electronic-PDF first pass: structured layout + cell-level bbox, zero
