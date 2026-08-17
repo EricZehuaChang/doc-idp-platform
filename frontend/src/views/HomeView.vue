@@ -59,10 +59,10 @@
       </div>
       <Skeleton v-else-if="isLoading" :rows="6" />
       <EmptyState v-else title="还没有任务" glyph="🚀">
-        通过 API <code>POST /api/v1/process</code> 上传文档开始处理，
-        或先到技能中心定义抽取字段。
+        上传第一份文档开始处理，或先到技能中心定义要抽取的字段。
         <template #action>
-          <router-link to="/skills"><button class="primary">去技能中心</button></router-link>
+          <router-link to="/upload"><button class="primary">上传文档</button></router-link>
+          <router-link to="/skills"><button class="ghost">去技能中心</button></router-link>
         </template>
       </EmptyState>
     </section>

@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.billing import engine as billing
 from app.config import get_settings
@@ -79,7 +79,15 @@ async def list_skills():
         rows = (await s.execute(
             select(Skill).where(Skill.tenant_id == tenant,
                                 Skill.state != "deleted"))).scalars().all()
-        return [{"skill_code": r.code, "name": r.name, "kind": r.kind, "state": r.state}
+        # highest published version per skill: /process rejects a skill without
+        # one (400), so the upload page must be able to hide those up front
+        pub = dict((await s.execute(
+            select(SkillVersion.skill_code, func.max(SkillVersion.version))
+            .where(SkillVersion.skill_code.in_([r.code for r in rows]),
+                   SkillVersion.status == "published")
+            .group_by(SkillVersion.skill_code))).all())
+        return [{"skill_code": r.code, "name": r.name, "kind": r.kind, "state": r.state,
+                 "published_version": pub.get(r.code)}
                 for r in rows]
 
 

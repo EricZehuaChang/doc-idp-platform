@@ -48,6 +48,44 @@ async function reqForm<T>(url: string, form: FormData): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** multipart upload WITH byte progress. fetch() exposes no upload progress, so
+ *  document submission goes through XHR: on a slow link a 40MB batch takes
+ *  minutes, and a fake animation would be lying about where it actually is. */
+function reqUpload<T>(url: string, form: FormData,
+                      onProgress?: (sent: number, total: number) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("X-Tenant-Id", "default");
+    xhr.setRequestHeader(
+      "X-User", session.email || localStorage.getItem("idp_user") || "reviewer-1");
+    if (session.token) xhr.setRequestHeader("Authorization", `Bearer ${session.token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401 && session.authRequired) {
+        clearSession();
+        window.location.hash = "#/login";
+        reject(new Error("登录已过期，请重新登录"));
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText) as T); }
+        catch { reject(new Error("服务端返回了无法解析的内容")); }
+        return;
+      }
+      let detail = "";
+      try { detail = JSON.parse(xhr.responseText).detail ?? ""; } catch { /* non-JSON */ }
+      // the reverse proxy rejects oversized bodies with an HTML page, not JSON
+      if (!detail && xhr.status === 413) detail = "本批文件超过服务器允许的请求大小";
+      reject(new Error(detail || `上传失败（HTTP ${xhr.status}）`));
+    };
+    xhr.onerror = () => reject(new Error("网络中断，本批未提交"));
+    xhr.send(form);
+  });
+}
+
 export interface QueueItem {
   file_id: string; file_name: string; skill_code: string;
   transaction_id: string; page_count: number;
@@ -76,7 +114,25 @@ export interface SkillStat {
   top_corrected_fields: { field: string; count: number }[];
 }
 
-export interface SkillInfo { skill_code: string; name: string; kind: string; state: string }
+export interface SkillInfo {
+  skill_code: string; name: string; kind: string; state: string;
+  /** highest published version, null = never published (cannot be submitted to) */
+  published_version: number | null;
+}
+
+// —— upload surface ——
+export interface UploadLimits {
+  extensions: string[]; max_files: number; max_size_mb: number; max_batch_mb: number;
+}
+export interface SubmitResult {
+  transaction_id: string;
+  files: { file_id: string; original_filename: string }[];
+}
+export interface TxnStatus {
+  transaction_id: string; status: string; skill_code: string; skill_version: number;
+  files: { file_id: string; file_name: string; status: string;
+           page_count: number; msg: string }[];
+}
 
 // —— Skill Studio types (mirror app/skillengine/schema.py) ——
 export interface FieldSpec {
@@ -200,6 +256,16 @@ export async function downloadFile(url: string, filename: string): Promise<void>
 }
 
 export const api = {
+  // upload surface: capability contract + submission + transaction polling
+  formats: () => req<UploadLimits>("GET", "/api/v1/formats"),
+  submitProcess: (files: File[], skillCode: string,
+                  onProgress?: (sent: number, total: number) => void) => {
+    const f = new FormData();
+    for (const file of files) f.append("files", file, file.name);
+    f.append("skill_code", skillCode);
+    return reqUpload<SubmitResult>("/api/v1/process", f, onProgress);
+  },
+  txnStatus: (id: string) => req<TxnStatus>("GET", `/api/v1/status/${id}`),
   // review workbench
   queue: () => req<QueueItem[]>("GET", "/api/v1/review/queue"),
   detail: (id: string) => req<ReviewDetail>("GET", `/api/v1/review/${id}`),

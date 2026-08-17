@@ -17,6 +17,7 @@ import TasksView from "./views/TasksView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import SkillEditorView from "./views/SkillEditorView.vue";
 import SkillsView from "./views/SkillsView.vue";
+import UploadView from "./views/UploadView.vue";
 
 // entry pages reachable without a session (account flows carry their own token)
 const PUBLIC = new Set(["/login", "/forgot", "/reset", "/activate", "/oidc"]);
@@ -32,6 +33,7 @@ const router = createRouter({
     { path: "/activate", component: TokenPasswordView, props: { mode: "activate" } },
     { path: "/oidc", component: OidcCallbackView },
     { path: "/change-password", component: ChangePasswordView },
+    { path: "/upload", component: UploadView },
     { path: "/tasks", component: TasksView },
     { path: "/queue", redirect: "/tasks" },
     { path: "/review/:fileId", component: ReviewView, props: true },

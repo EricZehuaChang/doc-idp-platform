@@ -2,6 +2,7 @@
   <main class="page">
     <PageHeader title="任务" desc="全部处理任务的工作台：筛选、认领、进入校验。">
       <button class="ghost" title="刷新" @click="reload">⟳ 刷新</button>
+      <router-link to="/upload"><button class="primary">＋ 上传文档</button></router-link>
     </PageHeader>
 
     <section class="card-panel block">
@@ -55,7 +56,10 @@
         </template>
       </EmptyState>
       <EmptyState v-else title="还没有任务" glyph="🚀">
-        通过 API <code>POST /api/v1/process</code> 上传文档开始处理。
+        上传第一份文档开始处理，或通过 API <code>POST /api/v1/process</code> 提交。
+        <template #action>
+          <router-link to="/upload"><button class="primary">上传文档</button></router-link>
+        </template>
       </EmptyState>
 
       <div class="pager" v-if="totalPages > 1">

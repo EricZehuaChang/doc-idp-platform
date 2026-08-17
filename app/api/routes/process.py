@@ -19,12 +19,36 @@ router = APIRouter(prefix="/api/v1", tags=["process"])
 
 _MAX_FILES = 10                    # limits aligned with Insavlo v1.2.6
 _MAX_SIZE = 50 * 1024 * 1024
+# Per-request body budget for the browser upload page. The production entry
+# (nginx :5004) caps bodies at 100m, so 10 x 50MB would be rejected by the proxy
+# with an HTML error the SPA cannot parse. The UI batches its selection against
+# this number instead; the API itself is unchanged for existing integrations.
+_MAX_BATCH = 80 * 1024 * 1024
 
 
 class SubmitResponse(BaseModel):
     success: bool = True
     transaction_id: str
     files: list[dict]
+
+
+class FormatsResponse(BaseModel):
+    """Upload capability contract (browser upload page reads this instead of
+    hardcoding a list — UI and parser support cannot drift apart)."""
+    extensions: list[str]
+    max_files: int
+    max_size_mb: int
+    max_batch_mb: int
+
+
+@router.get("/formats", response_model=FormatsResponse)
+async def formats():
+    from app.parsers.router import UPLOAD_SUFFIXES
+
+    return FormatsResponse(
+        extensions=list(UPLOAD_SUFFIXES), max_files=_MAX_FILES,
+        max_size_mb=_MAX_SIZE // (1024 * 1024),
+        max_batch_mb=_MAX_BATCH // (1024 * 1024))
 
 
 @router.post("/process", response_model=SubmitResponse, status_code=202)

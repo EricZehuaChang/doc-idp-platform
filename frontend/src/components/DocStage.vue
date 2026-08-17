@@ -68,29 +68,9 @@
 // Document stage: renders the original (image or PDF via pdf.js), overlays the
 // active field's bbox, and — in annotate mode — lets the reviewer drag a new
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { downloadFile, fetchBlob, type RegionOverlay } from "../api";
-
-// pdf.js must be imported AFTER scrubbing any leaked Node `process` global:
-// Electron-embedded webviews (e.g. IDE preview panes) expose one in the page,
-// which flips pdf.js into its Node path (Node streams + napi canvas factory)
-// and yields silently blank canvases. Real browsers have no such global.
-type PdfjsModule = typeof import("pdfjs-dist");
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-function loadPdfjs(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    const g = globalThis as Record<string, unknown>;
-    if (String(g.process) === "[object process]") {
-      try { delete g.process; } catch { /* frozen: pdf.js will warn but run */ }
-    }
-    pdfjsPromise = import("pdfjs-dist").then((m) => {
-      m.GlobalWorkerOptions.workerSrc = workerUrl;
-      return m;
-    });
-  }
-  return pdfjsPromise;
-}
+import { loadPdfjs, type PdfjsModule } from "../pdfjs";
 
 const props = defineProps<{
   src: string;

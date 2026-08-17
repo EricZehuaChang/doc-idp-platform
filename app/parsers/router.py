@@ -15,6 +15,22 @@ from app.plugins.registry import registry
 _OFFICE = {".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"}
 _IMAGES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
+# Upload-surface whitelist: the single source of truth for GET /api/v1/formats
+# and the browser upload page. Deliberately NARROWER than the routing sets
+# above — every entry here was submitted end-to-end on 2026-08-18; the ones
+# left out route fine but die downstream, and offering those in a file picker
+# would hand the user a document that can only fail after the billing freeze:
+#   .doc/.ppt  markitdown 0.1.7 ships no converter for them
+#   .xls       its markitdown path needs xlrd, which is not a dependency
+#   .bmp/.webp the lite-tier scan engine (GLM-OCR /layout_parsing) answers
+#              HTTP 400 code 1214 "OCR 仅支持 PDF、JPG、PNG、JPEG", and the
+#              RapidOCR fallback is not deployed
+# Routing itself is left untouched on purpose: existing API integrations keep
+# byte-identical behaviour. A deployment whose scan tier can read more formats
+# (local vLLM GLM-OCR, or a reachable RapidOCR service) can widen this list.
+UPLOAD_SUFFIXES = sorted({".pdf", ".ofd", ".docx", ".xlsx", ".pptx",
+                          ".png", ".jpg", ".jpeg"})
+
 
 def _make(name: str) -> Parser:
     cfg = load_parsers()["parsers"].get(name)
