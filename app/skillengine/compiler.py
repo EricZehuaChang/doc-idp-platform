@@ -7,7 +7,7 @@ import json
 from app.parsers.base import UDR
 from app.skillengine.schema import FieldSpec, SkillPackage
 
-_MAX_DOC_CHARS = 24000   # M1 budget guard; §4.3 map-reduce strategy lands with multi-page work
+_MAX_DOC_CHARS = 24000   # final guard after multi-page detail-table map/reduce
 
 
 def _field_lines(fields: list[FieldSpec]) -> str:

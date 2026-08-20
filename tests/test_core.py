@@ -4,9 +4,7 @@ API loop (create skill -> publish -> submit file -> extraction with mocked LLM
 tokens burned (feasibility v2.0 §3.2 test discipline).
 """
 import asyncio
-import json
 
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -164,6 +162,56 @@ def test_compiler_entity_list_sweep_instruction():
                   columns=[FieldSpec(name="内容")])])
     body = compile_messages(pkg, UDR_SAMPLE)[-1]["content"]
     assert "实体清单表" in body and "禁止遗漏" in body
+
+
+def test_multi_page_detail_table_maps_and_reduces(monkeypatch):
+    """A long invoice table is extracted one page at a time: rows append in
+    page order and a final-page total replaces earlier page subtotals."""
+    import app.extraction.pipeline as pipe
+    pkg = SkillPackage(
+        skill_code="long_invoice",
+        fields=[
+            FieldSpec(name="total", type="number"),
+            FieldSpec(name="items", type="table", columns=[
+                FieldSpec(name="name"), FieldSpec(name="amount")]),
+        ])
+    udr = UDR(pages=[
+        Page(page_no=1, markdown="PAGE-ONE subtotal 100 ROW-1",
+             blocks=[Block(text="PAGE-ONE subtotal 100 ROW-1")]),
+        Page(page_no=2, markdown="PAGE-TWO grand total 200 ROW-2",
+             blocks=[Block(text="PAGE-TWO grand total 200 ROW-2")]),
+    ], full_markdown="whole document", parser="test")
+    monkeypatch.setattr(pipe, "load_providers", lambda: {
+        "fallback": ["deepseek", "gpt"]})
+    calls = []
+
+    def fake(messages, chain, transport=None):
+        calls.append((messages[-1]["content"], chain))
+        if "PAGE-ONE" in messages[-1]["content"]:
+            raw = {"total": "100", "items": [{"name": "ROW-1", "amount": "100"}]}
+        else:
+            raw = {"total": "200", "items": [{"name": "ROW-2", "amount": "200"}]}
+        return raw, {"prompt_tokens": 10, "completion_tokens": 5}, "qwen"
+
+    monkeypatch.setattr(pipe, "chat_json_with_fallback", fake)
+    result, usage, _ = pipe.extract(udr, pkg)
+
+    assert len(calls) == 2
+    assert all(chain == [None, "deepseek", "gpt"] for _, chain in calls)
+    assert result["total"]["$value"] == "200"
+    assert [row["name"] for row in result["items"]] == ["ROW-1", "ROW-2"]
+    assert usage["prompt_tokens"] == 20
+    assert usage["completion_tokens"] == 10
+    assert usage["provider_used"] == "qwen"
+
+
+def test_explicit_provider_does_not_inherit_platform_fallback(monkeypatch):
+    import app.extraction.pipeline as pipe
+    pkg = SkillPackage(skill_code="bound")
+    pkg.model_binding.extractor = "qwen-max"
+    monkeypatch.setattr(pipe, "load_providers", lambda: {
+        "fallback": ["deepseek", "gpt"]})
+    assert pipe._provider_chain(pkg) == ["qwen-max"]
 
 
 @pytest.fixture

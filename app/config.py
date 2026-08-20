@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +18,10 @@ class ProviderCfg(BaseModel):
     model: str
     base_url: str
     api_key_env: str = ""
+    # Vendor-specific, non-secret OpenAI-compatible request options.  Keep
+    # these in config-as-code so model behaviour (for example thinking mode)
+    # is explicit and independently tunable per channel.
+    extra_body: dict[str, object] = Field(default_factory=dict)
 
 
 class ParserCfg(BaseModel):

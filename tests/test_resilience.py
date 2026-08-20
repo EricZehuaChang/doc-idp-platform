@@ -1,4 +1,6 @@
 """Fallback chain + cooldown tests (the failure mode M1 acceptance hit live)."""
+import json
+
 import httpx
 import pytest
 import respx
@@ -66,3 +68,17 @@ def test_all_fail_raises_with_joined_errors():
         pc.chat_json_with_fallback([{"role": "user", "content": "x"}],
                                    ["primary", "backup"])
     assert "500" in str(e.value) and "429" in str(e.value)
+
+
+@respx.mock
+def test_provider_extra_body_is_forwarded():
+    route = respx.post("https://primary.example/v1/chat/completions").mock(
+        return_value=_ok_response())
+    pc.chat_json(
+        [{"role": "user", "content": "x"}],
+        {"name": "primary", "model": "m-primary",
+         "base_url": "https://primary.example/v1", "api_key": "k",
+         "extra_body": {"enable_thinking": False}},
+        retries=0)
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["enable_thinking"] is False

@@ -5,18 +5,111 @@ Pure function of (udr, pkg) — idempotent by design (HA discipline).
 """
 import re
 
+from app.config import load_providers
 from app.extraction import confidence as conf
+from app.extraction.provider_client import chat_json_with_fallback
+from app.extraction.validators import run_validators
+from app.parsers.base import UDR
+from app.skillengine.compiler import compile_messages
+from app.skillengine.schema import SkillPackage
 
 
 def _norm(v: str) -> str:
     """Value comparison for arbitration: whitespace/case/thousand-separator
     insensitive — two models phrasing '1,026.50' vs '1026.50' still agree."""
     return re.sub(r"[\s,，]", "", v).lower()
-from app.extraction.provider_client import chat_json_with_fallback
-from app.extraction.validators import run_validators
-from app.parsers.base import UDR
-from app.skillengine.compiler import compile_messages
-from app.skillengine.schema import SkillPackage
+
+
+def _provider_chain(pkg: SkillPackage, override: str | None = None) -> list[str | None]:
+    """Resolve the effective failover chain.
+
+    An explicit skill binding stays authoritative.  An unbound skill inherits
+    the platform chain declared in providers.yaml; this is the documented
+    meaning of an empty extractor and prevents a transient active-channel
+    failure from turning directly into a file error.
+    """
+    if override:
+        return [override]
+    extractor = pkg.model_binding.extractor
+    chain: list[str | None] = [extractor or None]
+    if pkg.model_binding.fallback:
+        chain.append(pkg.model_binding.fallback)
+    elif not extractor:
+        chain.extend(load_providers().get("fallback", []))
+    # Config mistakes such as repeating the active provider in fallback should
+    # not cause duplicate paid calls.
+    return list(dict.fromkeys(chain))
+
+
+def _page_udr(udr: UDR, page) -> UDR:
+    markdown = page.markdown or "\n".join(b.text for b in page.blocks if b.text)
+    return UDR(pages=[page], full_markdown=markdown, parser=udr.parser, lang=udr.lang)
+
+
+def _has_value(value: object, inferred: bool = False) -> bool:
+    if inferred and isinstance(value, dict):
+        value = value.get("value")
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return value != []
+
+
+def _merge_page_raw(parts: list[dict], pkg: SkillPackage) -> dict:
+    """Reduce page-level model output back to the skill contract.
+
+    Detail rows retain page order.  Scalars use the last non-empty value: page
+    headers repeat unchanged while invoice totals/remarks commonly appear only
+    on the final page.  Empty later pages therefore cannot erase an earlier
+    value, while end-of-document summaries correctly win over page subtotals.
+    """
+    merged: dict[str, object] = {}
+    for field in pkg.fields:
+        if field.type == "table":
+            rows: list = []
+            for part in parts:
+                value = part.get(field.name)
+                if isinstance(value, list):
+                    rows.extend(value)
+            merged[field.name] = rows
+            continue
+        chosen: object = ""
+        for part in parts:
+            if field.name not in part:
+                continue
+            candidate = part[field.name]
+            if _has_value(candidate, inferred=field.mode == "inferred"):
+                chosen = candidate
+        merged[field.name] = chosen
+    return merged
+
+
+def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
+                 transport=None) -> tuple[dict, dict, list[str]]:
+    """Model call with page-map/table-reduce for long multi-page outputs."""
+    # Entity-list tables are document-wide de-duplicated sweeps, not layout
+    # detail tables.  Keep them whole so page boundaries do not duplicate hits.
+    page_map = len(udr.pages) > 1 and any(
+        f.type == "table" and not f.entity_list for f in pkg.fields)
+    units = [_page_udr(udr, page) for page in udr.pages] if page_map else [udr]
+    parts: list[dict] = []
+    total_usage: dict[str, object] = {}
+    providers: list[str] = []
+    for unit in units:
+        raw, usage, used = chat_json_with_fallback(
+            compile_messages(pkg, unit), chain, transport=transport)
+        parts.append(raw)
+        if used not in providers:
+            providers.append(used)
+        for key, value in dict(usage).items():
+            if isinstance(value, (int, float)):
+                total_usage[key] = total_usage.get(key, 0) + value
+            elif len(units) == 1:
+                total_usage[key] = value
+    total_usage["provider_used"] = ",".join(providers)
+    merged = _merge_page_raw(parts, pkg) if page_map else parts[0]
+    return merged, total_usage, providers
 
 
 def _percent_hits(hits: list, udr: UDR) -> list:
@@ -84,25 +177,18 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
     chain with cooldown (M1 acceptance hit exactly this failure mode).
     Challenger arbitration (§5.3 model channel): a second model re-extracts and
     disagreements are forced into human review."""
-    if provider_override:
-        chain: list[str | None] = [provider_override]
-    else:
-        chain = [pkg.model_binding.extractor or None]
-        if pkg.model_binding.fallback:
-            chain.append(pkg.model_binding.fallback)
-    messages = compile_messages(pkg, udr)
-    raw, usage, used = chat_json_with_fallback(messages, chain, transport=transport)
-    usage = dict(usage)
-    usage["provider_used"] = used
+    chain = _provider_chain(pkg, provider_override)
+    raw, usage, providers_used = _raw_extract(
+        udr, pkg, chain, transport=transport)
 
     # challenger pass (skipped for dry-run overrides: they compare providers
     # explicitly). Best-effort: an unavailable challenger never fails the file.
     challenger_raw: dict | None = None
     challenger = pkg.model_binding.challenger
-    if challenger and not provider_override and challenger != used:
+    if challenger and not provider_override and challenger not in providers_used:
         try:
-            challenger_raw, ch_usage, _ = chat_json_with_fallback(
-                messages, [challenger], transport=transport)
+            challenger_raw, ch_usage, _ = _raw_extract(
+                udr, pkg, [challenger], transport=transport)
             usage["challenger_used"] = challenger
             usage["challenger_prompt_tokens"] = int(ch_usage.get("prompt_tokens") or 0)
             usage["challenger_completion_tokens"] = int(ch_usage.get("completion_tokens") or 0)

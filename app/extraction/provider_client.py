@@ -52,7 +52,8 @@ def resolve_provider(name: str | None) -> dict:
     from app.tenancy import current_tenant
     key = byok.get(current_tenant(), p.name) \
         or (os.environ.get(p.api_key_env, "").strip() if p.api_key_env else "")
-    return {"name": p.name, "model": p.model, "base_url": p.base_url, "api_key": key}
+    return {"name": p.name, "model": p.model, "base_url": p.base_url,
+            "api_key": key, "extra_body": dict(p.extra_body)}
 
 
 def chat_json_with_fallback(messages: list[dict], provider_names: list[str | None],
@@ -94,6 +95,9 @@ def chat_json(messages: list[dict], provider: dict, timeout: float = 120.0,
         "response_format": {"type": "json_object"},
         "temperature": 0,
     }
+    # Trusted config-as-code only; API keys remain in headers/env and are never
+    # copied into this mapping or logs.
+    body.update(provider.get("extra_body") or {})
     headers = {"Content-Type": "application/json"}
     if provider.get("api_key"):
         headers["Authorization"] = f"Bearer {provider['api_key']}"
