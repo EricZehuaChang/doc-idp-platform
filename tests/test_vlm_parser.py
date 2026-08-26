@@ -100,3 +100,46 @@ def test_long_document_truncation_is_recorded_not_silent(tmp_path, monkeypatch):
     udr = _make("vlm-qwen").parse(str(tmp_path / "any.pdf"))
     assert len(udr.pages) == vlm._MAX_PAGES
     assert udr.parser == f"vlm:vision-qwen(truncated {vlm._MAX_PAGES}/57)"
+
+
+@respx.mock
+async def test_dry_run_uses_the_parser_the_skill_pins(tmp_path, monkeypatch):
+    """Dry-run is where a parser gets evaluated. Auto-routing regardless made
+    that evaluation meaningless — pinning vlm-glm and getting pdfplumber back."""
+    monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ZHIPU_API_KEY", "sk-glm")
+    import app.config as config
+    import app.db as db
+    config.get_settings.cache_clear()
+    db._engine = None
+    db._session_factory = None
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+    from app.skillengine.schema import FieldSpec, SkillPackage
+
+    respx.post("https://open.bigmodel.cn/api/paas/v4/chat/completions").mock(
+        return_value=_reply("发票号 INV-FROM-VLM"))
+    respx.post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {
+            "content": '{"invoice_no": "INV-FROM-VLM"}'}}], "usage": {}}))
+
+    from PIL import Image
+    sample = tmp_path / "s.png"
+    Image.new("RGB", (200, 120), "white").save(sample)
+
+    pkg = SkillPackage(skill_code="pin", name="pin", parser="vlm-glm",
+                       fields=[FieldSpec(name="invoice_no")])
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.post("/api/v1/skills/dry-run",
+                             files={"file": ("s.png", sample.read_bytes(), "image/png")},
+                             data={"package": pkg.model_dump_json(), "providers": "qwen"})
+    assert r.status_code == 200, r.text
+    # the VLM parser was the one that produced the text the model then read
+    assert respx.calls.call_count >= 2
+    assert any("bigmodel.cn" in str(call.request.url) for call in respx.calls)

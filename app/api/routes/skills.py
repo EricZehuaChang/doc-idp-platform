@@ -42,9 +42,17 @@ async def _parse_upload(up: UploadFile, tenant: str) -> UDR:
     return udr
 
 
-async def _parse_upload_kept(up: UploadFile, tenant: str) -> tuple[str, UDR]:
+async def _parse_upload_kept(up: UploadFile, tenant: str,
+                             pinned: str | None = None) -> tuple[str, UDR]:
     """Same, but hands back the stored path — the vision dry-run rasterizes the
-    original, which the UDR alone cannot reconstruct."""
+    original, which the UDR alone cannot reconstruct.
+
+    `pinned` must be the skill's own parser (2026-08-27): the studio used to
+    auto-route regardless, so a skill pinned to a non-default parser was tried
+    and gated against text a different engine produced. Dry-run is exactly where
+    a new parser gets evaluated — silently substituting one makes the evaluation
+    meaningless — and golden-check is the publish gate, where it makes the gate
+    lie about what production will do."""
     blob = await up.read()
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(up.filename or "sample").suffix.lower()
@@ -52,7 +60,7 @@ async def _parse_upload_kept(up: UploadFile, tenant: str) -> tuple[str, UDR]:
     store.mkdir(parents=True, exist_ok=True)
     path = store / f"{digest}{suffix}"
     path.write_bytes(blob)
-    return str(path), await asyncio.to_thread(parse_document, str(path))
+    return str(path), await asyncio.to_thread(parse_document, str(path), pinned)
 
 
 class SkillCreate(BaseModel):
@@ -365,7 +373,7 @@ async def dry_run(file: UploadFile = File(...), package: str = Form(...),
     except Exception as e:
         raise HTTPException(400, f"invalid package json: {e}") from e
     plist = [p.strip() for p in providers.split(",") if p.strip()]
-    sample_path, udr = await _parse_upload_kept(file, current_tenant())
+    sample_path, udr = await _parse_upload_kept(file, current_tenant(), pkg.parser)
     await _warm_byok()
     runs = await asyncio.to_thread(studio.dry_run, udr, pkg, plist or None,
                                    None, sample_path)
@@ -468,7 +476,10 @@ async def golden_check(skill_code: str, version: int):
     pkg = SkillPackage(**row.package)
 
     def _run():
-        pairs = [(parse_document(g.storage_path), g.expected or {}) for g in goldens]
+        # the gate must exercise the parser the version actually pins, or it
+        # certifies something production will not run
+        pairs = [(parse_document(g.storage_path, pkg.parser), g.expected or {})
+                 for g in goldens]
         return studio.golden_check(pkg, pairs)
 
     return await asyncio.to_thread(_run)
