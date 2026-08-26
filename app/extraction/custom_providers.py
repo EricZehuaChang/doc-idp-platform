@@ -40,6 +40,7 @@ def _decode(entry: dict) -> dict | None:
     return {"model": entry.get("model") or "",
             "base_url": entry.get("base_url") or "",
             "api_key": key,
+            "no_key": bool(entry.get("no_key")),
             "vision": bool(entry.get("vision")),
             "extra_body": dict(entry.get("extra_body") or {})}
 
@@ -93,16 +94,29 @@ def validate(name: str, base_url: str, model: str) -> tuple[str, str, str]:
 
 async def put(session, tenant: str, name: str, base_url: str, model: str,
               api_key: str | None, vision: bool = False,
-              extra_body: dict | None = None) -> dict:
-    """Create or update one channel. `api_key=None` keeps the stored key, so
-    editing the model id does not force the operator to retype the secret."""
+              extra_body: dict | None = None, no_key: bool = False) -> dict:
+    """Create or update one channel.
+
+    Three distinct key states, and they must stay distinct:
+    - `api_key` non-empty  -> set/replace the key;
+    - `api_key` None/empty -> keep whatever is stored, so editing the model id
+      does not force the operator to retype the secret;
+    - `no_key=True`        -> the endpoint takes no auth at all (self-hosted
+      vLLM, an internal gateway). Explicit, not "left the field blank":
+      chat_json simply omits the Authorization header. providers.yaml already
+      ships one such channel (local-vllm with an empty api_key_env), so this is
+      a first-class case rather than a loophole.
+    """
     name, base_url, model = validate(name, base_url, model)
     stored = await load_raw(session, tenant)
     prev = stored.get(name) if isinstance(stored.get(name), dict) else {}
     enc = prev.get("api_key_enc", "")
-    if api_key is not None and api_key.strip():
+    if no_key:
+        enc = ""
+    elif api_key is not None and api_key.strip():
         enc = security.encrypt_value(api_key.strip())
     stored[name] = {"model": model, "base_url": base_url, "api_key_enc": enc,
+                    "no_key": bool(no_key),
                     "vision": bool(vision), "extra_body": dict(extra_body or {})}
     row = (await session.execute(
         select(TenantSetting).where(TenantSetting.tenant_id == tenant,
@@ -116,7 +130,7 @@ async def put(session, tenant: str, name: str, base_url: str, model: str,
         _cache.setdefault(tenant, {})[name] = entry
     _warmed.add(tenant)
     return {"name": name, "model": model, "base_url": base_url,
-            "vision": bool(vision), "has_key": bool(enc)}
+            "vision": bool(vision), "has_key": bool(enc), "no_key": bool(no_key)}
 
 
 async def remove(session, tenant: str, name: str) -> bool:

@@ -377,6 +377,7 @@ class CustomProviderBody(BaseModel):
     base_url: str
     model: str = ""                     # empty = same as the channel name
     api_key: str | None = None          # None/empty = keep the stored key
+    no_key: bool = False                # endpoint takes no auth (self-hosted)
     vision: bool = False                # channel accepts image input
     extra_body: dict = {}               # vendor options, e.g. {"enable_thinking": false}
 
@@ -386,6 +387,7 @@ def _custom_public(name: str, entry: dict) -> dict:
             "base_url": entry.get("base_url") or "",
             "vision": bool(entry.get("vision")),
             "has_key": bool(entry.get("api_key_enc")),
+            "no_key": bool(entry.get("no_key")),
             "extra_body": dict(entry.get("extra_body") or {})}
 
 
@@ -415,11 +417,12 @@ async def put_custom_provider(name: str, body: CustomProviderBody):
             # than storing a dead definition and reporting the problem after
             stored = await custom_providers.load_raw(s, tenant)
             had_key = bool((stored.get(name.strip()) or {}).get("api_key_enc"))
-            if not had_key and not (body.api_key or "").strip():
-                raise HTTPException(400, "首次登记必须填写 API Key")
+            if not body.no_key and not had_key and not (body.api_key or "").strip():
+                raise HTTPException(
+                    400, "首次登记必须填写 API Key；若该端点无需鉴权，请勾选「无需 API Key」")
             out = await custom_providers.put(
                 s, tenant, name, body.base_url, body.model, body.api_key,
-                vision=body.vision, extra_body=body.extra_body)
+                vision=body.vision, extra_body=body.extra_body, no_key=body.no_key)
             s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                            action="settings.custom_provider_set",
                            detail={"provider": out["name"],
@@ -471,7 +474,7 @@ async def test_custom_provider(name: str):
     p = custom_providers.get(tenant, name)
     if p is None:
         raise HTTPException(404, f"unknown channel: {name}")
-    if not p["api_key"]:
+    if not p["api_key"] and not p["no_key"]:
         raise HTTPException(400, "该通道没有可用的 API Key")
     provider = {"name": name, "model": p["model"], "base_url": p["base_url"],
                 "api_key": p["api_key"], "extra_body": dict(p["extra_body"])}

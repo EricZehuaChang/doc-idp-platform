@@ -242,7 +242,10 @@ export interface SkillOptions {
  *  is all the UI ever learns about it. */
 export interface CustomProvider {
   name: string; model: string; base_url: string;
-  vision: boolean; has_key: boolean; extra_body: Record<string, unknown>;
+  vision: boolean; has_key: boolean;
+  /** endpoint takes no auth at all (self-hosted vLLM, internal gateway) */
+  no_key: boolean;
+  extra_body: Record<string, unknown>;
 }
 
 export interface LoginResult {
@@ -435,7 +438,8 @@ export const api = {
   listCustomProviders: () =>
     req<{ providers: CustomProvider[] }>("GET", "/api/v1/settings/custom-providers"),
   putCustomProvider: (name: string, body: { base_url: string; model?: string;
-                                            api_key?: string; vision?: boolean;
+                                            api_key?: string; no_key?: boolean;
+                                            vision?: boolean;
                                             extra_body?: Record<string, unknown> }) =>
     req<CustomProvider>("PUT",
       `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`, body),

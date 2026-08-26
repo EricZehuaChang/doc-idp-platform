@@ -245,7 +245,11 @@
             <td class="dim">{{ c.model }}</td>
             <td class="dim url">{{ c.base_url }}</td>
             <td>{{ c.vision ? "✓ 支持" : "—" }}</td>
-            <td><span class="state ok">已配置</span></td>
+            <td>
+              <span v-if="c.has_key" class="state ok">已配置</span>
+              <span v-else-if="c.no_key" class="state pend">无需 Key</span>
+              <span v-else class="state off">缺失</span>
+            </td>
             <td class="row-ops">
               <button :disabled="testingName === c.name" @click="testCustom(c.name)">
                 {{ testingName === c.name ? "调用中…" : "测试连接" }}</button>
@@ -265,14 +269,19 @@
           <input v-model="draft.base_url"
                  placeholder="如 https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
         <label class="wide">API Key
-          <input v-model="draft.api_key" type="password" placeholder="粘贴 Key，加密存储不回显" /></label>
+          <input v-model="draft.api_key" type="password" :disabled="draft.no_key"
+                 :placeholder="draft.no_key ? '该端点无需鉴权' : '粘贴 Key，加密存储不回显'" /></label>
+        <label class="chk">
+          <input type="checkbox" v-model="draft.no_key" />
+          该端点无需 API Key（自建 vLLM / 内网网关等；勾选后请求不带 Authorization 头）
+        </label>
         <label class="chk">
           <input type="checkbox" v-model="draft.vision" />
           该模型支持图像输入（勾选后，技能编辑器里对它试跑会把原件页面图一起发过去）
         </label>
         <div class="new-act">
           <button class="primary" :disabled="savingCustom || !draft.name || !draft.base_url
-                                             || !draft.api_key"
+                                             || (!draft.api_key && !draft.no_key)"
                   @click="saveCustom">{{ savingCustom ? "登记中…" : "＋ 登记通道" }}</button>
           <span class="dim">登记后建议先点「测试连接」——保存成功不等于能调通。</span>
         </div>
@@ -558,7 +567,8 @@ async function removeKey(name: string) {
 
 // —— custom channels ——
 const customs = ref<CustomProvider[]>([]);
-const draft = reactive({ name: "", model: "", base_url: "", api_key: "", vision: false });
+const draft = reactive({ name: "", model: "", base_url: "", api_key: "",
+                         no_key: false, vision: false });
 const savingCustom = ref(false);
 const testingName = ref("");
 const testOut = ref("");
@@ -572,9 +582,10 @@ async function saveCustom() {
   try {
     await api.putCustomProvider(draft.name.trim(), {
       base_url: draft.base_url.trim(), model: draft.model.trim(),
-      api_key: draft.api_key, vision: draft.vision });
+      api_key: draft.api_key, no_key: draft.no_key, vision: draft.vision });
     toast.ok(`通道 ${draft.name.trim()} 已登记，建议点「测试连接」验证`);
-    Object.assign(draft, { name: "", model: "", base_url: "", api_key: "", vision: false });
+    Object.assign(draft, { name: "", model: "", base_url: "", api_key: "",
+                           no_key: false, vision: false });
     await loadCustoms();
   } catch (e) { toast.error(e); }
   finally { savingCustom.value = false; }

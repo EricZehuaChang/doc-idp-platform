@@ -45,13 +45,13 @@ async def test_register_list_and_delete_never_echoes_the_key(tmp_path, monkeypat
             assert r.status_code == 200, r.text
             assert r.json() == {"name": "my-vlm", "model": "vlm-max",
                                 "base_url": "https://vendor.example/v1",
-                                "vision": True, "has_key": True}
+                                "vision": True, "has_key": True, "no_key": False}
 
             body = (await c.get("/api/v1/settings/custom-providers")).json()
             assert body["providers"] == [{
                 "name": "my-vlm", "model": "vlm-max",
                 "base_url": "https://vendor.example/v1", "vision": True,
-                "has_key": True, "extra_body": {}}]
+                "has_key": True, "no_key": False, "extra_body": {}}]
             # the secret must not appear anywhere in any response
             assert secret not in r.text
             assert secret not in (await c.get("/api/v1/settings/custom-providers")).text
@@ -216,3 +216,51 @@ async def test_channel_management_is_admin_only(admin_client):
     assert (await fresh.post("/api/v1/settings/custom-providers/x/test",
                              headers=op)).status_code == 403
     await fresh.aclose()
+
+
+async def test_keyless_channel_sends_no_authorization_header(tmp_path, monkeypatch):
+    """Self-hosted endpoints (vLLM, an internal gateway) take no auth at all.
+    Leaving the key blank must still be refused — but ticking 「无需 API Key」
+    registers a channel whose requests carry no Authorization header.
+    providers.yaml already ships one such channel (local-vllm), so this is a
+    first-class case, not a loophole."""
+    app = await _app(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            # blank key without the flag is still an error
+            assert (await c.put("/api/v1/settings/custom-providers/selfhost",
+                                json={"base_url": "https://box.example/v1"})
+                    ).status_code == 400
+
+            r = await c.put("/api/v1/settings/custom-providers/selfhost",
+                            json={"base_url": "https://box.example/v1",
+                                  "model": "qwen3-28b", "no_key": True})
+            assert r.status_code == 200, r.text
+            assert r.json()["has_key"] is False and r.json()["no_key"] is True
+            row = (await c.get("/api/v1/settings/custom-providers")).json()["providers"][0]
+            assert row["no_key"] is True and row["has_key"] is False
+
+            seen: list[httpx.Request] = []
+
+            def _reply(req: httpx.Request) -> httpx.Response:
+                seen.append(req)
+                return httpx.Response(200, json={"choices": [{"message": {
+                    "content": '{"ok": true}'}}], "usage": {}})
+
+            with respx.mock:
+                respx.post("https://box.example/v1/chat/completions").mock(side_effect=_reply)
+                r = await c.post("/api/v1/settings/custom-providers/selfhost/test")
+            assert r.status_code == 200, r.text
+            assert r.json()["ok"] is True
+            assert "authorization" not in seen[0].headers
+
+            # switching a keyed channel to keyless must drop the stored secret
+            await c.put("/api/v1/settings/custom-providers/selfhost",
+                        json={"base_url": "https://box.example/v1", "api_key": "sk-x"})
+            assert (await c.get("/api/v1/settings/custom-providers")
+                    ).json()["providers"][0]["has_key"] is True
+            await c.put("/api/v1/settings/custom-providers/selfhost",
+                        json={"base_url": "https://box.example/v1", "no_key": True})
+            row = (await c.get("/api/v1/settings/custom-providers")).json()["providers"][0]
+            assert row["has_key"] is False and row["no_key"] is True
