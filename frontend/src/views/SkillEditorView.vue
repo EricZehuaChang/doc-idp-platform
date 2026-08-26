@@ -146,7 +146,8 @@
              out. The lists come from the server's own config, never hardcoded. -->
         <datalist id="dl-providers">
           <option v-for="p in providerOptions" :key="p.name" :value="p.name">
-            {{ p.model }}{{ p.active ? "（平台默认）" : "" }}</option>
+            {{ p.model }}{{ p.active ? "（平台默认）" : "" }}{{ p.custom ? "（自定义）" : ""
+            }}{{ p.vision ? "・支持图像" : "" }}</option>
         </datalist>
         <datalist id="dl-parsers">
           <option v-for="p in parserOptions" :key="p" :value="p" />
@@ -191,10 +192,13 @@
           <div v-for="r in dryRuns" :key="r.provider" class="run">
             <div class="run-head">
               <strong>{{ r.provider }}</strong>
+              <span v-if="r.ok && r.vision_pages" class="vis" title="本次调用附带了原件页面图">
+                🖼 {{ r.vision_pages }} 页图</span>
               <span v-if="r.ok" class="dim">
                 {{ r.usage?.prompt_tokens }}+{{ r.usage?.completion_tokens }} tokens</span>
               <span v-else class="rulefail">{{ r.error }}</span>
             </div>
+            <p v-if="r.note" class="dim run-note">{{ r.note }}</p>
             <table v-if="r.ok && r.result">
               <tbody>
                 <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
@@ -266,7 +270,8 @@ const isNew = computed(() => props.code === "new");
 
 // provider/parser catalogue from the server — the editor no longer keeps its
 // own copy (the hardcoded list had drifted from configs/parsers.yaml)
-const providerOptions = ref<{ name: string; model: string; active: boolean }[]>([]);
+const providerOptions = ref<{ name: string; model: string; active: boolean;
+                              custom: boolean; vision: boolean }[]>([]);
 const parserOptions = ref<string[]>([]);
 const activeProvider = computed(() => providerOptions.value.find((p) => p.active)?.name ?? "");
 api.skillOptions()
@@ -599,6 +604,8 @@ async function goldenCheck() {
 .run table { font-size: 12px; border-collapse: collapse; width: 100%; }
 .run td { padding: 3px 6px; border-bottom: 1px solid var(--border); }
 .conf { font-size: 11px; color: var(--text-dim); }
+.vis { font-size: 11px; color: var(--blue); }
+.run-note { font-size: 11px; margin: 0 0 6px; }
 .rulefail { color: var(--red); font-size: 12px; }
 .golden-report { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
   font-size: 13px; }

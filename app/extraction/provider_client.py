@@ -44,16 +44,26 @@ cooldown = _Cooldown()
 def resolve_provider(name: str | None) -> dict:
     cfg = load_providers()
     pname = name or cfg["active"]
+    from app.extraction import byok, custom_providers
+    from app.tenancy import current_tenant
+    tenant = current_tenant()
     p = cfg["providers"].get(pname)
     if p is None:
-        raise ProviderError(f"provider not configured: {pname}")
+        # tenant-defined channel (console-registered endpoint). Names can never
+        # shadow a yaml provider — the write path rejects collisions — so this
+        # branch only runs for genuinely extra channels.
+        custom = custom_providers.get(tenant, pname)
+        if custom is None:
+            raise ProviderError(f"provider not configured: {pname}")
+        return {"name": pname, "model": custom["model"],
+                "base_url": custom["base_url"], "api_key": custom["api_key"],
+                "vision": custom["vision"],
+                "extra_body": dict(custom["extra_body"])}
     # tenant BYOK first (§11.10; cache warmed by the async caller), platform env second
-    from app.extraction import byok
-    from app.tenancy import current_tenant
-    key = byok.get(current_tenant(), p.name) \
+    key = byok.get(tenant, p.name) \
         or (os.environ.get(p.api_key_env, "").strip() if p.api_key_env else "")
     return {"name": p.name, "model": p.model, "base_url": p.base_url,
-            "api_key": key, "extra_body": dict(p.extra_body)}
+            "api_key": key, "vision": False, "extra_body": dict(p.extra_body)}
 
 
 def chat_json_with_fallback(messages: list[dict], provider_names: list[str | None],

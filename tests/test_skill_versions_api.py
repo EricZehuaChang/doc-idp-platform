@@ -89,7 +89,9 @@ async def test_model_options_lists_configured_providers_and_parsers(tmp_path, mo
             assert sum(1 for p in body["providers"] if p["active"]) == 1
             assert "pdfplumber" in body["parsers"]
             # never leak key material through this non-admin route
-            assert all(set(p) == {"name", "model", "active"} for p in body["providers"])
+            assert all(set(p) == {"name", "model", "active", "custom", "vision"}
+                       for p in body["providers"])
+            assert all(p["custom"] is False for p in body["providers"])  # none registered yet
 
 
 async def test_file_list_filters_narrow_rows_and_total_together(tmp_path, monkeypatch):

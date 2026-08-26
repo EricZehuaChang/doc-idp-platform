@@ -363,3 +363,124 @@ async def test_smtp(body: SmtpTestBody):
         except Exception as e:
             raise HTTPException(502, f"发送失败：{e}")
     return {"status": "sent", "to": body.to}
+
+
+# —— tenant-defined model channels (2026-08-26) ——
+# providers.yaml stays UI-uneditable config-as-code (§11.10); this is the
+# additive layer so an admin can trial a new OpenAI-compatible endpoint (a new
+# multimodal model, a self-hosted gateway) without shipping a release.
+# Security posture, per §6.2.2: admin-only, key encrypted at rest with the same
+# Fernet secret as the SMTP password, never echoed back in any response, and
+# every create/delete lands in the audit log with the name only.
+
+class CustomProviderBody(BaseModel):
+    base_url: str
+    model: str = ""                     # empty = same as the channel name
+    api_key: str | None = None          # None/empty = keep the stored key
+    vision: bool = False                # channel accepts image input
+    extra_body: dict = {}               # vendor options, e.g. {"enable_thinking": false}
+
+
+def _custom_public(name: str, entry: dict) -> dict:
+    return {"name": name, "model": entry.get("model") or "",
+            "base_url": entry.get("base_url") or "",
+            "vision": bool(entry.get("vision")),
+            "has_key": bool(entry.get("api_key_enc")),
+            "extra_body": dict(entry.get("extra_body") or {})}
+
+
+@router.get("/custom-providers")
+async def list_custom_providers():
+    """Registered channels. Key material never appears here — only has_key."""
+    from app.extraction import custom_providers
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        stored = await custom_providers.load_raw(s, current_tenant())
+    return {"providers": [_custom_public(n, e) for n, e in sorted(stored.items())
+                          if isinstance(e, dict)]}
+
+
+@router.put("/custom-providers/{name}")
+async def put_custom_provider(name: str, body: CustomProviderBody):
+    from app.extraction import custom_providers
+
+    _require_admin()
+    tenant = current_tenant()
+    sf = session_factory()
+    try:
+        async with sf() as s:
+            # a channel with no key is unusable; refuse before writing rather
+            # than storing a dead definition and reporting the problem after
+            stored = await custom_providers.load_raw(s, tenant)
+            had_key = bool((stored.get(name.strip()) or {}).get("api_key_enc"))
+            if not had_key and not (body.api_key or "").strip():
+                raise HTTPException(400, "首次登记必须填写 API Key")
+            out = await custom_providers.put(
+                s, tenant, name, body.base_url, body.model, body.api_key,
+                vision=body.vision, extra_body=body.extra_body)
+            s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                           action="settings.custom_provider_set",
+                           detail={"provider": out["name"],
+                                   "base_url": out["base_url"],
+                                   "model": out["model"]}))
+            await s.commit()
+    except custom_providers.CustomProviderError as e:
+        raise HTTPException(400, str(e)) from e
+    return out
+
+
+@router.delete("/custom-providers/{name}")
+async def delete_custom_provider(name: str):
+    from app.extraction import custom_providers
+
+    _require_admin()
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        removed = await custom_providers.remove(s, tenant, name)
+        if not removed:
+            raise HTTPException(404, f"unknown channel: {name}")
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="settings.custom_provider_removed",
+                       detail={"provider": name}))
+        await s.commit()
+    return {"provider": name, "removed": True}
+
+
+@router.post("/custom-providers/{name}/test")
+async def test_custom_provider(name: str):
+    """One real minimal call against the channel.
+
+    A "saved" credential proves nothing — this is what turns 登记成功 into
+    「这个通道真的能出字」. Returns the model's own reply so a wrong base_url or
+    a model id the vendor doesn't recognise shows up as an error, not as a
+    silent zero-field extraction three screens later.
+    """
+    import asyncio
+
+    from app.extraction import custom_providers
+    from app.extraction.provider_client import ProviderError, chat_json
+
+    _require_admin()
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await custom_providers.warm(s, tenant, force=True)
+    p = custom_providers.get(tenant, name)
+    if p is None:
+        raise HTTPException(404, f"unknown channel: {name}")
+    if not p["api_key"]:
+        raise HTTPException(400, "该通道没有可用的 API Key")
+    provider = {"name": name, "model": p["model"], "base_url": p["base_url"],
+                "api_key": p["api_key"], "extra_body": dict(p["extra_body"])}
+    messages = [{"role": "system", "content": "只输出 JSON，无任何解释。"},
+                {"role": "user", "content": '回复 {"ok": true}'}]
+    try:
+        data, usage = await asyncio.to_thread(chat_json, messages, provider,
+                                              timeout=45.0, retries=0)
+    except ProviderError as e:
+        raise HTTPException(502, f"调用失败：{str(e)[:300]}") from e
+    return {"provider": name, "ok": True, "model": p["model"],
+            "reply": data, "usage": usage}

@@ -26,7 +26,8 @@ def test_probe_draft_to_fields(monkeypatch):
 def test_dry_run_side_by_side(monkeypatch):
     calls = []
 
-    def fake_extract(udr, pkg, transport=None, provider_override=None):
+    def fake_extract(udr, pkg, transport=None, provider_override=None,
+                     page_images=None):
         calls.append(provider_override)
         if provider_override == "bad":
             raise RuntimeError("provider down")

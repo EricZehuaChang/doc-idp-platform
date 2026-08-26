@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.db import session_factory
 from app.models import CreditAccount, CreditLedger, FileRecord, Correction, Transaction
@@ -36,26 +36,45 @@ def _day_bounds(date_from: str | None, date_to: str | None):
     return lo, hi
 
 
+def _like(term: str) -> str:
+    """LIKE pattern for a literal substring: a filename with `_` or `%` must be
+    searched literally, not read as a wildcard."""
+    esc = term.strip().replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+    return f"%{esc}%"
+
+
 @router.get("/files")
 async def list_files(status: str | None = None, q: str | None = None,
                      skill_code: str | None = None,
+                     file_name: str | None = None, file_type: str | None = None,
+                     pages_min: int | None = None, pages_max: int | None = None,
+                     verify: str | None = None,
                      date_from: str | None = None, date_to: str | None = None,
+                     updated_from: str | None = None, updated_to: str | None = None,
                      page: int = 1, page_size: int = 20):
     """Task ledger for the Home page: every file, newest first, paged — the
     Insavlo home-table shape.
 
     Narrowing (P09, 2026-08-26) is server-side on purpose: the console pages at
     20 rows, so filtering in the browser would only ever search the page in hand
-    and report a total that disagrees with what is on screen.
-    `q` matches file name or skill code, case-insensitively.
+    and report a total that disagrees with what is on screen. Every column of
+    the task table has a matching parameter here, so the UI can put its filter
+    directly on the column it narrows.
+
+    `q` is the cross-column keyword (name or skill); `file_name` / `skill_code`
+    are the per-column ones. `file_type` is the extension without the dot.
+    `verify` ∈ {verified, error, none}. Date params are inclusive `YYYY-MM-DD`.
     """
     tenant = current_tenant()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
     try:
         lo, hi = _day_bounds(date_from, date_to)
+        ulo, uhi = _day_bounds(updated_from, updated_to)
     except ValueError as e:
-        raise HTTPException(400, "date_from/date_to 需为 YYYY-MM-DD 格式") from e
+        raise HTTPException(400, "日期参数需为 YYYY-MM-DD 格式") from e
+    if verify and verify not in ("verified", "error", "none"):
+        raise HTTPException(400, "verify 只能是 verified / error / none")
     sf = session_factory()
     async with sf() as s:
         base = (select(FileRecord, Transaction.skill_code)
@@ -70,17 +89,35 @@ async def list_files(status: str | None = None, q: str | None = None,
             conds.append(FileRecord.status == status)
         if skill_code:
             conds.append(Transaction.skill_code == skill_code)
+        if file_name and file_name.strip():
+            conds.append(FileRecord.file_name.ilike(_like(file_name), escape="\\"))
+        if file_type and file_type.strip():
+            # `type` is derived from the extension at read time, so filtering on
+            # it means matching the suffix — there is no column to index
+            suffix = file_type.strip().lstrip(".").lower()
+            conds.append(FileRecord.file_name.ilike(f"%.{suffix}", escape="\\"))
+        if pages_min is not None:
+            conds.append(FileRecord.page_count >= pages_min)
+        if pages_max is not None:
+            conds.append(FileRecord.page_count <= pages_max)
+        if verify == "verified":
+            conds.append(FileRecord.verified_by.is_not(None))
+        elif verify == "error":
+            conds.append(and_(FileRecord.error.is_not(None), FileRecord.error != ""))
+        elif verify == "none":
+            conds.append(and_(FileRecord.verified_by.is_(None),
+                              or_(FileRecord.error.is_(None), FileRecord.error == "")))
         if q and q.strip():
-            # escape LIKE wildcards: a filename with "_" is a literal search,
-            # not a single-character pattern
-            term = q.strip().replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
-            like = f"%{term}%"
-            conds.append(or_(FileRecord.file_name.ilike(like, escape="\\"),
-                             Transaction.skill_code.ilike(like, escape="\\")))
+            conds.append(or_(FileRecord.file_name.ilike(_like(q), escape="\\"),
+                             Transaction.skill_code.ilike(_like(q), escape="\\")))
         if lo is not None:
             conds.append(FileRecord.created_at >= lo)
         if hi is not None:
             conds.append(FileRecord.created_at <= hi)
+        if ulo is not None:
+            conds.append(FileRecord.updated_at >= ulo)
+        if uhi is not None:
+            conds.append(FileRecord.updated_at <= uhi)
         for c in conds:
             base = base.where(c)
             count_q = count_q.where(c)

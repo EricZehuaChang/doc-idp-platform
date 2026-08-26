@@ -38,6 +38,13 @@ router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 
 async def _parse_upload(up: UploadFile, tenant: str) -> UDR:
     """Persist an uploaded sample then parse it to UDR (thread offload)."""
+    _path, udr = await _parse_upload_kept(up, tenant)
+    return udr
+
+
+async def _parse_upload_kept(up: UploadFile, tenant: str) -> tuple[str, UDR]:
+    """Same, but hands back the stored path — the vision dry-run rasterizes the
+    original, which the UDR alone cannot reconstruct."""
     blob = await up.read()
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(up.filename or "sample").suffix.lower()
@@ -45,7 +52,7 @@ async def _parse_upload(up: UploadFile, tenant: str) -> UDR:
     store.mkdir(parents=True, exist_ok=True)
     path = store / f"{digest}{suffix}"
     path.write_bytes(blob)
-    return await asyncio.to_thread(parse_document, str(path))
+    return str(path), await asyncio.to_thread(parse_document, str(path))
 
 
 class SkillCreate(BaseModel):
@@ -102,11 +109,23 @@ async def model_options():
     GET /{skill_code} so "model-options" is not read as a skill code.
     """
     from app.config import load_parsers, load_providers
+    from app.extraction import custom_providers
 
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        stored = await custom_providers.load_raw(s, tenant)
     cfg = load_providers()
+    out = [{"name": name, "model": p.model, "active": name == cfg["active"],
+            "custom": False, "vision": False}
+           for name, p in cfg["providers"].items()]
+    # console-registered channels are pickable exactly like the built-in ones —
+    # that is the whole point of registering them
+    out += [{"name": n, "model": e.get("model") or "", "active": False,
+             "custom": True, "vision": bool(e.get("vision"))}
+            for n, e in sorted(stored.items()) if isinstance(e, dict)]
     return {
-        "providers": [{"name": name, "model": p.model, "active": name == cfg["active"]}
-                      for name, p in cfg["providers"].items()],
+        "providers": out,
         "fallback_chain": list(cfg.get("fallback") or []),
         "parsers": [p.name for p in load_parsers()["parsers"].values()],
     }
@@ -346,9 +365,10 @@ async def dry_run(file: UploadFile = File(...), package: str = Form(...),
     except Exception as e:
         raise HTTPException(400, f"invalid package json: {e}") from e
     plist = [p.strip() for p in providers.split(",") if p.strip()]
-    udr = await _parse_upload(file, current_tenant())
+    sample_path, udr = await _parse_upload_kept(file, current_tenant())
     await _warm_byok()
-    runs = await asyncio.to_thread(studio.dry_run, udr, pkg, plist or None)
+    runs = await asyncio.to_thread(studio.dry_run, udr, pkg, plist or None,
+                                   None, sample_path)
     return {"runs": runs}
 
 
@@ -480,8 +500,11 @@ async def publish(skill_code: str, version: int):
 
 async def _warm_byok() -> None:
     """Token-burning studio routes run extraction in worker threads — the
-    tenant BYOK cache must be warm before entering sync land (§11.10)."""
-    from app.extraction import byok
+    tenant BYOK keys AND the console-registered custom channels must both be
+    warm before entering sync land (§11.10): resolution there cannot await."""
+    from app.extraction import byok, custom_providers
     sf = session_factory()
     async with sf() as s:
-        await byok.warm(s, current_tenant())
+        tenant = current_tenant()
+        await byok.warm(s, tenant)
+        await custom_providers.warm(s, tenant)

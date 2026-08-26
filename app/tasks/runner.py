@@ -127,9 +127,11 @@ async def extract_stage(file_id: str, pkg: SkillPackage) -> None:
             return
         tenant, udr_path = f.tenant_id, f.udr_path
         is_child = f.parent_file_id is not None
-        # BYOK cache warm (§11.10): resolution inside the worker thread is sync
-        from app.extraction import byok
+        # BYOK + custom-channel cache warm (§11.10): resolution inside the
+        # worker thread is sync and cannot reach the DB
+        from app.extraction import byok, custom_providers
         await byok.warm(s, tenant)
+        await custom_providers.warm(s, tenant)
 
     udr = UDR.model_validate_json(Path(udr_path).read_text(encoding="utf-8"))
 

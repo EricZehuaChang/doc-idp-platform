@@ -43,7 +43,8 @@ def _output_contract(fields: list[FieldSpec]) -> dict:
     return out
 
 
-def compile_messages(pkg: SkillPackage, udr: UDR) -> list[dict]:
+def compile_messages(pkg: SkillPackage, udr: UDR,
+                     images: list[str] | None = None) -> list[dict]:
     system = pkg.system_prompt or (
         f"你是文档结构化抽取引擎。文档类型：{pkg.doc_type_hint or '未知'}。\n"
         "任务：从给定文档内容中抽取字段，严格按输出契约返回 JSON。\n"
@@ -69,5 +70,16 @@ def compile_messages(pkg: SkillPackage, udr: UDR) -> list[dict]:
         messages.append({"role": "user", "content": shot.input_excerpt})
         messages.append({"role": "assistant",
                          "content": json.dumps(shot.expected_output, ensure_ascii=False)})
-    messages.append({"role": "user", "content": user})
+    if images:
+        # Vision channel: the parsed text stays in the prompt (it carries the
+        # anchors the confidence scorer later matches against) and the page
+        # raster is added beside it, so the model can read what the parser
+        # mangled — tables, stamps, handwriting. OpenAI-compatible content
+        # parts; vendors that ignore image parts still see the text.
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": user},
+            *({"type": "image_url", "image_url": {"url": u}} for u in images),
+        ]})
+    else:
+        messages.append({"role": "user", "content": user})
     return messages

@@ -5,7 +5,7 @@
       <button :class="{ primary: tab === 'email' }" @click="tab = 'email'">邮件（SMTP）</button>
       <button :class="{ primary: tab === 'users' }" @click="tab = 'users'">用户</button>
       <button :class="{ primary: tab === 'billing' }" @click="tab = 'billing'">计费</button>
-      <button :class="{ primary: tab === 'byok' }" @click="tab = 'byok'">模型密钥（BYOK）</button>
+      <button :class="{ primary: tab === 'byok' }" @click="tab = 'byok'">模型通道与密钥</button>
       <button :class="{ primary: tab === 'sso' }" @click="tab = 'sso'">单点登录（SSO）</button>
       <button :class="{ primary: tab === 'apikeys' }" @click="tab = 'apikeys'">API 密钥</button>
     </div>
@@ -230,6 +230,54 @@
         </tbody>
       </table>
       <Skeleton v-else :rows="4" />
+
+      <!-- —— custom channels: register any OpenAI-compatible endpoint —— -->
+      <h3 class="sub">自定义模型通道</h3>
+      <p class="dim">
+        接入平台内置清单之外的模型：填名称、接口地址和 API Key 即可，登记后会出现在
+        技能编辑器的模型下拉里。密钥加密存储、永不回显。适合试新模型或对接自建网关。</p>
+      <table v-if="customs.length">
+        <thead><tr><th>名称</th><th>模型 ID</th><th>接口地址</th><th>图像输入</th>
+                   <th>密钥</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="c in customs" :key="c.name">
+            <td class="code">{{ c.name }}</td>
+            <td class="dim">{{ c.model }}</td>
+            <td class="dim url">{{ c.base_url }}</td>
+            <td>{{ c.vision ? "✓ 支持" : "—" }}</td>
+            <td><span class="state ok">已配置</span></td>
+            <td class="row-ops">
+              <button :disabled="testingName === c.name" @click="testCustom(c.name)">
+                {{ testingName === c.name ? "调用中…" : "测试连接" }}</button>
+              <button class="danger" @click="removeCustom(c.name)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="dim">还没有自定义通道。</p>
+
+      <div class="new-ch">
+        <label>名称（通道标识）
+          <input v-model="draft.name" placeholder="如 qwen-vl-max" /></label>
+        <label>模型 ID（留空＝同名称）
+          <input v-model="draft.model" placeholder="厂商文档里的 model 值" /></label>
+        <label class="wide">接口地址（OpenAI 兼容的 base_url）
+          <input v-model="draft.base_url"
+                 placeholder="如 https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
+        <label class="wide">API Key
+          <input v-model="draft.api_key" type="password" placeholder="粘贴 Key，加密存储不回显" /></label>
+        <label class="chk">
+          <input type="checkbox" v-model="draft.vision" />
+          该模型支持图像输入（勾选后，技能编辑器里对它试跑会把原件页面图一起发过去）
+        </label>
+        <div class="new-act">
+          <button class="primary" :disabled="savingCustom || !draft.name || !draft.base_url
+                                             || !draft.api_key"
+                  @click="saveCustom">{{ savingCustom ? "登记中…" : "＋ 登记通道" }}</button>
+          <span class="dim">登记后建议先点「测试连接」——保存成功不等于能调通。</span>
+        </div>
+      </div>
+      <pre v-if="testOut" class="test-out">{{ testOut }}</pre>
     </section>
     <!-- —— OIDC SSO —— -->
     <section v-if="tab === 'sso'" class="panel">
@@ -312,8 +360,8 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
-import { api, type BillingAccount, type GiftRequestRow, type LedgerRow,
-         type SmtpInfo } from "../api";
+import { api, type BillingAccount, type CustomProvider, type GiftRequestRow,
+         type LedgerRow, type SmtpInfo } from "../api";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
@@ -508,6 +556,52 @@ async function removeKey(name: string) {
   } catch (e) { toast.error(e); }
 }
 
+// —— custom channels ——
+const customs = ref<CustomProvider[]>([]);
+const draft = reactive({ name: "", model: "", base_url: "", api_key: "", vision: false });
+const savingCustom = ref(false);
+const testingName = ref("");
+const testOut = ref("");
+
+async function loadCustoms() {
+  try { customs.value = (await api.listCustomProviders()).providers; }
+  catch (e) { toast.error(e); }
+}
+async function saveCustom() {
+  savingCustom.value = true;
+  try {
+    await api.putCustomProvider(draft.name.trim(), {
+      base_url: draft.base_url.trim(), model: draft.model.trim(),
+      api_key: draft.api_key, vision: draft.vision });
+    toast.ok(`通道 ${draft.name.trim()} 已登记，建议点「测试连接」验证`);
+    Object.assign(draft, { name: "", model: "", base_url: "", api_key: "", vision: false });
+    await loadCustoms();
+  } catch (e) { toast.error(e); }
+  finally { savingCustom.value = false; }
+}
+async function removeCustom(name: string) {
+  if (!confirm(`删除通道 ${name}？绑定了它的技能下次运行会报「provider not configured」。`))
+    return;
+  try {
+    await api.deleteCustomProvider(name);
+    toast.ok(`通道 ${name} 已删除`);
+    await loadCustoms();
+  } catch (e) { toast.error(e); }
+}
+async function testCustom(name: string) {
+  testingName.value = name;
+  testOut.value = "";
+  try {
+    const r = await api.testCustomProvider(name);
+    testOut.value = `✓ ${name}（${r.model}）调通，模型返回：${JSON.stringify(r.reply)}`
+      + `\n  用量：${JSON.stringify(r.usage)}`;
+    toast.ok(`${name} 调通`);
+  } catch (e) {
+    testOut.value = `✗ ${name} 调用失败：${e instanceof Error ? e.message : String(e)}`;
+    toast.error(e);
+  } finally { testingName.value = ""; }
+}
+
 // —— OIDC ——
 interface OidcInfo { enabled: boolean; issuer?: string; client_id?: string;
                      has_secret?: boolean }
@@ -591,18 +685,35 @@ async function revokeKey(k: KeyRow) {
   catch (e) { toast.error(e); }
 }
 
-onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadOidc(); loadKeys(); });
+onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadCustoms(); loadOidc();
+                  loadKeys(); });
 watch(tab, (t) => {
   if (t === "users") loadUsers();
   if (t === "billing") loadBilling();
-  if (t === "byok") loadProviders();
+  if (t === "byok") { loadProviders(); loadCustoms(); }
   if (t === "sso") loadOidc();
   if (t === "apikeys") loadKeys();
 });
 </script>
 
 <style scoped>
-.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.sub { margin: 18px 0 0; font-size: 14px; color: var(--accent);
+  border-top: 1px solid var(--border); padding-top: 14px; }
+.url { font-family: Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+.row-ops { display: flex; gap: 6px; justify-content: flex-end; }
+.new-ch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  border: 1px dashed var(--border); border-radius: 8px; padding: 12px; }
+.new-ch label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+  color: var(--text-dim); }
+.new-ch .wide { grid-column: span 2; }
+.new-ch .chk { grid-column: span 2; flex-direction: row; align-items: center; gap: 8px; }
+.new-ch .chk input { width: auto; }
+.new-act { grid-column: span 2; display: flex; gap: 12px; align-items: center;
+  font-size: 12px; }
+.test-out { background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  margin: 0; }
 .panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 /* forms cap their own width for readability; tables stretch full width */

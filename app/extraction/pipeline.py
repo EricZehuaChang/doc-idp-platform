@@ -85,9 +85,28 @@ def _merge_page_raw(parts: list[dict], pkg: SkillPackage) -> dict:
     return merged
 
 
+# A vision call carries a full-page raster per image; more than a handful in
+# one request blows past context limits and costs far more than it explains.
+_MAX_VISION_IMAGES = 8
+
+
+def _images_for(unit: UDR, page_images: dict[int, str] | None) -> list[str]:
+    """Page rasters belonging to this extraction unit, in page order."""
+    if not page_images:
+        return []
+    nos = [p.page_no for p in unit.pages]
+    return [page_images[n] for n in nos if n in page_images][:_MAX_VISION_IMAGES]
+
+
 def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
-                 transport=None) -> tuple[dict, dict, list[str]]:
-    """Model call with page-map/table-reduce for long multi-page outputs."""
+                 transport=None,
+                 page_images: dict[int, str] | None = None
+                 ) -> tuple[dict, dict, list[str]]:
+    """Model call with page-map/table-reduce for long multi-page outputs.
+
+    `page_images` (page_no -> data URI) turns this into a multimodal call: the
+    caller decides, because only it knows whether the bound channel accepts
+    images. Text-only channels must never receive image parts."""
     # Entity-list tables are document-wide de-duplicated sweeps, not layout
     # detail tables.  Keep them whole so page boundaries do not duplicate hits.
     page_map = len(udr.pages) > 1 and any(
@@ -98,7 +117,8 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
     providers: list[str] = []
     for unit in units:
         raw, usage, used = chat_json_with_fallback(
-            compile_messages(pkg, unit), chain, transport=transport)
+            compile_messages(pkg, unit, _images_for(unit, page_images)),
+            chain, transport=transport)
         parts.append(raw)
         if used not in providers:
             providers.append(used)
@@ -172,14 +192,15 @@ def _locate_rows(rows: list, spec, udr: UDR) -> list:
 
 
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
-            provider_override: str | None = None) -> tuple[dict, dict, bool]:
+            provider_override: str | None = None,
+            page_images: dict[int, str] | None = None) -> tuple[dict, dict, bool]:
     """Returns (result, usage, needs_review). Resilience: extractor -> fallback
     chain with cooldown (M1 acceptance hit exactly this failure mode).
     Challenger arbitration (§5.3 model channel): a second model re-extracts and
     disagreements are forced into human review."""
     chain = _provider_chain(pkg, provider_override)
     raw, usage, providers_used = _raw_extract(
-        udr, pkg, chain, transport=transport)
+        udr, pkg, chain, transport=transport, page_images=page_images)
 
     # challenger pass (skipped for dry-run overrides: they compare providers
     # explicitly). Best-effort: an unavailable challenger never fails the file.

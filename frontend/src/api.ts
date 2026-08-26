@@ -174,10 +174,15 @@ export interface FileRow {
 export interface FilesPage {
   total: number; page: number; page_size: number; total_pages: number; data: FileRow[];
 }
-/** Task-list narrowing (P09). Dates are inclusive local `YYYY-MM-DD` days. */
+/** Task-list narrowing (P09). One field per column of the task table, so the
+ *  UI can sit each control on the column it narrows. Dates are inclusive
+ *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none. */
 export interface FileFilters {
   status?: string; q?: string; skill_code?: string;
+  file_name?: string; file_type?: string;
+  pages_min?: number; pages_max?: number; verify?: string;
   date_from?: string; date_to?: string;
+  updated_from?: string; updated_to?: string;
 }
 export interface SmtpInfo {
   configured: boolean; has_password?: boolean; host?: string; port?: number;
@@ -187,6 +192,10 @@ export interface SmtpInfo {
 export interface DryRunEntry {
   provider: string; ok: boolean; result?: Record<string, FieldCell>;
   usage?: Record<string, number | string>; error?: string;
+  /** page rasters sent with this run; >0 means it was a multimodal call */
+  vision_pages?: number;
+  /** why a vision-capable channel still ran text-only (unrenderable sample) */
+  note?: string;
 }
 
 // —— /detect: seal/signature visual detection (design 2026-08-07) ——
@@ -220,11 +229,20 @@ export interface StageBox {
 
 /** Provider/parser catalogue for the skill editor's model + parser pickers.
  *  Read-only and non-admin: names and model ids only, never key material —
- *  the BYOK page (settings/providers) stays the admin-gated surface. */
+ *  the settings page stays the admin-gated surface. `custom` marks a channel
+ *  registered from the console rather than shipped in providers.yaml. */
 export interface SkillOptions {
-  providers: { name: string; model: string; active: boolean }[];
+  providers: { name: string; model: string; active: boolean;
+               custom: boolean; vision: boolean }[];
   fallback_chain: string[];
   parsers: string[];
+}
+
+/** A console-registered model channel. The key is never returned — `has_key`
+ *  is all the UI ever learns about it. */
+export interface CustomProvider {
+  name: string; model: string; base_url: string;
+  vision: boolean; has_key: boolean; extra_body: Record<string, unknown>;
 }
 
 export interface LoginResult {
@@ -379,11 +397,8 @@ export const api = {
    *  so paging counts stay honest — never fetch-all-then-filter-in-the-browser. */
   files: (page: number, f: FileFilters = {}) => {
     const q = new URLSearchParams({ page: String(page), page_size: "20" });
-    if (f.status) q.set("status", f.status);
-    if (f.q) q.set("q", f.q);
-    if (f.skill_code) q.set("skill_code", f.skill_code);
-    if (f.date_from) q.set("date_from", f.date_from);
-    if (f.date_to) q.set("date_to", f.date_to);
+    for (const [k, v] of Object.entries(f))
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     return req<FilesPage>("GET", `/api/v1/files?${q}`);
   },
   // seal/signature detection (pure compute, no billing — /locate's visual twin)
@@ -416,6 +431,20 @@ export const api = {
   getSmtp: () => req<SmtpInfo>("GET", "/api/v1/settings/smtp"),
   putSmtp: (cfg: Record<string, unknown>) => req<SmtpInfo>("PUT", "/api/v1/settings/smtp", cfg),
   testSmtp: (to: string) => req("POST", "/api/v1/settings/smtp/test", { to }),
+  // console-registered channels (name + base_url + key); key is write-only
+  listCustomProviders: () =>
+    req<{ providers: CustomProvider[] }>("GET", "/api/v1/settings/custom-providers"),
+  putCustomProvider: (name: string, body: { base_url: string; model?: string;
+                                            api_key?: string; vision?: boolean;
+                                            extra_body?: Record<string, unknown> }) =>
+    req<CustomProvider>("PUT",
+      `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`, body),
+  deleteCustomProvider: (name: string) =>
+    req("DELETE", `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`),
+  testCustomProvider: (name: string) =>
+    req<{ provider: string; ok: boolean; model: string;
+          reply: Record<string, unknown>; usage: Record<string, number> }>(
+      "POST", `/api/v1/settings/custom-providers/${encodeURIComponent(name)}/test`),
   listProviders: () => req<{ providers: { name: string; model: string; active: boolean;
                                           platform_key: boolean; byok_set: boolean }[] }>(
     "GET", "/api/v1/settings/providers"),

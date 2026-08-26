@@ -41,21 +41,70 @@ def probe(udr: UDR, provider: str | None = None, transport=None) -> dict:
 
 
 def dry_run(udr: UDR, pkg: SkillPackage, providers: list[str] | None = None,
-            transport=None) -> list[dict]:
-    """Run extraction over one sample with 1..N providers side-by-side."""
+            transport=None, sample_path: str | None = None) -> list[dict]:
+    """Run extraction over one sample with 1..N providers side-by-side.
+
+    A channel registered as vision-capable gets the page rasters alongside the
+    parsed text; text-only channels get exactly what they got before. This is
+    what makes the comparison honest: a multimodal model judged on the parser's
+    text output is being judged on the parser, not on itself. Rasters are built
+    once and shared across the providers in this run.
+    """
     runs = providers or [pkg.model_binding.extractor or ""]
+    images: dict[int, str] | None = None
+    image_note = ""
     out = []
     for p in runs:
+        page_images = None
         try:
+            if _wants_vision(p):
+                if images is None:
+                    images, image_note = _page_data_uris(sample_path)
+                page_images = images or None
             result, usage, needs_review = extract(
-                udr, pkg, transport=transport, provider_override=p or None)
-            out.append({"provider": p or "(active)", "ok": True,
-                        "needs_review": needs_review, "usage": usage,
-                        "result": result})
+                udr, pkg, transport=transport, provider_override=p or None,
+                page_images=page_images)
+            entry = {"provider": p or "(active)", "ok": True,
+                     "needs_review": needs_review, "usage": usage,
+                     "result": result, "vision_pages": len(page_images or {})}
+            if page_images is None and _wants_vision(p) and image_note:
+                entry["note"] = image_note
+            out.append(entry)
         except Exception as e:
             out.append({"provider": p or "(active)", "ok": False,
                         "error": str(e)[:300]})
     return out
+
+
+def _wants_vision(name: str) -> bool:
+    """Is this channel registered as accepting image input?"""
+    from app.extraction import custom_providers
+    from app.tenancy import current_tenant
+    entry = custom_providers.get(current_tenant(), name) if name else None
+    return bool(entry and entry.get("vision"))
+
+
+def _page_data_uris(path: str | None) -> tuple[dict[int, str], str]:
+    """Rasterize the sample into data URIs. Returns ({}, reason) when the file
+    cannot be rendered — an unrenderable format is a note on the run, never a
+    failed run: the text channel still has something to say."""
+    import base64
+    import io
+
+    if not path:
+        return {}, "无原始文件路径，本次按纯文本调用"
+    try:
+        from app.detectors.render import rasterize
+        pages, _total = rasterize(path)
+    except Exception as e:
+        return {}, f"该文件无法栅格化（{str(e)[:80]}），本次按纯文本调用"
+    out: dict[int, str] = {}
+    for page in pages[:8]:
+        buf = io.BytesIO()
+        page.image.save(buf, format="JPEG", quality=80)
+        out[page.page_no] = ("data:image/jpeg;base64,"
+                             + base64.b64encode(buf.getvalue()).decode())
+    return out, ""
 
 
 def _cell_value(v) -> str:
