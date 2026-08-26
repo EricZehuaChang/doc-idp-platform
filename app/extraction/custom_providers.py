@@ -77,9 +77,20 @@ async def load_raw(session, tenant: str) -> dict:
     return dict((row.value if row else None) or {})
 
 
+# Vendors document the full endpoint (".../v1/chat/completions"), so that is
+# what gets pasted into a field labelled "接口地址". The client appends the path
+# itself, and the doubled suffix 404s with nothing pointing at the cause — seen
+# for real on 2026-08-26. Accept both forms instead of being right about it.
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/completions")
+
+
 def validate(name: str, base_url: str, model: str) -> tuple[str, str, str]:
     name = (name or "").strip()
     base_url = (base_url or "").strip().rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if base_url.endswith(suffix):
+            base_url = base_url[: -len(suffix)].rstrip("/")
+            break
     model = (model or "").strip() or name
     if not name:
         raise CustomProviderError("通道名称不能为空")

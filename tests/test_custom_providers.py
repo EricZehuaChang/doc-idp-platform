@@ -264,3 +264,30 @@ async def test_keyless_channel_sends_no_authorization_header(tmp_path, monkeypat
                         json={"base_url": "https://box.example/v1", "no_key": True})
             row = (await c.get("/api/v1/settings/custom-providers")).json()["providers"][0]
             assert row["has_key"] is False and row["no_key"] is True
+
+
+async def test_base_url_accepts_the_full_endpoint_people_actually_paste(tmp_path, monkeypatch):
+    """Vendor docs show ".../v1/chat/completions"; the client appends that path
+    itself, so pasting it verbatim used to 404 with nothing naming the cause."""
+    app = await _app(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            for pasted in ("https://box.example/v1/chat/completions",
+                           "https://box.example/v1/chat/completions/",
+                           "https://box.example/v1/"):
+                r = await c.put("/api/v1/settings/custom-providers/edge",
+                                json={"base_url": pasted, "model": "m", "no_key": True})
+                assert r.status_code == 200, r.text
+                assert r.json()["base_url"] == "https://box.example/v1", pasted
+
+            # and the call really lands on the single, correct path
+            seen: list[httpx.Request] = []
+            with respx.mock:
+                respx.post("https://box.example/v1/chat/completions").mock(
+                    side_effect=lambda req: (seen.append(req), httpx.Response(
+                        200, json={"choices": [{"message": {"content": '{"ok":true}'}}],
+                                   "usage": {}}))[1])
+                assert (await c.post("/api/v1/settings/custom-providers/edge/test")
+                        ).status_code == 200
+            assert str(seen[0].url) == "https://box.example/v1/chat/completions"
