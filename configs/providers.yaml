@@ -31,3 +31,22 @@ providers:
     model: Qwen3-VL-8B
     base_url: http://localhost:8000/v1
     api_key_env: ""
+  # —— vision channels (model ids verified live 2026-08-27 against each
+  # vendor's /models plus a real image probe; the "flash" tier is the
+  # multimodal one at Zhipu — glm-5.3 and glm-5 reject image content parts
+  # outright with code 1210). These drive the vlm-* parsers in parsers.yaml.
+  # Names are deliberately distinct from any console-registered channel so
+  # provider resolution never has two answers for the same name.
+  - name: vision-qwen
+    model: qwen3-vl-plus
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    extra_body: {enable_thinking: false}
+  - name: vision-deepseek
+    model: deepseek-v4-flash-vision-exp
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+  - name: vision-glm
+    model: glm-5.3-flash
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: ZHIPU_API_KEY

@@ -29,6 +29,9 @@ class ParserCfg(BaseModel):
     type: str                      # local | cloud_api | cloud_vlm
     base_url: str | None = None
     api_key_env: str | None = None
+    # cloud_vlm only: which providers.yaml channel this parser drives, so
+    # swapping the model behind a parser is a config edit, not a release
+    provider: str | None = None
     for_: str | None = None
 
     model_config = {"populate_by_name": True}

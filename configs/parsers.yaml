@@ -14,6 +14,27 @@ parsers:
   - name: ofd                 # OFD e-invoice/e-ticket: XBRL fast path -> text layer -> raster OCR fallback
     type: local
     for: ofd-eticket
+  # Multimodal parsers (2026-08-27): page raster -> VLM -> Markdown. Pin-only,
+  # auto-routing is untouched. They read layout a text-layer parser mangles
+  # (merged cells, stamps over text, handwriting) but return NO bbox, so a
+  # document parsed this way has nothing for verification highlight or the
+  # masking channel to anchor to. Model behind each name is providers.yaml.
+  # Measured 2026-08-27 on one A4 page (samples/insavlo/SO1_EA_1.pdf), all
+  # three read the handwritten signatures the text layer cannot see:
+  #   vlm-glm    ~63s  most faithful (kept both the PO number and the supplier)
+  #   vlm-qwen   ~35s  fastest, dropped the supplier name
+  #   vlm-deepseek ~283s(!) and mis-transcribed the company name — the model is
+  #                 flagged -exp by the vendor; usable for trials, not for a
+  #                 batch, and it can outrun the per-page timeout below.
+  - name: vlm-qwen            # 千问 qwen3-vl-plus
+    type: cloud_vlm
+    provider: vision-qwen
+  - name: vlm-deepseek        # DeepSeek deepseek-v4-flash-vision-exp（实验版，慢）
+    type: cloud_vlm
+    provider: vision-deepseek
+  - name: vlm-glm             # 智谱 glm-5.3-flash
+    type: cloud_vlm
+    provider: vision-glm
   # M2: glm-ocr-local (vLLM + PP-DocLayoutV3), monkeyocr (optional, weights research-licensed), rapidocr (CPU fallback)
 default_parser:
   lite: glm-ocr-cloud

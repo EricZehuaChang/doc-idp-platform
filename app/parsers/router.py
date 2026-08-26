@@ -8,7 +8,7 @@ from pathlib import Path
 from app.config import get_settings, load_parsers
 from app.parsers import (  # noqa: F401  register plugins
     electronic, glm_ocr_cloud, monkeyocr_http, ofd, opendataloader,
-    rapidocr_http)
+    rapidocr_http, vlm_ocr)
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
@@ -37,6 +37,8 @@ def _make(name: str) -> Parser:
     kwargs = {}
     if cfg and cfg.type == "cloud_api":
         kwargs = {"base_url": cfg.base_url, "api_key_env": cfg.api_key_env}
+    elif cfg and cfg.type == "cloud_vlm":
+        kwargs = {"provider": cfg.provider or ""}
     return registry.create("parser", name, **kwargs)
 
 
