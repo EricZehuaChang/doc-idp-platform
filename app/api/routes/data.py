@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.db import session_factory
 from app.models import CreditAccount, CreditLedger, FileRecord, Correction, Transaction
@@ -23,23 +23,67 @@ router = APIRouter(prefix="/api/v1", tags=["data"])
 _DONE = ("passed", "completed", "exported")
 
 
+def _day_bounds(date_from: str | None, date_to: str | None):
+    """Inclusive `YYYY-MM-DD` day range -> half-open UTC datetime bounds.
+    `date_to` covers the whole day, so 08-26..08-26 returns that day's tasks."""
+    lo = hi = None
+    if date_from:
+        lo = datetime.combine(datetime.fromisoformat(date_from).date(), time.min,
+                              tzinfo=timezone.utc)
+    if date_to:
+        hi = datetime.combine(datetime.fromisoformat(date_to).date(), time.max,
+                              tzinfo=timezone.utc)
+    return lo, hi
+
+
 @router.get("/files")
-async def list_files(status: str | None = None, page: int = 1, page_size: int = 20):
-    """Task ledger for the Home page: every file, newest first, filterable by
-    status, paged — the Insavlo home-table shape."""
+async def list_files(status: str | None = None, q: str | None = None,
+                     skill_code: str | None = None,
+                     date_from: str | None = None, date_to: str | None = None,
+                     page: int = 1, page_size: int = 20):
+    """Task ledger for the Home page: every file, newest first, paged — the
+    Insavlo home-table shape.
+
+    Narrowing (P09, 2026-08-26) is server-side on purpose: the console pages at
+    20 rows, so filtering in the browser would only ever search the page in hand
+    and report a total that disagrees with what is on screen.
+    `q` matches file name or skill code, case-insensitively.
+    """
     tenant = current_tenant()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
+    try:
+        lo, hi = _day_bounds(date_from, date_to)
+    except ValueError as e:
+        raise HTTPException(400, "date_from/date_to 需为 YYYY-MM-DD 格式") from e
     sf = session_factory()
     async with sf() as s:
         base = (select(FileRecord, Transaction.skill_code)
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
                 .where(FileRecord.tenant_id == tenant))
+        # count must carry the same joins/filters or the pager lies
         count_q = (select(func.count()).select_from(FileRecord)
+                   .join(Transaction, FileRecord.transaction_id == Transaction.id)
                    .where(FileRecord.tenant_id == tenant))
+        conds = []
         if status:
-            base = base.where(FileRecord.status == status)
-            count_q = count_q.where(FileRecord.status == status)
+            conds.append(FileRecord.status == status)
+        if skill_code:
+            conds.append(Transaction.skill_code == skill_code)
+        if q and q.strip():
+            # escape LIKE wildcards: a filename with "_" is a literal search,
+            # not a single-character pattern
+            term = q.strip().replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+            like = f"%{term}%"
+            conds.append(or_(FileRecord.file_name.ilike(like, escape="\\"),
+                             Transaction.skill_code.ilike(like, escape="\\")))
+        if lo is not None:
+            conds.append(FileRecord.created_at >= lo)
+        if hi is not None:
+            conds.append(FileRecord.created_at <= hi)
+        for c in conds:
+            base = base.where(c)
+            count_q = count_q.where(c)
         total = (await s.execute(count_q)).scalar_one()
         rows = (await s.execute(
             base.order_by(FileRecord.created_at.desc())

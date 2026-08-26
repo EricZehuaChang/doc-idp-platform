@@ -8,6 +8,29 @@
       <button title="实际大小" @click="zoom = 1">1:1</button>
       <button v-if="isImage" title="旋转 90°" @click="rotate()">⟳</button>
       <span v-if="rotation && annotate" class="hint">旋转视图下暂不支持框选</span>
+      <span v-if="loading" class="hint load">⏳ 正在加载原件…</span>
+    </div>
+
+    <!-- load failed: say why and offer the two ways out, instead of a blank pane -->
+    <div v-if="loadError" class="stage-error">
+      <p class="err-title">原件加载失败</p>
+      <p class="err-msg">{{ loadError }}</p>
+      <div class="err-acts">
+        <button class="primary" @click="retry">重试</button>
+        <button class="ghost" @click="downloadFile(src, fileName)">下载原件</button>
+      </div>
+    </div>
+
+    <!-- rendered, but nothing was painted anywhere: an unsupported image codec
+         inside the PDF (JBIG2/JPX) fails this way — pdf.js only warns, so
+         without this banner the reviewer just sees white paper -->
+    <div v-else-if="blankRender" class="stage-error warn">
+      <p class="err-title">原件渲染为空白</p>
+      <p class="err-msg">文档已下载但没有可显示的内容，可能是不支持的图像编码或空白页。</p>
+      <div class="err-acts">
+        <button class="primary" @click="retry">重试</button>
+        <button class="ghost" @click="downloadFile(src, fileName)">下载原件</button>
+      </div>
     </div>
 
     <div class="scaler" :style="scalerStyle">
@@ -18,6 +41,12 @@
       <svg v-if="ready && pageDim(1)" class="overlay"
            :viewBox="`0 0 ${pageDim(1)!.width} ${pageDim(1)!.height}`"
            preserveAspectRatio="none">
+        <!-- every locatable field, clickable: canvas -> field selection (P02) -->
+        <rect v-for="b in boxesOn(1)" :key="b.key" v-bind="rectOf(b.bbox)"
+              class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
+              @click="emit('pick', b.key)">
+          <title>{{ b.label }}</title>
+        </rect>
         <rect v-if="activeBox && activePage === 1" :x="activeBox[0]" :y="activeBox[1]"
               :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
               class="hl" />
@@ -43,9 +72,16 @@
            :class="{ annotating: annotate }" :data-page="p.no"
            @pointerdown="down($event, p.no)" @pointermove="move" @pointerup="up">
         <canvas :ref="(el) => setCanvas(p.no, el as HTMLCanvasElement)"></canvas>
+        <span v-if="pageErrors[p.no]" class="page-err" :title="pageErrors[p.no]">
+          ⚠ 此页渲染失败</span>
         <svg v-if="pageDim(p.no)" class="overlay"
              :viewBox="`0 0 ${pageDim(p.no)!.width} ${pageDim(p.no)!.height}`"
              preserveAspectRatio="none">
+          <rect v-for="b in boxesOn(p.no)" :key="b.key" v-bind="rectOf(b.bbox)"
+                class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
+                @click="emit('pick', b.key)">
+            <title>{{ b.label }}</title>
+          </rect>
           <rect v-if="activeBox && activePage === p.no" :x="activeBox[0]" :y="activeBox[1]"
                 :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
                 class="hl" />
@@ -66,11 +102,19 @@
 
 <script setup lang="ts">
 // Document stage: renders the original (image or PDF via pdf.js), overlays the
-// active field's bbox, and — in annotate mode — lets the reviewer drag a new
+// located field boxes, and — in annotate mode — lets the reviewer drag a new
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { downloadFile, fetchBlob, type RegionOverlay } from "../api";
-import { loadPdfjs, type PdfjsModule } from "../pdfjs";
+import { loadPdfjs, PDFJS_ASSETS, type PdfjsModule } from "../pdfjs";
+
+/** One locatable thing on the page: a scalar field or one table cell. */
+export interface StageBox {
+  key: string;          // selection identity, echoed back by @pick
+  page: number;
+  bbox: number[];       // UDR page-pixel space [x0, y0, x1, y1]
+  label: string;
+}
 
 const props = defineProps<{
   src: string;
@@ -79,15 +123,26 @@ const props = defineProps<{
   activeBox: number[] | null;
   activePage: number;
   annotate: boolean;
+  boxes?: StageBox[];                 // all locatable fields (click to select)
+  activeKey?: string;
   regions?: RegionOverlay[] | null;   // seal/signature overlay (/detect)
 }>();
-const emit = defineEmits<{ (e: "box", page: number, bbox: number[]): void }>();
+const emit = defineEmits<{
+  (e: "box", page: number, bbox: number[]): void;
+  (e: "pick", key: string): void;
+}>();
 
 const stageEl = ref<HTMLDivElement>();
 const ready = ref(false);
 const pdfPages = ref<{ no: number; vpW: number; vpH: number }[]>([]);
 const canvases = new Map<number, HTMLCanvasElement>();
 let loadingTask: ReturnType<PdfjsModule["getDocument"]> | null = null;
+
+// —— load state (P01): a silent failure used to leave an unexplained blank pane ——
+const loading = ref(false);
+const loadError = ref("");
+const blankRender = ref(false);
+const pageErrors = ref<Record<number, string>>({});
 
 const isImage = computed(() => /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
 const isPdf = computed(() => /\.pdf$/i.test(props.fileName));
@@ -117,6 +172,14 @@ function pageDim(no: number): { width: number; height: number } | null {
   return r ? { width: r.pageWidth, height: r.pageHeight } : null;
 }
 
+// —— field boxes (P02: canvas <-> field selection sync) ——
+function boxesOn(no: number): StageBox[] {
+  return (props.boxes ?? []).filter((b) => b.page === no && b.bbox?.length === 4);
+}
+function rectOf(bbox: number[]) {
+  return { x: bbox[0], y: bbox[1], width: bbox[2] - bbox[0], height: bbox[3] - bbox[1] };
+}
+
 // original bytes always come through an authenticated fetch — bare <img src>
 // and pdf.js URL loading can't carry the Bearer token (401 under auth-on)
 const imgUrl = ref("");
@@ -126,47 +189,81 @@ async function loadImage() {
   imgUrl.value = URL.createObjectURL(await fetchBlob(props.src));
 }
 
+/** Did anything at all get painted? A document that renders 100% white is the
+ *  signature of a decoder pdf.js could not load — it only logs a warning. */
+function hasInk(canvas: HTMLCanvasElement): boolean {
+  try {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx || !canvas.width || !canvas.height) return false;
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 0; i < d.length; i += 4 * 32)       // sample: 1 px in 32
+      if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) return true;
+    return false;
+  } catch { return true; }          // tainted canvas: don't cry wolf
+}
+
 async function renderPdf() {
   loadingTask?.destroy();
   loadingTask = null;
   pdfPages.value = [];
-  if (isImage.value) { await loadImage(); return; }
-  if (!isPdf.value) return;
-  const blob = await fetchBlob(props.src);
-  const pdfjs = await loadPdfjs();
-  loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer() });
-  const doc = await loadingTask.promise;
-  pdfPages.value = await Promise.all(
-    Array.from({ length: doc.numPages }, async (_, i) => {
-      const page = await doc.getPage(i + 1);
-      const vp = page.getViewport({ scale: 1 });
-      return { no: i + 1, vpW: vp.width, vpH: vp.height };
-    }));
-  await nextTick();
-  const width = (stageEl.value?.clientWidth || 800) - 24;
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const base = page.getViewport({ scale: 1 });
-    const scale = width / base.width;
-    const dpr = window.devicePixelRatio || 1;
-    const vp = page.getViewport({ scale: scale * dpr });
-    const canvas = canvases.get(i);
-    if (!canvas) continue;
-    canvas.width = vp.width;
-    canvas.height = vp.height;
-    canvas.style.width = `${vp.width / dpr}px`;
-    canvas.style.height = `${vp.height / dpr}px`;
-    // intent "print": one-shot static raster. The default display intent
-    // schedules paint slices via requestAnimationFrame, which never fires in
-    // hidden/background pages (preview panes, prefetch) — render would hang.
-    await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp,
-                        intent: "print" }).promise;
+  pageErrors.value = {};
+  loadError.value = "";
+  blankRender.value = false;
+  if (!isImage.value && !isPdf.value) return;
+  loading.value = true;
+  try {
+    if (isImage.value) { await loadImage(); return; }
+    const blob = await fetchBlob(props.src);
+    const pdfjs = await loadPdfjs();
+    loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer(), ...PDFJS_ASSETS });
+    const doc = await loadingTask.promise;
+    pdfPages.value = await Promise.all(
+      Array.from({ length: doc.numPages }, async (_, i) => {
+        const page = await doc.getPage(i + 1);
+        const vp = page.getViewport({ scale: 1 });
+        return { no: i + 1, vpW: vp.width, vpH: vp.height };
+      }));
+    await nextTick();
+    const width = (stageEl.value?.clientWidth || 800) - 24;
+    let inked = false;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const canvas = canvases.get(i);
+      if (!canvas) continue;
+      // one bad page must not abort the rest of the document
+      try {
+        const page = await doc.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const scale = width / base.width;
+        const dpr = window.devicePixelRatio || 1;
+        const vp = page.getViewport({ scale: scale * dpr });
+        canvas.width = vp.width;
+        canvas.height = vp.height;
+        canvas.style.width = `${vp.width / dpr}px`;
+        canvas.style.height = `${vp.height / dpr}px`;
+        // intent "print": one-shot static raster. The default display intent
+        // schedules paint slices via requestAnimationFrame, which never fires in
+        // hidden/background pages (preview panes, prefetch) — render would hang.
+        await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp,
+                            intent: "print" }).promise;
+        inked = inked || hasInk(canvas);
+      } catch (e) {
+        pageErrors.value = { ...pageErrors.value, [i]: String((e as Error)?.message ?? e) };
+      }
+    }
+    blankRender.value = doc.numPages > 0 && !inked;
+  } finally {
+    loading.value = false;
   }
 }
 
 function renderPdfSafe() {
-  renderPdf().catch((e) => console.error("[DocStage] pdf render failed:", e));
+  renderPdf().catch((e) => {
+    console.error("[DocStage] original failed to load:", e);
+    loading.value = false;
+    loadError.value = String((e as Error)?.message ?? e).slice(0, 300);
+  });
 }
+function retry() { renderPdfSafe(); }
 
 function setCanvas(no: number, el: HTMLCanvasElement | null) {
   if (el) canvases.set(no, el);
@@ -256,6 +353,15 @@ onBeforeUnmount(() => {
 .tools button { padding: 2px 10px; font-size: 13px; }
 .zoom-val { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; }
 .hint { font-size: 12px; color: var(--accent); }
+.hint.load { margin-left: auto; }
+.stage-error { border: 1px solid var(--red); border-radius: 8px; padding: 14px 16px;
+  background: var(--bg-raised); display: flex; flex-direction: column; gap: 6px; }
+.stage-error.warn { border-color: var(--accent); }
+.err-title { margin: 0; font-weight: 700; }
+.err-msg { margin: 0; font-size: 12px; color: var(--text-dim); word-break: break-word; }
+.err-acts { display: flex; gap: 8px; margin-top: 6px; }
+.page-err { position: absolute; left: 6px; top: 6px; font-size: 11px; color: #fff;
+  background: var(--red); padding: 1px 7px; border-radius: 4px; }
 .scaler { align-self: flex-start; display: flex; flex-direction: column; gap: 12px; }
 .page-wrap { position: relative; display: inline-block; align-self: flex-start; }
 .page-wrap.annotating { cursor: crosshair; }
@@ -263,6 +369,12 @@ onBeforeUnmount(() => {
   user-select: none; -webkit-user-drag: none; }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .hl { fill: rgba(240, 180, 41, 0.25); stroke: var(--accent); stroke-width: 4; }
+/* located fields: faint until hovered so they never fight the document */
+.fieldbox { fill: rgba(90, 170, 255, 0.05); stroke: rgba(90, 170, 255, 0.45);
+  stroke-width: 2; }
+.fieldbox.pick { pointer-events: auto; cursor: pointer; }
+.fieldbox.pick:hover { fill: rgba(90, 170, 255, 0.2); stroke: var(--blue); stroke-width: 3; }
+.fieldbox.active { fill: rgba(240, 180, 41, 0.18); stroke: var(--accent); stroke-width: 3; }
 .region { stroke-width: 4; pointer-events: none; }
 .region.seal { fill: rgba(229, 72, 77, 0.18); stroke: #e5484d; }
 .region.signature { fill: rgba(90, 170, 255, 0.16); stroke: var(--blue); }

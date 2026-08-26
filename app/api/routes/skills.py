@@ -91,6 +91,27 @@ async def list_skills():
                 for r in rows]
 
 
+@router.get("/model-options")
+async def model_options():
+    """Provider + parser catalogue for the skill editor's pickers.
+
+    Deliberately not the BYOK endpoint (`/settings/providers`): that one is
+    admin-only and reports key presence. Editors are used by operators, and the
+    only thing the model/parser fields need is the list of configured names —
+    so this returns names and model ids and nothing else. Declared before
+    GET /{skill_code} so "model-options" is not read as a skill code.
+    """
+    from app.config import load_parsers, load_providers
+
+    cfg = load_providers()
+    return {
+        "providers": [{"name": name, "model": p.model, "active": name == cfg["active"]}
+                      for name, p in cfg["providers"].items()],
+        "fallback_chain": list(cfg.get("fallback") or []),
+        "parsers": [p.name for p in load_parsers()["parsers"].values()],
+    }
+
+
 @router.get("/{skill_code}")
 async def get_skill(skill_code: str, version: int | None = None):
     """Skill detail; ?version=N loads that version's package into the editor
@@ -158,6 +179,41 @@ async def new_draft(skill_code: str, payload: DraftUpdate):
                            changelog=payload.changelog))
         await s.commit()
     return {"skill_code": skill_code, "version": next_ver, "status": "draft"}
+
+
+@router.put("/{skill_code}/versions/{version}")
+async def update_draft(skill_code: str, version: int, payload: DraftUpdate):
+    """Save into an existing draft, in place.
+
+    Business rule (P04, 2026-08-26): 「保存」 updates the draft the editor is on;
+    only 「新建版本」 (POST .../versions) and 「发布」 move the version pointer.
+    Before this endpoint existed the editor's save button called the create-draft
+    route, so every save minted vN+1 and polluted the version list.
+    Published/archived versions stay immutable (§5.1) — saving onto one is a 409
+    and the caller is expected to branch a new draft instead.
+    """
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, skill_code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        row = (await s.execute(
+            select(SkillVersion).where(SkillVersion.skill_code == skill_code,
+                                       SkillVersion.tenant_id == tenant,
+                                       SkillVersion.version == version))).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "version not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"v{version} 已{row.status}，不可原地修改；请另存为新草稿")
+        row.package = payload.package.model_dump()
+        # empty changelog means "not edited in this save" — keep the stored one
+        # rather than blanking the version note (P05)
+        if payload.changelog:
+            row.changelog = payload.changelog
+        skill.name = payload.package.name or skill.name
+        await s.commit()
+    return {"skill_code": skill_code, "version": version, "status": "draft"}
 
 
 @router.post("/probe")

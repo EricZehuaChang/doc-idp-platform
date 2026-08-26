@@ -3,6 +3,9 @@
     <!-- left: original document with bbox overlay (Insavlo dual-screen shape) -->
     <section class="doc-pane">
       <div class="doc-head">
+        <!-- explicit way back: the review page used to be a one-way door
+             (browser back was the only exit) — P10 -->
+        <button class="back" title="返回上级列表" @click="goBack">‹ 返回</button>
         <div class="nav-group">
           <button :disabled="queuePos <= 0" title="上一份 (←)" @click="goSibling(-1)">←</button>
           <span class="pos dim" v-if="queueIds.length">{{ queuePos + 1 }} / {{ queueIds.length }}</span>
@@ -25,7 +28,9 @@
       <div class="doc-body">
         <DocStage :src="api.downloadUrl(fileId)" :file-name="detail.file_name"
                   :pages="detail.pages" :active-box="activeBox" :active-page="activePage"
-                  :annotate="annotate" :regions="sealRegions" @box="onBoxDrawn" />
+                  :annotate="annotate" :regions="sealRegions"
+                  :boxes="stageBoxes" :active-key="activeKey"
+                  @box="onBoxDrawn" @pick="pickBox" />
       </div>
     </section>
 
@@ -36,12 +41,46 @@
         <button :class="{ primary: tab === 'review' }" @click="tab = 'review'">
           待复核 <span v-if="reviewCount" class="badge-r">{{ reviewCount }}</span>
         </button>
+        <button v-if="detectMeta" :class="{ primary: tab === 'seal' }" @click="tab = 'seal'">
+          印章/签名 <span class="badge-r">{{ detectMeta.regions.length }}</span>
+        </button>
         <span class="lock-state dim">{{ lockMsg }}</span>
       </div>
 
-      <div class="fields" ref="fieldsEl">
+      <!-- seal / signature structured results (P06): detection is not the whole
+           answer — the reviewer needs type, page, position and confidence as
+           data, and an explicit "text not readable" state instead of a guess -->
+      <div v-if="tab === 'seal'" class="fields">
+        <p class="dim seal-note">
+          检测器：{{ detectMeta?.detector }} · 扫描 {{ detectMeta?.pages_scanned }}/{{
+            detectMeta?.page_count }} 页<template v-if="detectMeta?.truncated">（已达页数上限，
+          其余页未检测）</template>
+        </p>
+        <p v-if="!detectMeta?.regions.length" class="dim">未检测到印章或签名。</p>
+        <div v-for="(r, i) in detectMeta?.regions ?? []" :key="`seal-${i}`" class="field"
+             :class="{ active: activeKey === `r:${i}` }" @click="pickBox(`r:${i}`)">
+          <div class="field-head">
+            <span class="fname">{{ r.label === "seal" ? "印章" : "签名" }} #{{ i + 1 }}</span>
+            <span class="dim">第 {{ r.page }} 页</span>
+            <span class="conf dim">置信 {{ (r.score * 100).toFixed(0) }}%</span>
+          </div>
+          <p class="seal-pos dim">
+            位置 x {{ r.x.toFixed(1) }}% · y {{ r.y.toFixed(1) }}% ·
+            宽 {{ r.w.toFixed(1) }}% · 高 {{ r.h.toFixed(1) }}%
+          </p>
+          <p class="seal-text dim">
+            {{ r.label === "seal" ? "印章文字" : "签字人" }}：未识别（当前通道只做版面检测，
+            不做文字提取；不推测内容以免写入不实信息）</p>
+        </div>
+        <p v-if="detectMeta?.misses?.length" class="rulefail">
+          未启用的检测器：{{ detectMeta.misses.join("、") }}
+        </p>
+      </div>
+
+      <div v-else class="fields" ref="fieldsEl">
         <div v-for="(f, i) in visibleFields" :key="f.name" class="field"
-             :class="{ active: f.name === activeField }" @click="focusField(f)">
+             :class="{ active: activeKey === `f:${f.name}` }" :data-key="`f:${f.name}`"
+             @click="focusField(f)">
           <div class="field-head">
             <span class="fname">{{ f.name }}</span>
             <span v-if="f.cell.inferred" class="badge-inferred">参考结果</span>
@@ -73,9 +112,18 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(row, ri) in tableEdits[t]" :key="ri">
-                  <td v-for="c in tableCols(t)" :key="c">
-                    <input v-if="locked" v-model="row[c]" class="cell-input" />
+                <!-- a table row is a selectable target too: for entity-list
+                     skills (PII sweeps) it is the ONLY thing on the page, and
+                     without this nothing could ever be selected (P02) -->
+                <tr v-for="(row, ri) in tableEdits[t]" :key="ri"
+                    :class="{ 'row-active': activeKey.startsWith(`t:${t}:${ri}:`) }"
+                    :data-key="`t:${t}:${ri}`">
+                  <td v-for="c in tableCols(t)" :key="c"
+                      :class="{ 'cell-hit': hasHit(t, ri, c) }"
+                      :title="hasHit(t, ri, c) ? '点击定位到原件中的位置' : ''"
+                      @click="pickCell(t, ri, c)">
+                    <input v-if="locked" v-model="row[c]" class="cell-input"
+                           @focus="pickCell(t, ri, c)" />
                     <template v-else>{{ row[c] }}</template>
                   </td>
                   <td v-if="locked" class="row-ops">
@@ -94,11 +142,18 @@
         <template v-else>
           <button class="ghost" @click="saveEdits" :disabled="!dirty">
             保存修正 S<span v-if="dirty" class="dot">●</span></button>
+          <!-- non-conclusive exits: a reviewer who is not ready to judge must
+               not be forced to press 通过/拒绝 just to get out (P03) -->
+          <button class="ghost" @click="exitReview()" :title="dirty
+            ? '保存已做的修正，退出但不改变审核状态' : '解除锁定并返回，不改变审核状态'">
+            {{ dirty ? "保存并退出" : "退出校验" }}</button>
+          <button v-if="dirty" class="ghost" title="丢弃本次修改并退出"
+                  @click="exitReview(true)">放弃修改退出</button>
           <span class="spacer" />
           <button class="danger" @click="decide('reject')">拒绝 X</button>
           <button class="confirm big" @click="decide('confirm')">✓ 通过并下一份 C</button>
         </template>
-        <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出 · T 页签 · B 框选 · L 锁定 · S 保存 · C 通过 · X 拒绝 · ←/→ 上下份">⌨</span>
+        <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出编辑 · T 页签 · B 框选 · L 锁定 · S 保存 · Q 退出 · C 通过 · X 拒绝 · ←/→ 上下份">⌨</span>
       </div>
     </section>
   </main>
@@ -111,7 +166,7 @@
     </template>
     <div v-else class="empty-state">
       <p>文件不存在或已被处理。</p>
-      <router-link to="/queue"><button class="primary">返回待审队列</button></router-link>
+      <router-link to="/tasks"><button class="primary">返回任务列表</button></router-link>
     </div>
   </main>
 </template>
@@ -119,13 +174,15 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
-import { api, fetchBlob, type FieldCell, type RegionOverlay } from "../api";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
+         type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
 const props = defineProps<{ fileId: string }>();
+const route = useRoute();
 const router = useRouter();
 const qc = useQueryClient();
 
@@ -148,15 +205,15 @@ const statusLabel = computed(() =>
   STATUS_LABELS[detail.value?.status ?? ""] ?? detail.value?.status ?? "");
 
 // tab preference survives reloads (caching design §9.0 layer ⑤)
-const tab = ref<"all" | "review">(
+const tab = ref<"all" | "review" | "seal">(
   (localStorage.getItem("idp_review_tab") as "all" | "review") || "all");
-watch(tab, (v) => localStorage.setItem("idp_review_tab", v));
+watch(tab, (v) => { if (v !== "seal") localStorage.setItem("idp_review_tab", v); });
 const locked = ref(false);
 const edits = ref<Record<string, string>>({});
 const original = ref<Record<string, string>>({});
 const tableEdits = ref<Record<string, Record<string, string>[]>>({});
 const tableOriginal = ref<Record<string, string>>({});     // JSON snapshots
-const activeField = ref("");
+const activeKey = ref("");                                 // selection identity
 const activeBox = ref<number[] | null>(null);
 const activePage = ref(1);
 const annotate = ref(false);
@@ -165,12 +222,18 @@ const pendingBoxes = ref<Record<string, { page: number; bbox: number[] }>>({});
 // —— seal/signature detection overlay (/detect, design 2026-08-07 §3) ——
 const detecting = ref(false);
 const sealRegions = ref<RegionOverlay[] | null>(null);
+const detectMeta = ref<DetectResult | null>(null);
 // suffix gate mirrors the backend's (detect.py): other formats would only
 // round-trip to a guaranteed 422, so the button greys out with a tooltip
 const detectSupported = computed(() =>
   !!detail.value && /\.(pdf|png|jpe?g|bmp|webp)$/i.test(detail.value.file_name));
 async function toggleDetect() {
-  if (sealRegions.value) { sealRegions.value = null; return; }   // second click clears
+  if (sealRegions.value) {                     // second click clears
+    sealRegions.value = null;
+    detectMeta.value = null;
+    if (tab.value === "seal") tab.value = "all";
+    return;
+  }
   if (!detail.value) return;
   // capture identity at call start: detection takes seconds and the reviewer
   // can ←/→ away mid-flight — a settling stale response must never overlay
@@ -184,6 +247,7 @@ async function toggleDetect() {
     const blob = await fetchBlob(api.downloadUrl(fid));
     const res = await api.detect(blob, fname);
     if (props.fileId !== fid) return;      // switched away: discard stale result
+    detectMeta.value = res;
     sealRegions.value = res.regions.map((r) => {
       const p = res.pages.find((x) => x.page === r.page);
       return { ...r, pageWidth: p?.width ?? 0, pageHeight: p?.height ?? 0 };
@@ -191,6 +255,7 @@ async function toggleDetect() {
     const seals = res.regions.filter((r) => r.label === "seal").length;
     const sigs = res.regions.filter((r) => r.label === "signature").length;
     const cut = res.truncated ? `；文档共 ${res.page_count} 页，仅检测前 ${res.pages_scanned} 页` : "";
+    if (res.regions.length) tab.value = "seal";
     toast.ok(res.regions.length
       ? `检测到 ${seals} 处印章、${sigs} 处签名（${res.detector}）${cut}`
       : `未检测到印章/签名${cut}`);
@@ -238,11 +303,22 @@ function delRow(t: string, i: number) {
   tableEdits.value[t]?.splice(i, 1);
 }
 
+// —— cell locations: rows carry $cells[col].$hits [{page,bbox,...}] ——
+interface CellHit { page?: number; bbox?: number[] }
+function cellHit(t: string, ri: number, col: string): CellHit | null {
+  const row = tableEdits.value[t]?.[ri] as unknown as
+    Record<string, { $hits?: CellHit[] }> | undefined;
+  const cells = (row as unknown as { $cells?: Record<string, { $hits?: CellHit[] }> })?.$cells;
+  const hit = cells?.[col]?.$hits?.[0];
+  return hit?.bbox?.length === 4 ? hit : null;
+}
+const hasHit = (t: string, ri: number, col: string) => !!cellHit(t, ri, col);
+
 const reviewCount = computed(() =>
   scalarFields.value.filter((f) => f.cell.$confidence < 2).length);
 const visibleFields = computed(() =>
-  tab.value === "all" ? scalarFields.value
-    : scalarFields.value.filter((f) => f.cell.$confidence < 2));
+  tab.value === "review" ? scalarFields.value.filter((f) => f.cell.$confidence < 2)
+    : scalarFields.value);
 const dirty = computed(() =>
   Object.keys(edits.value).some((k) => edits.value[k] !== original.value[k])
   || Object.keys(pendingBoxes.value).length > 0
@@ -259,8 +335,32 @@ function fieldPage(cell: FieldCell): number {
   const n = parseInt(String(p), 10);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
+
+// —— every locatable thing, drawn on the document and clickable (P02) ——
+const stageBoxes = computed<StageBox[]>(() => {
+  const out: StageBox[] = [];
+  for (const f of scalarFields.value) {
+    const pending = pendingBoxes.value[f.name];
+    const bbox = pending?.bbox ?? (f.cell.$bbox?.length === 4 ? f.cell.$bbox : null);
+    if (bbox) out.push({ key: `f:${f.name}`, page: pending?.page ?? fieldPage(f.cell),
+                         bbox, label: `${f.name}: ${f.cell.$value}` });
+  }
+  for (const t of tableNames.value) {
+    const rows = tableEdits.value[t] ?? [];
+    rows.forEach((row, ri) => {
+      for (const col of Object.keys(row).filter((c) => !c.startsWith("$"))) {
+        const hit = cellHit(t, ri, col);
+        if (hit?.bbox && hit.page)
+          out.push({ key: `t:${t}:${ri}:${col}`, page: hit.page, bbox: hit.bbox,
+                     label: `${col}: ${row[col]}` });
+      }
+    });
+  }
+  return out;
+});
+
 function focusField(f: ScalarField) {
-  activeField.value = f.name;
+  activeKey.value = `f:${f.name}`;
   const pending = pendingBoxes.value[f.name];
   if (pending) {
     activeBox.value = pending.bbox;
@@ -270,12 +370,86 @@ function focusField(f: ScalarField) {
     activePage.value = fieldPage(f.cell);
   }
 }
+function pickCell(t: string, ri: number, col: string) {
+  activeKey.value = `t:${t}:${ri}:${col}`;
+  const hit = cellHit(t, ri, col);
+  activeBox.value = hit?.bbox ?? null;
+  if (hit?.page) activePage.value = hit.page;
+}
+/** Canvas -> field: the other half of the selection loop the UI never had. */
+function pickBox(key: string) {
+  activeKey.value = key;
+  if (key.startsWith("f:")) {
+    const f = scalarFields.value.find((x) => `f:${x.name}` === key);
+    if (f) {
+      if (tab.value === "seal") tab.value = "all";
+      focusField(f);
+    }
+  } else if (key.startsWith("t:")) {
+    const [, t, ri, col] = key.split(":");
+    if (tab.value === "seal") tab.value = "all";
+    pickCell(t, Number(ri), col);
+  } else if (key.startsWith("r:")) {
+    const r = detectMeta.value?.regions[Number(key.slice(2))];
+    if (r) { activePage.value = r.page; activeBox.value = null; }
+    tab.value = "seal";
+  }
+  scrollToSelection();
+}
+async function scrollToSelection() {
+  await new Promise((r) => setTimeout(r, 0));
+  const key = activeKey.value;
+  const sel = key.startsWith("t:")
+    ? `[data-key="${key.split(":").slice(0, 3).join(":")}"]` : `[data-key="${key}"]`;
+  document.querySelector(sel)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
 function onBoxDrawn(page: number, bbox: number[]) {
-  if (!activeField.value) { toast.error("先选中一个字段，再框选它的位置"); return; }
-  pendingBoxes.value = { ...pendingBoxes.value, [activeField.value]: { page, bbox } };
-  activeBox.value = bbox;
-  activePage.value = page;
-  toast.ok(`已为 ${activeField.value} 重画定位框（保存后生效）`);
+  const key = activeKey.value;
+  if (key.startsWith("f:")) {
+    const name = key.slice(2);
+    pendingBoxes.value = { ...pendingBoxes.value, [name]: { page, bbox } };
+    activeBox.value = bbox;
+    activePage.value = page;
+    toast.ok(`已为 ${name} 重画定位框（保存后生效）`);
+    return;
+  }
+  if (key.startsWith("t:")) {
+    const [, t, ri, col] = key.split(":");
+    if (!setCellHit(t, Number(ri), col, page, bbox)) {
+      toast.error("该单元格没有可写入的定位结构，无法保存框选");
+      return;
+    }
+    activeBox.value = bbox;
+    activePage.value = page;
+    toast.ok(`已为第 ${Number(ri) + 1} 行「${col}」重画定位框（保存后生效）`);
+    return;
+  }
+  toast.error("先在右侧选中一个字段或明细单元格，再框选它的位置");
+}
+
+/** Write a redrawn box back into the row's $cells metadata. Rows are PATCHed
+ *  whole, so this rides along with the normal table save — no new API. The
+ *  percent form is what the masking consumers read, so keep both in step. */
+function setCellHit(t: string, ri: number, col: string, page: number, bbox: number[]): boolean {
+  const rows = tableEdits.value[t];
+  const row = rows?.[ri] as unknown as
+    { $cells?: Record<string, { $confidence?: number; $hits?: unknown[] }> } | undefined;
+  if (!row) return false;
+  const dim = detail.value?.pages.find((p) => p.page_no === page);
+  const hit: Record<string, number | number[]> = { page, bbox };
+  if (dim?.width && dim?.height) {
+    hit.x = +(bbox[0] / dim.width * 100).toFixed(2);
+    hit.y = +(bbox[1] / dim.height * 100).toFixed(2);
+    hit.w = +((bbox[2] - bbox[0]) / dim.width * 100).toFixed(2);
+    hit.h = +((bbox[3] - bbox[1]) / dim.height * 100).toFixed(2);
+  }
+  const cells = (row.$cells ??= {});
+  const cell = (cells[col] ??= { $confidence: 3, $hits: [] });
+  cell.$hits = [hit];
+  cell.$confidence = 3;                       // human-placed box is ground truth
+  tableEdits.value = { ...tableEdits.value, [t]: [...rows!] };
+  return true;
 }
 
 // unsaved-draft persistence (caching design §9.0 layer ④)
@@ -318,7 +492,7 @@ async function acquire() {
   try { await api.lock(props.fileId); locked.value = true; }
   catch (e) { toast.error(e); }
 }
-async function saveEdits() {
+async function saveEdits(): Promise<boolean> {
   const changed: { field: string; value: string; bbox?: number[]; page?: number;
                    rows?: Record<string, string>[] }[] =
     Object.keys(edits.value)
@@ -328,25 +502,61 @@ async function saveEdits() {
                      page: pendingBoxes.value[k]?.page }));
   for (const t of tableNames.value)
     if (tableDirty(t)) changed.push({ field: t, value: "", rows: tableEdits.value[t] });
-  if (!changed.length) return;
+  if (!changed.length) return true;
   try {
     await api.patchFields(props.fileId, changed);
     sessionStorage.removeItem(draftKey());
     pendingBoxes.value = {};
     toast.ok(`已保存 ${changed.length} 处修正`);
     await refetch();
-  } catch (e) { toast.error(e); }
+    return true;
+  } catch (e) { toast.error(e); return false; }
 }
+
+// —— exits (P03) ——
+/** Where 返回 goes: the list we came from, else the task workbench. */
+const backTarget = computed(() => String(route.query.back || "/tasks"));
+let leavingCleanly = false;         // suppresses the unsaved-changes guard
+
+async function releaseLock() {
+  if (!locked.value) return;
+  try { await api.unlock(props.fileId); } catch { /* TTL will reclaim it anyway */ }
+  locked.value = false;
+}
+
+/** Leave without judging the file. `discard` drops local edits; otherwise they
+ *  are persisted first. Neither path touches the review status. */
+async function exitReview(discard = false) {
+  if (discard) {
+    if (!confirm("放弃本次未保存的修改并退出？")) return;
+    sessionStorage.removeItem(draftKey());
+    pendingBoxes.value = {};
+    syncFromDetail();
+  } else if (dirty.value && !(await saveEdits())) {
+    return;                                   // save failed: stay put
+  }
+  await releaseLock();
+  qc.invalidateQueries({ queryKey: ["queue"] });
+  leavingCleanly = true;
+  router.push(backTarget.value);
+}
+function goBack() {
+  if (locked.value) { exitReview(); return; }
+  router.push(backTarget.value);
+}
+
 async function decide(kind: "confirm" | "reject") {
   try {
     if (dirty.value) await saveEdits();
     await (kind === "confirm" ? api.confirm(props.fileId) : api.reject(props.fileId));
     toast.ok(kind === "confirm" ? "已通过" : "已拒绝");
+    locked.value = false;
     qc.invalidateQueries({ queryKey: ["queue"] });
     // continuous review: jump straight to the next pending file
     const next = (await api.queue()).find(
       (q) => q.file_id !== props.fileId && (!q.locked_by || q.locked_by === api.currentUser));
-    router.push(next ? `/review/${next.file_id}` : "/queue");
+    leavingCleanly = true;
+    router.push(next ? `/review/${next.file_id}` : backTarget.value);
   } catch (e) { toast.error(e); }
 }
 function goSibling(delta: number) {
@@ -354,12 +564,22 @@ function goSibling(delta: number) {
   if (target) router.push(`/review/${target}`);
 }
 
+// leaving with unsaved work (browser back, nav click) must not silently drop it
+onBeforeRouteLeave(() => {
+  if (leavingCleanly || !dirty.value) return true;
+  return confirm("有未保存的修改，确定离开？（点“取消”可返回并保存）");
+});
+// closing the tab / reloading with unsaved work
+function beforeUnload(ev: BeforeUnloadEvent) {
+  if (dirty.value) { ev.preventDefault(); ev.returnValue = ""; }
+}
+
 // —— reviewer keyboard flow ——
 function blurInput() { (document.activeElement as HTMLElement)?.blur(); }
 function moveField(delta: number) {
   const list = visibleFields.value;
   if (!list.length) return;
-  const cur = list.findIndex((f) => f.name === activeField.value);
+  const cur = list.findIndex((f) => `f:${f.name}` === activeKey.value);
   const next = Math.min(Math.max(cur + delta, 0), list.length - 1);
   focusField(list[next]);
   fieldsEl.value?.querySelectorAll(".field")[next]
@@ -378,7 +598,7 @@ function onKey(ev: KeyboardEvent) {
     case "arrowright": ev.preventDefault(); goSibling(1); break;
     case "enter": {
       ev.preventDefault();
-      const i = visibleFields.value.findIndex((f) => f.name === activeField.value);
+      const i = visibleFields.value.findIndex((f) => `f:${f.name}` === activeKey.value);
       if (i >= 0) inputEls.get(i)?.focus();
       break;
     }
@@ -386,6 +606,7 @@ function onKey(ev: KeyboardEvent) {
     case "b": if (locked.value) annotate.value = !annotate.value; break;
     case "l": if (!locked.value) acquire(); break;
     case "s": if (locked.value) saveEdits(); break;
+    case "q": goBack(); break;
     case "c": if (locked.value) decide("confirm"); break;
     case "x": if (locked.value) decide("reject"); break;
   }
@@ -394,39 +615,56 @@ function onKey(ev: KeyboardEvent) {
 // same component instance is reused across /review/:fileId — reset on switch
 watch(() => props.fileId, () => {
   locked.value = false;
-  activeField.value = "";
+  activeKey.value = "";
   activeBox.value = null;
   activePage.value = 1;
   annotate.value = false;
   sealRegions.value = null;      // detection overlay belongs to one file
+  detectMeta.value = null;
+  if (tab.value === "seal") tab.value = "all";
   pendingBoxes.value = {};
   inputEls.clear();
 });
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+onMounted(() => {
+  window.addEventListener("keydown", onKey);
+  window.addEventListener("beforeunload", beforeUnload);
+});
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKey);
+  window.removeEventListener("beforeunload", beforeUnload);
+});
 </script>
 
 <style scoped>
+/* Fixed work area, one scroll container per column. Two things are load-bearing
+   here and both were wrong before (P08): the height must subtract the REAL
+   navbar height (52px — it was 46px, so the shell grew a second scrollbar), and
+   every flex/grid ancestor of a scroller needs min-height:0, otherwise
+   min-height:auto lets the column grow to its content and the whole page
+   scrolls instead of the pane under the cursor. */
 .review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px);
-  height: calc(100vh - 46px); }
+  height: calc(100vh - 52px); min-height: 0; overflow: hidden; }
 .doc-pane { border-right: 1px solid var(--border); display: flex; flex-direction: column;
-  min-width: 0; }
+  min-width: 0; min-height: 0; }
 .doc-head { padding: 8px 14px; background: var(--bg-panel); display: flex; gap: 12px;
-  align-items: center; }
+  align-items: center; flex-shrink: 0; }
+.back { padding: 2px 10px; }
 .nav-group { display: flex; align-items: center; gap: 6px; }
 .nav-group button { padding: 2px 10px; }
 .pos { font-size: 12px; }
 .fname-head { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  max-width: 40%; }
+  max-width: 34%; }
 .anno { margin-left: auto; flex-shrink: 0; }
-.doc-body { flex: 1; overflow: auto; padding: 12px; }
+.anno + .anno { margin-left: 0; }
+.doc-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px;
+  overscroll-behavior: contain; }
 .field-pane { display: flex; flex-direction: column; background: var(--bg-panel);
-  min-width: 0; }
+  min-width: 0; min-height: 0; }
 .tabs { display: flex; gap: 8px; align-items: center; padding: 12px;
-  border-bottom: 1px solid var(--border); }
+  border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .lock-state { margin-left: auto; font-size: 12px; }
-.fields { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column;
-  gap: 10px; }
+.fields { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px; display: flex;
+  flex-direction: column; gap: 10px; overscroll-behavior: contain; }
 .field { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px; cursor: pointer; }
 .field.active { border-color: var(--accent); }
@@ -442,13 +680,18 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 .table-scroll table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .table-scroll th, .table-scroll td { border: 1px solid var(--border); padding: 2px 6px;
   white-space: nowrap; }
+.table-scroll tr.row-active td { background: rgba(240, 180, 41, 0.12); }
+.cell-hit { cursor: pointer; }
+.cell-hit:hover { background: rgba(90, 170, 255, 0.14); }
 .cell-input { border: none; background: transparent; padding: 3px 4px; min-width: 70px;
   font-size: 12px; }
 .cell-input:focus { background: var(--bg); }
 .row-ops { text-align: center; }
 .empty-rows { font-size: 12px; margin: 4px 0 0; }
+.seal-note { font-size: 12px; margin: 0 0 4px; }
+.seal-pos, .seal-text { margin: 2px 0 0; font-size: 12px; }
 .actions { display: flex; gap: 10px; align-items: center; padding: 12px;
-  border-top: 1px solid var(--border); }
+  border-top: 1px solid var(--border); flex-wrap: wrap; flex-shrink: 0; }
 .actions .big { padding: 8px 18px; font-size: 14px; }
 .spacer { flex: 1; }
 .dot { color: var(--accent); margin-left: 4px; font-size: 10px; }
@@ -459,7 +702,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
   color: var(--text-dim); }
 
 @media (max-width: 1000px) {
-  .review { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; height: auto; }
+  .review { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; height: auto;
+    overflow: visible; }
   .doc-pane { border-right: none; border-bottom: 1px solid var(--border); }
 }
 </style>

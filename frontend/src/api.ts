@@ -174,6 +174,11 @@ export interface FileRow {
 export interface FilesPage {
   total: number; page: number; page_size: number; total_pages: number; data: FileRow[];
 }
+/** Task-list narrowing (P09). Dates are inclusive local `YYYY-MM-DD` days. */
+export interface FileFilters {
+  status?: string; q?: string; skill_code?: string;
+  date_from?: string; date_to?: string;
+}
 export interface SmtpInfo {
   configured: boolean; has_password?: boolean; host?: string; port?: number;
   security?: string; username?: string; from_addr?: string; from_name?: string;
@@ -204,6 +209,22 @@ export interface DetectResult {
  *  PDF points — the two pixel spaces differ by a constant factor per page). */
 export interface RegionOverlay extends DetectRegion {
   pageWidth: number; pageHeight: number;
+}
+
+/** One locatable thing on the document stage: a scalar field or a table cell.
+ *  `key` is the selection identity shared by the canvas and the field pane so
+ *  clicking either side highlights the other (P02). */
+export interface StageBox {
+  key: string; page: number; bbox: number[]; label: string;
+}
+
+/** Provider/parser catalogue for the skill editor's model + parser pickers.
+ *  Read-only and non-admin: names and model ids only, never key material —
+ *  the BYOK page (settings/providers) stays the admin-gated surface. */
+export interface SkillOptions {
+  providers: { name: string; model: string; active: boolean }[];
+  fallback_chain: string[];
+  parsers: string[];
 }
 
 export interface LoginResult {
@@ -289,6 +310,13 @@ export const api = {
   skillNewDraft: (code: string, pkg: SkillPackage, changelog = "") =>
     req<{ version: number }>("POST", `/api/v1/skills/${code}/versions`,
                              { package: pkg, changelog }),
+  /** Save into the draft being edited. "保存" must not mint a version — only
+   *  「新建版本」and publishing move the version pointer (P04). */
+  skillSaveDraft: (code: string, version: number, pkg: SkillPackage, changelog = "") =>
+    req<{ version: number; status: string }>(
+      "PUT", `/api/v1/skills/${code}/versions/${version}`,
+      { package: pkg, changelog }),
+  skillOptions: () => req<SkillOptions>("GET", "/api/v1/skills/model-options"),
   skillPublish: (code: string, version: number) =>
     req("POST", `/api/v1/skills/${code}/versions/${version}/publish`),
   skillExportUrl: (code: string, version?: number) =>
@@ -347,9 +375,17 @@ export const api = {
     req<{ by_day: { date: string; credits: number }[];
           by_skill: { skill_code: string; credits: number }[] }>(
       "GET", `/api/v1/stats/usage?days=${days}${skill_code ? `&skill_code=${skill_code}` : ""}`),
-  files: (page: number, status?: string) =>
-    req<FilesPage>("GET",
-      `/api/v1/files?page=${page}&page_size=20${status ? `&status=${status}` : ""}`),
+  /** Task ledger with server-side filtering (P09): all narrowing happens in SQL
+   *  so paging counts stay honest — never fetch-all-then-filter-in-the-browser. */
+  files: (page: number, f: FileFilters = {}) => {
+    const q = new URLSearchParams({ page: String(page), page_size: "20" });
+    if (f.status) q.set("status", f.status);
+    if (f.q) q.set("q", f.q);
+    if (f.skill_code) q.set("skill_code", f.skill_code);
+    if (f.date_from) q.set("date_from", f.date_from);
+    if (f.date_to) q.set("date_to", f.date_to);
+    return req<FilesPage>("GET", `/api/v1/files?${q}`);
+  },
   // seal/signature detection (pure compute, no billing — /locate's visual twin)
   detect: (file: Blob, fileName: string, kinds = "seal,signature") => {
     const f = new FormData();

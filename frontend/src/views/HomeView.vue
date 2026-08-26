@@ -32,7 +32,9 @@
         <span class="live dim">
           排队 {{ stats?.queued ?? 0 }} · 处理中 {{ stats?.processing ?? 0 }} ·
           今日完成 {{ stats?.today_completed ?? 0 }}</span>
-        <router-link to="/tasks" class="more">全部任务 →</router-link>
+        <!-- filtering lives on the task workbench; make the way there
+             obvious from the home slice (P09) -->
+        <router-link to="/tasks" class="more">🔍 筛选 / 全部任务 →</router-link>
       </div>
       <div class="table-scroll" v-if="rows.length">
         <table class="data-table">
@@ -48,9 +50,9 @@
               <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
               <td class="row-act">
                 <router-link v-if="r.status === 'pending_verification'"
-                             :to="`/review/${r.file_id}`">
+                             :to="reviewLink(r.file_id)">
                   <button class="primary slim">Verify</button></router-link>
-                <router-link v-else :to="`/review/${r.file_id}`">
+                <router-link v-else :to="reviewLink(r.file_id)">
                   <button class="ghost slim">查看</button></router-link>
               </td>
             </tr>
@@ -82,11 +84,15 @@ const { data: stats } = useQuery({
   queryKey: ["home-stats"], queryFn: api.homeStats, refetchInterval: 10_000 });
 const { data: files, isLoading } = useQuery({
   queryKey: ["files", 1, ""],
-  queryFn: () => api.files(1),
+  queryFn: () => api.files(1, {}),
   refetchInterval: 8_000,
   placeholderData: (prev) => prev,
 });
 const rows = computed(() => (files.value?.data ?? []).slice(0, 8));
+
+/** Tell the review page where 返回 should land (P10). */
+const reviewLink = (fileId: string) =>
+  ({ path: `/review/${fileId}`, query: { back: "/home" } });
 
 const fmt = (v: number | undefined) => v == null ? "—" : v.toLocaleString();
 const ts = (v: string | null) => v ? new Date(v).toLocaleString() : "-";

@@ -6,13 +6,27 @@
     </PageHeader>
 
     <section class="card-panel block">
-      <!-- toolbar: filters left, count right -->
+      <!-- filters: every condition is applied server-side and mirrored into the
+           URL query, so refresh / back / a shared link all reproduce the view -->
       <div class="toolbar">
+        <input class="search" v-model="kw" type="search"
+               placeholder="搜索文件名或技能代码…" @keyup.enter="applyNow" />
         <select v-model="statusFilter">
           <option value="">全部状态</option>
           <option v-for="(label, key) in STATUS_LABELS" :key="key" :value="key">
             {{ label }}</option>
         </select>
+        <select v-model="skillFilter">
+          <option value="">全部技能</option>
+          <option v-for="s in skillList" :key="s.skill_code" :value="s.skill_code">
+            {{ s.name || s.skill_code }}</option>
+        </select>
+        <label class="date-lbl">从
+          <input type="date" v-model="dateFrom" :max="dateTo || undefined" /></label>
+        <label class="date-lbl">到
+          <input type="date" v-model="dateTo" :min="dateFrom || undefined" /></label>
+        <button class="ghost slim" :disabled="!hasFilters" @click="clearFilters">
+          清空筛选</button>
         <span class="dim total-note">共 {{ total }} 条</span>
       </div>
 
@@ -39,9 +53,9 @@
               </td>
               <td class="row-act">
                 <router-link v-if="r.status === 'pending_verification'"
-                             :to="`/review/${r.file_id}`">
+                             :to="reviewLink(r.file_id)">
                   <button class="primary slim">Verify</button></router-link>
-                <router-link v-else :to="`/review/${r.file_id}`">
+                <router-link v-else :to="reviewLink(r.file_id)">
                   <button class="ghost slim">查看</button></router-link>
               </td>
             </tr>
@@ -49,10 +63,10 @@
         </table>
       </div>
       <Skeleton v-else-if="isLoading" :rows="10" />
-      <EmptyState v-else-if="statusFilter" title="该状态下没有任务" glyph="🔍">
-        换个状态筛选，或清除筛选查看全部任务。
+      <EmptyState v-else-if="hasFilters" title="没有符合筛选条件的任务" glyph="🔍">
+        换个条件，或清空筛选查看全部任务。
         <template #action>
-          <button @click="statusFilter = ''">清除筛选</button>
+          <button @click="clearFilters">清空筛选</button>
         </template>
       </EmptyState>
       <EmptyState v-else title="还没有任务" glyph="🚀">
@@ -73,25 +87,75 @@
 
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { computed, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import { api, fetchBlob, type FileRow } from "../api";
+import { computed, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { api, fetchBlob, type FileRow, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { STATUS_LABELS } from "../labels";
 
 const route = useRoute();
+const router = useRouter();
 const qc = useQueryClient();
-const page = ref(1);
-// deep-linkable filter: /tasks?status=pending_verification (Home CTA uses it)
+const page = ref(Math.max(1, Number(route.query.page) || 1));
+
+// filter state seeded from the URL: /tasks?status=…&q=…&skill=…&from=…&to=…
+// (Home's CTA deep-links here, and refresh must not drop the view)
 const statusFilter = ref(String(route.query.status || ""));
-watch(statusFilter, () => { page.value = 1; });
-watch(() => route.query.status, (v) => { statusFilter.value = String(v || ""); });
+const skillFilter = ref(String(route.query.skill || ""));
+const dateFrom = ref(String(route.query.from || ""));
+const dateTo = ref(String(route.query.to || ""));
+const kw = ref(String(route.query.q || ""));
+const kwApplied = ref(kw.value);        // debounced copy that actually queries
+
+const hasFilters = computed(() =>
+  !!(statusFilter.value || skillFilter.value || dateFrom.value || dateTo.value || kw.value));
+
+// typing shouldn't fire a request per keystroke
+let kwTimer: ReturnType<typeof setTimeout> | undefined;
+watch(kw, (v) => {
+  clearTimeout(kwTimer);
+  kwTimer = setTimeout(() => { kwApplied.value = v; }, 350);
+});
+function applyNow() {
+  clearTimeout(kwTimer);
+  kwApplied.value = kw.value;
+}
+onUnmounted(() => clearTimeout(kwTimer));
+
+// any narrowing invalidates the current page number
+watch([statusFilter, skillFilter, dateFrom, dateTo, kwApplied], () => { page.value = 1; });
+
+// keep the URL in step so refresh/back/copy-link all reproduce the view
+watch([page, statusFilter, skillFilter, dateFrom, dateTo, kwApplied], () => {
+  const q: Record<string, string> = {};
+  if (statusFilter.value) q.status = statusFilter.value;
+  if (skillFilter.value) q.skill = skillFilter.value;
+  if (dateFrom.value) q.from = dateFrom.value;
+  if (dateTo.value) q.to = dateTo.value;
+  if (kwApplied.value) q.q = kwApplied.value;
+  if (page.value > 1) q.page = String(page.value);
+  router.replace({ path: "/tasks", query: q });
+});
+// external navigation into /tasks?status=… (Home CTA) still steers the filter
+watch(() => route.query.status, (v) => {
+  if (route.path === "/tasks") statusFilter.value = String(v || "");
+});
+
+const { data: skillData } = useQuery({ queryKey: ["skills"], queryFn: api.skills });
+const skillList = computed<SkillInfo[]>(() => skillData.value ?? []);
 
 const { data: files, isLoading } = useQuery({
-  queryKey: computed(() => ["files", page.value, statusFilter.value]),
-  queryFn: () => api.files(page.value, statusFilter.value || undefined),
+  queryKey: computed(() => ["files", page.value, statusFilter.value, skillFilter.value,
+                            dateFrom.value, dateTo.value, kwApplied.value]),
+  queryFn: () => api.files(page.value, {
+    status: statusFilter.value || undefined,
+    skill_code: skillFilter.value || undefined,
+    date_from: dateFrom.value || undefined,
+    date_to: dateTo.value || undefined,
+    q: kwApplied.value || undefined,
+  }),
   refetchInterval: 8_000,
   placeholderData: (prev) => prev,
 });
@@ -99,7 +163,21 @@ const rows = computed<FileRow[]>(() => files.value?.data ?? []);
 const total = computed(() => files.value?.total ?? 0);
 const totalPages = computed(() => files.value?.total_pages ?? 1);
 
+function clearFilters() {
+  statusFilter.value = "";
+  skillFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  kw.value = "";
+  applyNow();
+}
 function reload() { qc.invalidateQueries({ queryKey: ["files"] }); }
+
+/** Carry the current list view into the review page so its 返回 comes back to
+ *  the same filtered page instead of a reset list (P09/P10). */
+function reviewLink(fileId: string) {
+  return { path: `/review/${fileId}`, query: { back: route.fullPath } };
+}
 
 // hover prefetch (caching §9.0 layer ②): warm the original before Verify
 const prefetched = new Set<string>();
@@ -123,7 +201,11 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 
 <style scoped>
 .block { padding: 14px 16px; }
-.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
+  flex-wrap: wrap; }
+.search { min-width: 220px; flex: 1 1 220px; max-width: 340px; }
+.date-lbl { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  color: var(--text-dim); }
 .total-note { margin-left: auto; font-size: 12px; }
 .table-scroll { overflow-x: auto; }
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

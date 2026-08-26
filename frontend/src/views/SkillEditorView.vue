@@ -3,7 +3,7 @@
     <!-- left rail: version history (Insavlo editor layout) -->
     <aside v-if="!isNew" class="ver-rail">
       <div class="rail-head">版本历史</div>
-      <button class="new-ver" @click="saveDraft">＋ 新建版本</button>
+      <button class="new-ver" @click="newVersion">＋ 新建版本</button>
       <div class="ver-list">
         <div v-for="v in [...versions].reverse()" :key="v.version" class="ver-card"
              :class="{ current: v.version === selectedVersion }"
@@ -13,6 +13,9 @@
             <span class="chip" :class="`chip-${v.status}`">{{ verLabel(v.status) }}</span>
           </div>
           <span class="dim ver-date">{{ shortDate(v.created_at) }}</span>
+          <!-- each version carries its own note; showing it here is what makes
+               "介绍不见了" diagnosable instead of mysterious (P05) -->
+          <p v-if="v.changelog" class="ver-note-line" :title="v.changelog">{{ v.changelog }}</p>
         </div>
       </div>
     </aside>
@@ -25,7 +28,8 @@
           <span class="dim code-line">技能代码：{{ pkg.skill_code || "（保存时确定）" }}</span>
         </div>
         <div class="acts">
-          <button class="primary" @click="saveDraft">💾 {{ isNew ? "创建技能" : "保存" }}</button>
+          <button class="primary" :disabled="saving" @click="save">
+            💾 {{ isNew ? "创建技能" : saveLabel }}</button>
           <button v-if="!isNew && selectedStatus === 'draft'" class="confirm"
                   @click="publishSelected">🚀 发布</button>
           <button v-if="!isNew" @click="apiModal = true">🔌 API 接入</button>
@@ -35,9 +39,13 @@
           <router-link to="/skills"><button class="ghost">‹ 返回技能列表</button></router-link>
         </div>
       </div>
-      <p v-if="!isNew && selectedStatus && selectedStatus !== 'draft'" class="ver-note dim">
+      <p v-if="!isNew && selectedStatus === 'draft'" class="ver-note dim">
+        当前编辑 v{{ selectedVersion }}（草稿）——点「保存」原地更新本草稿，不会新增版本；
+        要留存快照请点左侧「＋ 新建版本」。
+      </p>
+      <p v-else-if="!isNew && selectedStatus" class="ver-note dim">
         当前查看 v{{ selectedVersion }}（{{ verLabel(selectedStatus) }}）——已发布版本不可改，
-        点「保存」将以此为底存为新草稿。
+        点「另存为新草稿」将以此为底新建一个草稿版本。
       </p>
 
       <!-- guidance for a blank new skill -->
@@ -60,6 +68,13 @@
           <label class="span2">描述
             <textarea v-model="pkg.description" rows="2"
                       placeholder="这个技能处理什么文档、服务什么业务（给同事看的说明）"></textarea>
+          </label>
+          <!-- version note lives on the SkillVersion row, not in the package:
+               it answers "这一版改了什么", per version, and never leaks across
+               versions (P05) -->
+          <label v-if="!isNew" class="span2">版本介绍（v{{ selectedVersion }} 的说明）
+            <input v-model="changelog"
+                   placeholder="这一版改了什么，例如：新增税额字段、放宽发票号正则" />
           </label>
           <label>审核模式（Needs Review Mode）
             <select v-model="pkg.review_policy.mode">
@@ -106,12 +121,17 @@
         <p v-if="!pkg.fields.length" class="dim pad">
           还没有字段。用上方三种方式起草，或点下方「＋ 添加字段」手动创建。
         </p>
-        <div class="field-tree">
-          <FieldCard v-for="(f, i) in pkg.fields" :key="i" :field="f"
+        <p v-if="pkg.fields.length > 1" class="dim drag-tip">
+          拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
+        </p>
+        <div class="field-tree" ref="treeEl">
+          <FieldCard v-for="(f, i) in pkg.fields" :key="f.name || i" :field="f" :index="i"
+                     :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
                      @edit="openEdit(pkg!.fields, i)"
                      @remove="pkg!.fields.splice(i, 1)"
                      @edit-column="(ci) => openEdit(f.columns, ci, true)"
-                     @add-column="openAdd(f.columns, true)" />
+                     @add-column="openAdd(f.columns, true)"
+                     @grip-down="startFieldDrag" />
           <button class="add-field" @click="openAdd(pkg!.fields)">＋ 添加字段</button>
         </div>
       </section>
@@ -119,21 +139,38 @@
       <!-- model binding / parser / extra rules -->
       <section class="card-panel block">
         <h3 class="block-title">模型与解析</h3>
+        <!-- Model and parser fields are comboboxes: pick a configured channel
+             from the list, or type any name by hand — private deployments run
+             channels this console has never heard of (self-hosted vLLM, a
+             customer's internal gateway), so a closed <select> would lock them
+             out. The lists come from the server's own config, never hardcoded. -->
+        <datalist id="dl-providers">
+          <option v-for="p in providerOptions" :key="p.name" :value="p.name">
+            {{ p.model }}{{ p.active ? "（平台默认）" : "" }}</option>
+        </datalist>
+        <datalist id="dl-parsers">
+          <option v-for="p in parserOptions" :key="p" :value="p" />
+        </datalist>
         <div class="basic-grid">
-          <label>抽取模型（空=平台默认）
-            <input v-model="pkg.model_binding.extractor" placeholder="如 qwen" /></label>
+          <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
+            <input v-model="pkg.model_binding.extractor" list="dl-providers"
+                   placeholder="下拉选择或直接输入，如 qwen" /></label>
           <label>备用模型（fallback）
-            <input :value="pkg.model_binding.fallback ?? ''" placeholder="可空"
+            <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
+                   placeholder="可空；下拉选择或直接输入"
                    @input="pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
           <label>挑战者模型（不一致标人审）
-            <input :value="pkg.model_binding.challenger ?? ''" placeholder="可空"
+            <input :value="pkg.model_binding.challenger ?? ''" list="dl-providers"
+                   placeholder="可空；下拉选择或直接输入"
                    @input="pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
           <label>解析器（空=自动路由）
-            <select :value="pkg.parser ?? ''"
-                    @change="pkg.parser = ($event.target as HTMLSelectElement).value || null">
-              <option value="">自动</option>
-              <option v-for="p in PARSERS" :key="p" :value="p">{{ p }}</option>
-            </select></label>
+            <input :value="pkg.parser ?? ''" list="dl-parsers"
+                   placeholder="自动；下拉选择或直接输入"
+                   @input="pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
+          <p class="span2 dim combo-note">
+            模型与解析器均支持下拉选择或手动输入；手动输入的名称需在服务端
+            <code>configs/providers.yaml</code> / <code>configs/parsers.yaml</code> 中存在才会生效。
+          </p>
           <label class="span2">附加规则（自由文本，进提示词）
             <textarea v-model="pkg.additional_rules" rows="2"
                       placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea></label>
@@ -146,7 +183,8 @@
       <section class="card-panel s-block">
         <h3 class="block-title">试运行（dry-run）</h3>
         <p class="dim">当前定义在一份样本上试跑，可多模型并排对比。</p>
-        <input v-model="dryProviders" placeholder="模型列表，逗号分隔；空=默认" />
+        <input v-model="dryProviders" list="dl-providers"
+               placeholder="模型列表，逗号分隔；空=默认" />
         <label class="file-btn"><input type="file" hidden @change="dryRun" :disabled="running" />
           <span class="btn-like">{{ running ? "⏳ 试跑中…" : "上传样本试跑" }}</span></label>
         <div v-if="dryRuns.length" class="runs">
@@ -219,13 +257,21 @@ import FieldEditModal from "../components/FieldEditModal.vue";
 import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { VERSION_LABELS } from "../labels";
+import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();
 const isNew = computed(() => props.code === "new");
 
-const PARSERS = ["pdfplumber", "markitdown", "glm-ocr-cloud", "rapidocr", "monkeyocr", "ofd"];
+// provider/parser catalogue from the server — the editor no longer keeps its
+// own copy (the hardcoded list had drifted from configs/parsers.yaml)
+const providerOptions = ref<{ name: string; model: string; active: boolean }[]>([]);
+const parserOptions = ref<string[]>([]);
+const activeProvider = computed(() => providerOptions.value.find((p) => p.active)?.name ?? "");
+api.skillOptions()
+  .then((o) => { providerOptions.value = o.providers; parserOptions.value = o.parsers; })
+  .catch(() => { /* pickers degrade to free text, which still works */ });
 
 const pkg = ref<SkillPackage | null>(null);
 const versions = ref<{ version: number; status: string; changelog: string;
@@ -265,10 +311,21 @@ async function load(version?: number) {
                   skill_code: d.skill_code, name: d.latest_package?.name || d.name };
     versions.value = d.versions;
     selectedVersion.value = d.selected_version ?? null;
+    // the note box always shows the note of the version on screen
+    changelog.value = d.versions.find((v) => v.version === d.selected_version)?.changelog ?? "";
   } catch (e) { toast.error(e); }
 }
 watch(() => props.code, () => load(), { immediate: true });
 function selectVersion(v: number) { load(v); }
+
+// —— field order (P07): order is part of the contract (extraction output and
+// CSV/JSON export follow it), so a reorder marks the draft dirty like any edit
+const treeEl = ref<HTMLElement>();
+const reorder = useListReorder();
+function startFieldDrag(i: number, ev: PointerEvent) {
+  reorder.start(i, ev, treeEl.value,
+                (f, t) => { if (pkg.value) moveItem(pkg.value.fields, f, t); });
+}
 
 // —— field modal editing: all card edits round-trip through the modal ——
 const editing = ref<{ list: FieldSpec[]; index: number; spec: FieldSpec;
@@ -287,20 +344,49 @@ function commitEdit(spec: FieldSpec) {
   editing.value = null;
 }
 
-async function saveDraft() {
-  if (!pkg.value) return;
-  if (!pkg.value.skill_code) { toast.error("请填写 skill_code"); return; }
-  if (!pkg.value.fields.length) { toast.error("至少定义一个字段"); return; }
+/** Save = update the draft on screen. Only 「新建版本」 and publishing move the
+ *  version pointer; a published version has no in-place save, so its button
+ *  says what it actually does (P04). */
+const saveLabel = computed(() =>
+  selectedStatus.value && selectedStatus.value !== "draft" ? "另存为新草稿" : "保存");
+const saving = ref(false);
+
+function validPkg(): boolean {
+  if (!pkg.value) return false;
+  if (!pkg.value.skill_code) { toast.error("请填写 skill_code"); return false; }
+  if (!pkg.value.fields.length) { toast.error("至少定义一个字段"); return false; }
+  return true;
+}
+
+async function save() {
+  if (!validPkg() || !pkg.value) return;
+  saving.value = true;
   try {
     if (isNew.value) {
       await api.skillCreate(pkg.value, changelog.value);
       toast.ok("技能已创建（v1 草稿）");
       router.push(`/skills/${pkg.value.skill_code}`);
+    } else if (selectedStatus.value === "draft" && selectedVersion.value) {
+      await api.skillSaveDraft(props.code, selectedVersion.value, pkg.value, changelog.value);
+      toast.ok(`v${selectedVersion.value} 草稿已保存（未新增版本）`);
+      await load(selectedVersion.value);
     } else {
+      // published/archived versions are immutable: branch instead of failing
       const r = await api.skillNewDraft(props.code, pkg.value, changelog.value);
-      toast.ok(`已存为 v${r.version} 草稿`);
+      toast.ok(`已以 v${selectedVersion.value} 为底新建 v${r.version} 草稿`);
       await load(r.version);
     }
+  } catch (e) { toast.error(e); }
+  finally { saving.value = false; }
+}
+
+/** Explicit branch: the only button besides publish that adds a version. */
+async function newVersion() {
+  if (!validPkg() || !pkg.value) return;
+  try {
+    const r = await api.skillNewDraft(props.code, pkg.value, changelog.value);
+    toast.ok(`已新建 v${r.version} 草稿`);
+    await load(r.version);
   } catch (e) { toast.error(e); }
 }
 async function publishSelected() {
@@ -454,6 +540,8 @@ async function goldenCheck() {
 .ver-card.current { border-color: var(--accent); background: var(--bg-raised); }
 .ver-row { display: flex; justify-content: space-between; align-items: center; }
 .ver-date { font-size: 11px; }
+.ver-note-line { margin: 4px 0 0; font-size: 11px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* main */
 .main-col { padding: 16px 20px 32px; display: flex; flex-direction: column;
@@ -493,6 +581,9 @@ async function goldenCheck() {
 .text-panel-act { display: flex; gap: 12px; align-items: center;
   justify-content: space-between; font-size: 12px; }
 .pad { padding: 4px 0; margin: 0; }
+.drag-tip { margin: 0 0 8px; font-size: 12px; }
+.combo-note { margin: -2px 0 0; font-size: 11.5px; line-height: 1.6; }
+.combo-note code { font-family: Consolas, monospace; }
 .field-tree { display: flex; flex-direction: column; gap: 10px; }
 .add-field { border-style: dashed; padding: 8px; }
 
