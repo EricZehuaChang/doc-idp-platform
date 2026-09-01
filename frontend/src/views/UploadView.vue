@@ -124,12 +124,20 @@
             </thead>
             <tbody>
               <tr v-for="r in rows" :key="r.file_id">
-                <td class="fname" :class="{ child: r.child }" :title="r.file_name">
-                  {{ r.file_name }}</td>
+                <td class="fname" :title="r.file_name">
+                  {{ r.file_name }}
+                  <span v-if="r.child_count" class="split-badge">拆分 {{ r.child_count }} 份</span>
+                </td>
                 <td>{{ r.page_count || "—" }}</td>
                 <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
                 <td>
                   <span v-if="r.msg" class="err-msg" :title="r.msg">⚠ {{ r.msg }}</span>
+                  <details v-else-if="r.children.length" class="child-info">
+                    <summary>后台按 {{ r.children.length }} 份单据处理</summary>
+                    <div v-for="(c, i) in r.children" :key="c.file_id" class="child-line">
+                      单据 {{ i + 1 }} · {{ c.page_count }} 页 · {{ stLabel(c.status) }}
+                    </div>
+                  </details>
                   <span v-else class="dim">—</span>
                 </td>
                 <td class="row-act">
@@ -181,7 +189,8 @@ interface Pending {
 }
 interface ResultRow {
   file_id: string; file_name: string; status: string;
-  page_count: number; msg: string; child: boolean;
+  page_count: number; msg: string; child_count: number;
+  children: { file_id: string; file_name: string; status: string; page_count: number }[];
 }
 
 // statuses that will never change again -> polling can stop
@@ -370,8 +379,8 @@ async function pollOnce() {
       next.push({
         file_id: f.file_id, file_name: f.file_name, status: f.status,
         page_count: f.page_count, msg: f.msg,
-        // split children are named "<stem>#docN<suffix>" by the runner
-        child: /#doc\d+\./.test(f.file_name),
+        child_count: f.child_count ?? 0,
+        children: f.children ?? [],
       });
     }
   }
@@ -428,8 +437,12 @@ h3 { margin: 0 0 10px; font-size: 13px; color: var(--text-dim); font-weight: 600
 
 .table-scroll { overflow-x: auto; }
 .fname { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fname.child { padding-left: 26px; color: var(--text-dim); }
-.fname.child::before { content: "└ "; }
+.split-badge { display: inline-block; margin-left: 6px; padding: 1px 7px;
+  border-radius: 999px; background: var(--bg-raised); color: var(--accent);
+  font-size: 11px; white-space: nowrap; }
+.child-info { font-size: 12px; color: var(--text-dim); }
+.child-info summary { cursor: pointer; color: var(--blue); }
+.child-line { padding: 2px 0 0 12px; white-space: nowrap; }
 .ftype { font-size: 11px; color: var(--red); font-weight: 700; }
 .bad { color: var(--red); }
 .rowbad td { background: rgba(229, 83, 75, .07); }

@@ -26,7 +26,7 @@
         </button>
       </div>
       <div class="doc-body">
-        <DocStage :src="api.downloadUrl(fileId)" :file-name="detail.file_name"
+        <DocStage :src="api.downloadUrl(detail.file_id)" :file-name="detail.file_name"
                   :pages="detail.pages" :active-box="activeBox" :active-page="activePage"
                   :annotate="annotate" :regions="sealRegions"
                   :boxes="stageBoxes" :active-key="activeKey"
@@ -36,6 +36,21 @@
 
     <!-- right: extracted fields panel -->
     <section class="field-pane">
+      <div v-if="detail.children.length" class="parts">
+        <div class="parts-head">
+          <strong>识别为 {{ detail.child_count }} 份单据</strong>
+          <span class="dim">同一原文件 · {{ detail.page_count }} 页</span>
+        </div>
+        <div class="part-list">
+          <button v-for="(part, i) in detail.children" :key="part.file_id"
+                  :class="['part', { active: activeFileId === part.file_id }]"
+                  @click="switchPart(part.file_id)">
+            <span>单据 {{ i + 1 }}</span>
+            <small>第 {{ partRange(part) }} 页</small>
+            <span class="chip" :class="`chip-${part.status}`">{{ stLabel(part.status) }}</span>
+          </button>
+        </div>
+      </div>
       <div class="tabs">
         <button :class="{ primary: tab === 'all' }" @click="tab = 'all'">全部字段</button>
         <button :class="{ primary: tab === 'review' }" @click="tab = 'review'">
@@ -138,7 +153,9 @@
       </div>
 
       <div class="actions">
-        <button v-if="!locked" class="primary big" @click="acquire">开始校验（锁定） L</button>
+        <button v-if="!locked && reviewable" class="primary big" @click="acquire">
+          开始校验（锁定） L</button>
+        <span v-else-if="!locked" class="dim decided-note">当前单据已处理，可只读查看</span>
         <template v-else>
           <button class="ghost" @click="saveEdits" :disabled="!dirty">
             保存修正 S<span v-if="dirty" class="dot">●</span></button>
@@ -176,7 +193,7 @@ import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
-         type StageBox } from "../api";
+         type ReviewItem, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
@@ -195,14 +212,35 @@ const { data: detail, isLoading, refetch } = useQuery({
 // queue order drives Previous/Next (UX debt: 无 Previous/Next)
 const { data: queueData } = useQuery({ queryKey: ["queue"], queryFn: api.queue });
 const queueIds = computed(() => (queueData.value ?? []).map((q) => q.file_id));
-const queuePos = computed(() => queueIds.value.indexOf(props.fileId));
+const queuePos = computed(() => queueIds.value.indexOf(detail.value?.file_id ?? props.fileId));
 
 const STATUS_LABELS: Record<string, string> = {
   pending_verification: "待校验", completed: "已完成", passed: "已通过",
-  rejected: "已拒绝", error: "处理失败", processing: "处理中",
+  rejected: "已拒绝", error: "处理失败", processing: "处理中", split: "已拆分",
 };
+const stLabel = (status: string) => STATUS_LABELS[status] ?? status;
 const statusLabel = computed(() =>
-  STATUS_LABELS[detail.value?.status ?? ""] ?? detail.value?.status ?? "");
+  stLabel(detail.value?.status ?? ""));
+
+// A split file stays one review route.  Its child records are internal work
+// units and this selector decides which unit's fields/actions are currently
+// shown while DocStage keeps rendering the original root file.
+const activeFileId = ref("");
+const activeItem = computed<ReviewItem | null>(() => {
+  if (!detail.value) return null;
+  if (!detail.value.children.length) return detail.value;
+  return detail.value.children.find((c) => c.file_id === activeFileId.value)
+    ?? detail.value.children[0];
+});
+const reviewable = computed(() => activeItem.value?.status === "pending_verification");
+const pageOffset = computed(() => activeItem.value?.page_offset ?? 0);
+const toRootPage = (page: number) => page + pageOffset.value;
+const toLocalPage = (page: number) => Math.max(1, page - pageOffset.value);
+function partRange(part: ReviewItem): string {
+  const start = (part.page_offset ?? 0) + 1;
+  const end = start + Math.max(part.page_count, 1) - 1;
+  return start === end ? String(start) : `${start}–${end}`;
+}
 
 // tab preference survives reloads (caching design §9.0 layer ⑤)
 const tab = ref<"all" | "review" | "seal">(
@@ -238,7 +276,7 @@ async function toggleDetect() {
   // capture identity at call start: detection takes seconds and the reviewer
   // can ←/→ away mid-flight — a settling stale response must never overlay
   // another document's boxes (the fileId watch reset alone can't stop that)
-  const fid = props.fileId;
+  const fid = detail.value.file_id;
   const fname = detail.value.file_name;
   detecting.value = true;
   try {
@@ -246,7 +284,7 @@ async function toggleDetect() {
     // the pure-compute /detect on it (no Transaction, no charge)
     const blob = await fetchBlob(api.downloadUrl(fid));
     const res = await api.detect(blob, fname);
-    if (props.fileId !== fid) return;      // switched away: discard stale result
+    if (detail.value?.file_id !== fid) return; // switched away: discard stale result
     detectMeta.value = res;
     sealRegions.value = res.regions.map((r) => {
       const p = res.pages.find((x) => x.page === r.page);
@@ -260,7 +298,7 @@ async function toggleDetect() {
       ? `检测到 ${seals} 处印章、${sigs} 处签名（${res.detector}）${cut}`
       : `未检测到印章/签名${cut}`);
   } catch (e) {
-    if (props.fileId === fid) toast.error(e);
+    if (detail.value?.file_id === fid) toast.error(e);
   } finally {
     detecting.value = false;
   }
@@ -273,14 +311,14 @@ function setInput(i: number, el: HTMLInputElement | null) {
 
 interface ScalarField { name: string; cell: FieldCell }
 const scalarFields = computed<ScalarField[]>(() => {
-  if (!detail.value?.result) return [];
-  return Object.entries(detail.value.result)
+  if (!activeItem.value?.result) return [];
+  return Object.entries(activeItem.value.result)
     .filter(([, v]) => !Array.isArray(v))
     .map(([name, cell]) => ({ name, cell: cell as FieldCell }));
 });
 const tableNames = computed(() => {
-  if (!detail.value?.result) return [];
-  return Object.entries(detail.value.result)
+  if (!activeItem.value?.result) return [];
+  return Object.entries(activeItem.value.result)
     .filter(([, v]) => Array.isArray(v)).map(([name]) => name);
 });
 function tableCols(t: string): string[] {
@@ -325,15 +363,15 @@ const dirty = computed(() =>
   || tableNames.value.some((t) => tableDirty(t)));
 const lockMsg = computed(() => {
   if (locked.value) return "已锁定（15 分钟）";
-  const by = detail.value?.locked_by;
+  const by = activeItem.value?.locked_by;
   return by && by !== api.currentUser ? `被 ${by} 锁定` : "未锁定";
 });
 
 function fieldPage(cell: FieldCell): number {
   const p = cell.$pages;
-  if (typeof p === "number") return p;
+  if (typeof p === "number") return toRootPage(p);
   const n = parseInt(String(p), 10);
-  return Number.isFinite(n) && n > 0 ? n : 1;
+  return toRootPage(Number.isFinite(n) && n > 0 ? n : 1);
 }
 
 // —— every locatable thing, drawn on the document and clickable (P02) ——
@@ -351,7 +389,7 @@ const stageBoxes = computed<StageBox[]>(() => {
       for (const col of Object.keys(row).filter((c) => !c.startsWith("$"))) {
         const hit = cellHit(t, ri, col);
         if (hit?.bbox && hit.page)
-          out.push({ key: `t:${t}:${ri}:${col}`, page: hit.page, bbox: hit.bbox,
+          out.push({ key: `t:${t}:${ri}:${col}`, page: toRootPage(hit.page), bbox: hit.bbox,
                      label: `${col}: ${row[col]}` });
       }
     });
@@ -374,7 +412,7 @@ function pickCell(t: string, ri: number, col: string) {
   activeKey.value = `t:${t}:${ri}:${col}`;
   const hit = cellHit(t, ri, col);
   activeBox.value = hit?.bbox ?? null;
-  if (hit?.page) activePage.value = hit.page;
+  if (hit?.page) activePage.value = toRootPage(hit.page);
 }
 /** Canvas -> field: the other half of the selection loop the UI never had. */
 function pickBox(key: string) {
@@ -437,7 +475,7 @@ function setCellHit(t: string, ri: number, col: string, page: number, bbox: numb
     { $cells?: Record<string, { $confidence?: number; $hits?: unknown[] }> } | undefined;
   if (!row) return false;
   const dim = detail.value?.pages.find((p) => p.page_no === page);
-  const hit: Record<string, number | number[]> = { page, bbox };
+  const hit: Record<string, number | number[]> = { page: toLocalPage(page), bbox };
   if (dim?.width && dim?.height) {
     hit.x = +(bbox[0] / dim.width * 100).toFixed(2);
     hit.y = +(bbox[1] / dim.height * 100).toFixed(2);
@@ -453,7 +491,7 @@ function setCellHit(t: string, ri: number, col: string, page: number, bbox: numb
 }
 
 // unsaved-draft persistence (caching design §9.0 layer ④)
-const draftKey = () => `idp_draft_${props.fileId}`;
+const draftKey = () => `idp_draft_${activeItem.value?.file_id ?? props.fileId}`;
 function saveDraft() {
   if (dirty.value) sessionStorage.setItem(draftKey(), JSON.stringify(edits.value));
 }
@@ -475,7 +513,7 @@ function syncFromDetail() {
   original.value = { ...vals };
   const tEdits: Record<string, Record<string, string>[]> = {};
   const tOrig: Record<string, string> = {};
-  for (const [name, v] of Object.entries(detail.value?.result ?? {})) {
+  for (const [name, v] of Object.entries(activeItem.value?.result ?? {})) {
     if (Array.isArray(v)) {
       tEdits[name] = JSON.parse(JSON.stringify(v));
       tOrig[name] = JSON.stringify(v);
@@ -485,11 +523,26 @@ function syncFromDetail() {
   tableOriginal.value = tOrig;
   restoreDraft();
 }
-watch(detail, (v) => { if (v) syncFromDetail(); }, { immediate: true });
+function resetPartState() {
+  locked.value = false;
+  activeKey.value = "";
+  activeBox.value = null;
+  activePage.value = 1;
+  annotate.value = false;
+  pendingBoxes.value = {};
+  inputEls.clear();
+}
+watch(detail, (v) => {
+  if (!v) return;
+  const valid = !v.children.length || v.children.some((c) => c.file_id === activeFileId.value);
+  if (!valid || !activeFileId.value) activeFileId.value = v.active_file_id;
+}, { immediate: true });
+watch(activeItem, (v) => { if (v) syncFromDetail(); }, { immediate: true });
 watch(edits, saveDraft, { deep: true });
 
 async function acquire() {
-  try { await api.lock(props.fileId); locked.value = true; }
+  if (!activeItem.value || !reviewable.value) return;
+  try { await api.lock(activeItem.value.file_id); locked.value = true; }
   catch (e) { toast.error(e); }
 }
 async function saveEdits(): Promise<boolean> {
@@ -499,12 +552,15 @@ async function saveEdits(): Promise<boolean> {
       .filter((k) => edits.value[k] !== original.value[k] || pendingBoxes.value[k])
       .map((k) => ({ field: k, value: edits.value[k],
                      bbox: pendingBoxes.value[k]?.bbox,
-                     page: pendingBoxes.value[k]?.page }));
+                     page: pendingBoxes.value[k]
+                       ? toLocalPage(pendingBoxes.value[k].page) : undefined }));
   for (const t of tableNames.value)
     if (tableDirty(t)) changed.push({ field: t, value: "", rows: tableEdits.value[t] });
   if (!changed.length) return true;
+  const fileId = activeItem.value?.file_id;
+  if (!fileId) return false;
   try {
-    await api.patchFields(props.fileId, changed);
+    await api.patchFields(fileId, changed);
     sessionStorage.removeItem(draftKey());
     pendingBoxes.value = {};
     toast.ok(`已保存 ${changed.length} 处修正`);
@@ -518,10 +574,21 @@ async function saveEdits(): Promise<boolean> {
 const backTarget = computed(() => String(route.query.back || "/tasks"));
 let leavingCleanly = false;         // suppresses the unsaved-changes guard
 
-async function releaseLock() {
+async function releaseLock(fileId = activeItem.value?.file_id) {
   if (!locked.value) return;
-  try { await api.unlock(props.fileId); } catch { /* TTL will reclaim it anyway */ }
+  if (fileId) {
+    try { await api.unlock(fileId); } catch { /* TTL will reclaim it anyway */ }
+  }
   locked.value = false;
+}
+
+async function switchPart(fileId: string) {
+  if (fileId === activeItem.value?.file_id) return;
+  const oldFileId = activeItem.value?.file_id;
+  if (dirty.value && !(await saveEdits())) return;
+  await releaseLock(oldFileId);
+  resetPartState();
+  activeFileId.value = fileId;
 }
 
 /** Leave without judging the file. `discard` drops local edits; otherwise they
@@ -547,14 +614,27 @@ function goBack() {
 
 async function decide(kind: "confirm" | "reject") {
   try {
-    if (dirty.value) await saveEdits();
-    await (kind === "confirm" ? api.confirm(props.fileId) : api.reject(props.fileId));
+    if (dirty.value && !(await saveEdits())) return;
+    const fileId = activeItem.value?.file_id;
+    if (!fileId) return;
+    await (kind === "confirm" ? api.confirm(fileId) : api.reject(fileId));
     toast.ok(kind === "confirm" ? "已通过" : "已拒绝");
     locked.value = false;
     qc.invalidateQueries({ queryKey: ["queue"] });
-    // continuous review: jump straight to the next pending file
+    // Keep reviewing the same original file until all of its internal units
+    // are decided; only then advance to the next root-file task.
+    const refreshed = await refetch();
+    const nextPart = refreshed.data?.children.find(
+      (c) => c.status === "pending_verification" && c.file_id !== fileId);
+    if (nextPart) {
+      resetPartState();
+      activeFileId.value = nextPart.file_id;
+      toast.ok(`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`);
+      return;
+    }
     const next = (await api.queue()).find(
-      (q) => q.file_id !== props.fileId && (!q.locked_by || q.locked_by === api.currentUser));
+      (q) => q.file_id !== detail.value?.file_id
+        && (!q.locked_by || q.locked_by === api.currentUser));
     leavingCleanly = true;
     router.push(next ? `/review/${next.file_id}` : backTarget.value);
   } catch (e) { toast.error(e); }
@@ -614,16 +694,11 @@ function onKey(ev: KeyboardEvent) {
 
 // same component instance is reused across /review/:fileId — reset on switch
 watch(() => props.fileId, () => {
-  locked.value = false;
-  activeKey.value = "";
-  activeBox.value = null;
-  activePage.value = 1;
-  annotate.value = false;
+  resetPartState();
+  activeFileId.value = "";
   sealRegions.value = null;      // detection overlay belongs to one file
   detectMeta.value = null;
   if (tab.value === "seal") tab.value = "all";
-  pendingBoxes.value = {};
-  inputEls.clear();
 });
 onMounted(() => {
   window.addEventListener("keydown", onKey);
@@ -660,6 +735,16 @@ onUnmounted(() => {
   overscroll-behavior: contain; }
 .field-pane { display: flex; flex-direction: column; background: var(--bg-panel);
   min-width: 0; min-height: 0; }
+.parts { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.parts-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+  margin-bottom: 8px; font-size: 13px; }
+.parts-head .dim { font-size: 11px; }
+.part-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.part { display: grid; grid-template-columns: auto auto; gap: 1px 7px; align-items: center;
+  min-width: 108px; padding: 6px 8px; text-align: left; border-color: var(--border); }
+.part small { color: var(--text-dim); }
+.part .chip { grid-column: 2; grid-row: 1 / span 2; font-size: 10px; }
+.part.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .tabs { display: flex; gap: 8px; align-items: center; padding: 12px;
   border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .lock-state { margin-left: auto; font-size: 12px; }

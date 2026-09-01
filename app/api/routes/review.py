@@ -7,12 +7,15 @@ Every field edit writes a Correction row — the accuracy-proxy data feeding the
 skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
 (headers can't impersonate past the credential); X-User header in dev mode.
 """
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.api.task_groups import summary as task_summary
 from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
@@ -48,54 +51,126 @@ async def _get_file(s, file_id: str) -> FileRecord:
     return f
 
 
+def _pages(f: FileRecord) -> list[dict]:
+    if not f.udr_path or not Path(f.udr_path).exists():
+        return []
+    udr = json.loads(Path(f.udr_path).read_text(encoding="utf-8"))
+    return [{"page_no": p["page_no"], "width": p.get("width", 0),
+             "height": p.get("height", 0)} for p in udr.get("pages", [])]
+
+
+def _detail_payload(f: FileRecord) -> dict:
+    return {
+        "file_id": f.id, "file_name": f.file_name, "status": f.status,
+        "transaction_id": f.transaction_id, "page_count": f.page_count,
+        "parent_file_id": f.parent_file_id, "result": f.result or {},
+        "assignee": f.assignee,
+        "locked_by": None if _lock_expired(f) else f.locked_by,
+        "verified_by": f.verified_by, "pages": _pages(f),
+    }
+
+
 @router.get("/queue")
 async def queue(skill_code: str | None = None, assignee: str | None = None,
                 limit: int = 50):
-    """Pending-verification worklist, oldest first (review by age)."""
+    """Pending root-file worklist, oldest first (review by age)."""
     sf = session_factory()
     async with sf() as s:
         q = (select(FileRecord, Transaction.skill_code)
              .join(Transaction, FileRecord.transaction_id == Transaction.id)
              .where(FileRecord.tenant_id == current_tenant(),
                     FileRecord.status == "pending_verification")
-             .order_by(FileRecord.created_at)
-             .limit(min(limit, 200)))
+             .order_by(FileRecord.created_at))
         if skill_code:
             q = q.where(Transaction.skill_code == skill_code)
         if assignee:
             q = q.where(FileRecord.assignee == assignee)
         rows = (await s.execute(q)).all()
-        return [{
-            "file_id": f.id, "file_name": f.file_name, "skill_code": sc,
-            "transaction_id": f.transaction_id, "page_count": f.page_count,
-            "assignee": f.assignee,
-            "locked_by": None if _lock_expired(f) else f.locked_by,
-            "created_at": f.created_at.isoformat(),
-        } for f, sc in rows]
+        pending_by_root: dict[str, list[FileRecord]] = {}
+        skill_by_root: dict[str, str] = {}
+        order: list[str] = []
+        for f, sc in rows:
+            root_id = f.parent_file_id or f.id
+            if root_id not in pending_by_root:
+                order.append(root_id)
+            pending_by_root.setdefault(root_id, []).append(f)
+            skill_by_root[root_id] = sc
+        if not order:
+            return []
+        roots = (await s.execute(
+            select(FileRecord)
+            .where(FileRecord.tenant_id == current_tenant(),
+                   FileRecord.id.in_(order)))).scalars().all()
+        roots_by_id = {f.id: f for f in roots}
+        all_children = (await s.execute(
+            select(FileRecord)
+            .where(FileRecord.tenant_id == current_tenant(),
+                   FileRecord.parent_file_id.in_(order)))).scalars().all()
+        child_count: dict[str, int] = {}
+        for child in all_children:
+            child_count[child.parent_file_id] = child_count.get(child.parent_file_id, 0) + 1
+
+        out = []
+        for root_id in order[:min(limit, 200)]:
+            root = roots_by_id.get(root_id)
+            if root is None:
+                continue
+            pending = pending_by_root[root_id]
+            active_lock = next((f.locked_by for f in pending
+                                if f.locked_by and not _lock_expired(f)), None)
+            out.append({
+                "file_id": root.id, "file_name": root.file_name,
+                "skill_code": skill_by_root[root_id],
+                "transaction_id": root.transaction_id, "page_count": root.page_count,
+                "assignee": pending[0].assignee, "locked_by": active_lock,
+                "created_at": root.created_at.isoformat(),
+                "child_count": child_count.get(root.id, 0),
+                "pending_children": len(pending) if child_count.get(root.id, 0) else 0,
+            })
+        return out
 
 
 @router.get("/{file_id}")
 async def detail(file_id: str):
     """Everything the dual-screen UI needs: result fields + page dimensions
     (bbox overlay coordinate base — bboxes live in page pixel space)."""
-    import json
-    from pathlib import Path
-
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
-        pages = []
-        if f.udr_path and Path(f.udr_path).exists():
-            udr = json.loads(Path(f.udr_path).read_text(encoding="utf-8"))
-            pages = [{"page_no": p["page_no"], "width": p.get("width", 0),
-                      "height": p.get("height", 0)} for p in udr.get("pages", [])]
-        return {
-            "file_id": f.id, "file_name": f.file_name, "status": f.status,
-            "transaction_id": f.transaction_id, "page_count": f.page_count,
-            "result": f.result, "assignee": f.assignee,
-            "locked_by": None if _lock_expired(f) else f.locked_by,
-            "verified_by": f.verified_by, "pages": pages,
-        }
+        requested = await _get_file(s, file_id)
+        root = requested if requested.parent_file_id is None \
+            else await _get_file(s, requested.parent_file_id)
+        children = (await s.execute(
+            select(FileRecord)
+            .where(FileRecord.tenant_id == current_tenant(),
+                   FileRecord.parent_file_id == root.id)
+            .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
+        payload = _detail_payload(root)
+        payload["children"] = []
+        payload["child_count"] = len(children)
+        payload["pending_children"] = 0
+        payload["status_counts"] = {}
+        payload["active_file_id"] = root.id
+        if not children:
+            return payload
+
+        offset = 0
+        child_payloads = []
+        for child in children:
+            item = _detail_payload(child)
+            item["page_offset"] = offset
+            child_payloads.append(item)
+            offset += child.page_count
+        meta = task_summary(root, children)
+        payload.update({
+            "status": meta["status"], "result": {},
+            "verified_by": meta["verified_by"], "locked_by": None,
+            "children": child_payloads, "child_count": meta["child_count"],
+            "pending_children": meta["pending_children"],
+            "status_counts": meta["status_counts"],
+            "active_file_id": next((c.id for c in children
+                                    if c.status == "pending_verification"), children[0].id),
+        })
+        return payload
 
 
 class AssignBody(BaseModel):

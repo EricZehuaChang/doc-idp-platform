@@ -90,6 +90,7 @@ export interface QueueItem {
   file_id: string; file_name: string; skill_code: string;
   transaction_id: string; page_count: number;
   assignee: string | null; locked_by: string | null; created_at: string;
+  child_count: number; pending_children: number;
 }
 
 export interface FieldCell {
@@ -99,11 +100,16 @@ export interface FieldCell {
   $rule_failures?: string[];
 }
 
-export interface ReviewDetail {
+export interface ReviewItem {
   file_id: string; file_name: string; status: string;
   result: Record<string, FieldCell | Record<string, string>[]>;
   pages: { page_no: number; width: number; height: number }[];
   locked_by: string | null; verified_by: string | null;
+  parent_file_id: string | null; page_count: number; page_offset?: number;
+}
+export interface ReviewDetail extends ReviewItem {
+  children: ReviewItem[]; child_count: number; pending_children: number;
+  status_counts: Record<string, number>; active_file_id: string;
 }
 
 export interface SkillStat {
@@ -130,8 +136,13 @@ export interface SubmitResult {
 }
 export interface TxnStatus {
   transaction_id: string; status: string; skill_code: string; skill_version: number;
-  files: { file_id: string; file_name: string; status: string;
-           page_count: number; msg: string }[];
+  files: TxnFile[];
+}
+export interface TxnFile {
+  file_id: string; file_name: string; status: string;
+  page_count: number; msg: string; parent_file_id: string | null;
+  child_count?: number; pending_children?: number;
+  status_counts?: Record<string, number>; children?: TxnFile[];
 }
 
 // —— Skill Studio types (mirror app/skillengine/schema.py) ——
@@ -170,6 +181,7 @@ export interface FileRow {
   type: string; size: number | null; page_count: number; status: string;
   created_at: string; updated_at: string | null; verified_by: string | null;
   error: string | null;
+  child_count: number; pending_children: number; status_counts: Record<string, number>;
 }
 export interface FilesPage {
   total: number; page: number; page_size: number; total_pages: number; data: FileRow[];

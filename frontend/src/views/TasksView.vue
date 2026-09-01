@@ -43,7 +43,13 @@
             <tr v-for="r in rows" :key="r.file_id" @mouseenter="prefetch(r)">
               <td class="dim nowrap">{{ ts(r.created_at) }}</td>
               <td>{{ r.skill_code }}</td>
-              <td class="fname" :title="r.file_name">{{ r.file_name }}</td>
+              <td class="fname" :title="r.file_name">
+                {{ r.file_name }}
+                <span v-if="r.child_count" class="split-note">
+                  内含 {{ r.child_count }} 份单据<span v-if="r.pending_children">
+                    · {{ r.pending_children }} 份待校验</span>
+                </span>
+              </td>
               <td><span class="ftype">{{ r.type }}</span></td>
               <td class="dim">{{ size(r.size) }}</td>
               <td>{{ r.page_count }}</td>
@@ -379,6 +385,7 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 .fbtn.on::after { content: "•"; font-size: 13px; line-height: 0; }
 .fbtn.open { color: var(--accent); background: var(--bg-raised); }
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
 .nowrap { white-space: nowrap; }
 .ftype { font-size: 11px; color: var(--red); font-weight: 700; }
 .err { color: var(--red); font-size: 12px; cursor: help; }

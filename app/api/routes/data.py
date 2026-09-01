@@ -12,10 +12,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 
+from app.api.task_groups import summary as task_summary
 from app.db import session_factory
-from app.models import CreditAccount, CreditLedger, FileRecord, Correction, Transaction
+from app.models import Correction, CreditAccount, CreditLedger, FileRecord, Transaction
 from app.tenancy import current_tenant
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
@@ -43,6 +44,10 @@ def _like(term: str) -> str:
     return f"%{esc}%"
 
 
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 @router.get("/files")
 async def list_files(status: str | None = None, q: str | None = None,
                      skill_code: str | None = None,
@@ -57,9 +62,9 @@ async def list_files(status: str | None = None, q: str | None = None,
 
     Narrowing (P09, 2026-08-26) is server-side on purpose: the console pages at
     20 rows, so filtering in the browser would only ever search the page in hand
-    and report a total that disagrees with what is on screen. Every column of
-    the task table has a matching parameter here, so the UI can put its filter
-    directly on the column it narrows.
+    and report a total that disagrees with what is on screen. Static root-file
+    fields narrow in SQL; grouped child status/verification narrows after the
+    server has calculated the root task, before total and pagination.
 
     `q` is the cross-column keyword (name or skill); `file_name` / `skill_code`
     are the per-column ones. `file_type` is the extension without the dot.
@@ -79,14 +84,9 @@ async def list_files(status: str | None = None, q: str | None = None,
     async with sf() as s:
         base = (select(FileRecord, Transaction.skill_code)
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
-                .where(FileRecord.tenant_id == tenant))
-        # count must carry the same joins/filters or the pager lies
-        count_q = (select(func.count()).select_from(FileRecord)
-                   .join(Transaction, FileRecord.transaction_id == Transaction.id)
-                   .where(FileRecord.tenant_id == tenant))
+                .where(FileRecord.tenant_id == tenant,
+                       FileRecord.parent_file_id.is_(None)))
         conds = []
-        if status:
-            conds.append(FileRecord.status == status)
         if skill_code:
             conds.append(Transaction.skill_code == skill_code)
         if file_name and file_name.strip():
@@ -100,13 +100,6 @@ async def list_files(status: str | None = None, q: str | None = None,
             conds.append(FileRecord.page_count >= pages_min)
         if pages_max is not None:
             conds.append(FileRecord.page_count <= pages_max)
-        if verify == "verified":
-            conds.append(FileRecord.verified_by.is_not(None))
-        elif verify == "error":
-            conds.append(and_(FileRecord.error.is_not(None), FileRecord.error != ""))
-        elif verify == "none":
-            conds.append(and_(FileRecord.verified_by.is_(None),
-                              or_(FileRecord.error.is_(None), FileRecord.error == "")))
         if q and q.strip():
             conds.append(or_(FileRecord.file_name.ilike(_like(q), escape="\\"),
                              Transaction.skill_code.ilike(_like(q), escape="\\")))
@@ -114,33 +107,58 @@ async def list_files(status: str | None = None, q: str | None = None,
             conds.append(FileRecord.created_at >= lo)
         if hi is not None:
             conds.append(FileRecord.created_at <= hi)
-        if ulo is not None:
-            conds.append(FileRecord.updated_at >= ulo)
-        if uhi is not None:
-            conds.append(FileRecord.updated_at <= uhi)
         for c in conds:
             base = base.where(c)
-            count_q = count_q.where(c)
-        total = (await s.execute(count_q)).scalar_one()
-        rows = (await s.execute(
-            base.order_by(FileRecord.created_at.desc())
-            .offset((page - 1) * page_size).limit(page_size))).all()
-        data = []
+        rows = (await s.execute(base.order_by(FileRecord.created_at.desc()))).all()
+        root_ids = [f.id for f, _ in rows]
+        children_by_parent: dict[str, list[FileRecord]] = {}
+        if root_ids:
+            children = (await s.execute(
+                select(FileRecord)
+                .where(FileRecord.tenant_id == tenant,
+                       FileRecord.parent_file_id.in_(root_ids))
+                .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
+            for child in children:
+                children_by_parent.setdefault(child.parent_file_id, []).append(child)
+
+        all_data = []
         for f, sc in rows:
+            children = children_by_parent.get(f.id, [])
+            meta = task_summary(f, children)
+            if status and meta["status"] != status:
+                continue
+            updated_at = _utc(meta["updated_at"])
+            if ulo is not None and updated_at < ulo:
+                continue
+            if uhi is not None and updated_at > uhi:
+                continue
+            any_verified = bool(f.verified_by or any(c.verified_by for c in children))
+            if verify == "verified" and not meta["verified_by"]:
+                continue
+            if verify == "error" and not meta["error"]:
+                continue
+            if verify == "none" and (any_verified or meta["error"]):
+                continue
             size = None
             try:
                 size = Path(f.storage_path).stat().st_size
             except OSError:
                 pass
-            data.append({
+            all_data.append({
                 "file_id": f.id, "transaction_id": f.transaction_id,
                 "file_name": f.file_name, "skill_code": sc,
                 "type": Path(f.file_name).suffix.lstrip(".").upper(),
-                "size": size, "page_count": f.page_count, "status": f.status,
+                "size": size, "page_count": f.page_count, "status": meta["status"],
                 "created_at": f.created_at.isoformat(),
-                "updated_at": f.updated_at.isoformat() if f.updated_at else None,
-                "verified_by": f.verified_by, "error": f.error,
+                "updated_at": meta["updated_at"].isoformat(),
+                "verified_by": meta["verified_by"], "error": meta["error"],
+                "child_count": meta["child_count"],
+                "pending_children": meta["pending_children"],
+                "status_counts": meta["status_counts"],
             })
+        total = len(all_data)
+        start = (page - 1) * page_size
+        data = all_data[start:start + page_size]
     return {"total": total, "page": page, "page_size": page_size,
             "total_pages": (total + page_size - 1) // page_size, "data": data}
 
@@ -159,23 +177,28 @@ async def home_stats():
             .where(CreditLedger.tenant_id == tenant,
                    CreditLedger.kind == "shadow_meter"))).scalar_one()
 
-        def _count(*conds):
-            return select(func.count()).select_from(FileRecord).where(
-                FileRecord.tenant_id == tenant, *conds)
+        records = (await s.execute(
+            select(FileRecord).where(FileRecord.tenant_id == tenant))).scalars().all()
+        roots = [f for f in records if f.parent_file_id is None]
+        children_by_parent: dict[str, list[FileRecord]] = {}
+        for child in records:
+            if child.parent_file_id:
+                children_by_parent.setdefault(child.parent_file_id, []).append(child)
+        grouped = [(root, task_summary(root, children_by_parent.get(root.id, [])))
+                   for root in roots]
 
-        today = (await s.execute(_count(FileRecord.created_at >= today_start))).scalar_one()
-        passed_docs = (await s.execute(_count(FileRecord.status.in_(_DONE)))).scalar_one()
+        today = sum(1 for root, _ in grouped if _utc(root.created_at) >= today_start)
+        passed_docs = sum(1 for _, meta in grouped if meta["status"] in _DONE)
         passed_pages = (await s.execute(
             select(func.coalesce(func.sum(FileRecord.page_count), 0))
             .where(FileRecord.tenant_id == tenant,
                    FileRecord.status.in_(_DONE)))).scalar_one()
-        pending = (await s.execute(
-            _count(FileRecord.status == "pending_verification"))).scalar_one()
-        queued = (await s.execute(_count(FileRecord.status == "queued"))).scalar_one()
-        processing = (await s.execute(_count(FileRecord.status == "processing"))).scalar_one()
-        today_done = (await s.execute(
-            _count(FileRecord.status.in_(_DONE),
-                   FileRecord.updated_at >= today_start))).scalar_one()
+        pending = sum(1 for _, meta in grouped if meta["status"] == "pending_verification")
+        queued = sum(1 for _, meta in grouped if meta["status"] == "queued")
+        processing = sum(1 for _, meta in grouped if meta["status"] == "processing")
+        today_done = sum(1 for _, meta in grouped
+                         if meta["status"] in _DONE
+                         and _utc(meta["updated_at"]) >= today_start)
     return {"remaining_credits": (acct.paid_balance + acct.gift_balance) if acct else 0,
             "used_credits": round(float(used), 2), "today_usage": today,
             "passed_pages": int(passed_pages), "passed_docs": passed_docs,
@@ -298,8 +321,6 @@ async def skill_stats():
         st["top_corrected_fields"].append({"field": field, "count": n})
     for st in stats.values():
         done = sum(st["by_status"].get(k, 0) for k in _DONE)
-        reviewed = st["by_status"].get("pending_verification", 0) + \
-            sum(1 for _ in ())  # pending now; passed files that went through review
         straight = st["by_status"].get("completed", 0)
         st["decided"] = done
         # straight-through = completed without human loop / all terminal files

@@ -45,7 +45,10 @@
             <tr v-for="r in rows" :key="r.file_id">
               <td class="dim nowrap">{{ ts(r.created_at) }}</td>
               <td>{{ r.skill_code }}</td>
-              <td class="fname" :title="r.file_name">{{ r.file_name }}</td>
+              <td class="fname" :title="r.file_name">
+                {{ r.file_name }}
+                <span v-if="r.child_count" class="split-note">内含 {{ r.child_count }} 份单据</span>
+              </td>
               <td>{{ r.page_count }}</td>
               <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
               <td class="row-act">
@@ -118,6 +121,7 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 .more { margin-left: auto; font-size: 13px; }
 .table-scroll { overflow-x: auto; }
 .fname { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
 .nowrap { white-space: nowrap; }
 .row-act { text-align: right; }
 .slim { padding: 2px 12px; font-size: 12px; }

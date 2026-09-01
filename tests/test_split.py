@@ -5,6 +5,7 @@ import asyncio
 import json
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app.parsers.base import UDR, Block, Page
 from app.skillengine.schema import FieldSpec, SkillPackage
@@ -110,6 +111,7 @@ def test_end_to_end_split_flow(tmp_path, monkeypatch):
 
     async def main():
         from sqlalchemy import select
+
         from app.db import init_db, session_factory
         from app.models import FileRecord, SkillVersion, Transaction
         await init_db()
@@ -151,3 +153,100 @@ def test_end_to_end_split_flow(tmp_path, monkeypatch):
     # split parents settle the transaction
     assert txn.status == "completed"
     assert any(e == "file.split" and p["documents"] == 2 for e, p in fired)
+
+
+@pytest.mark.asyncio
+async def test_split_is_one_task_across_product_surfaces(tmp_path, monkeypatch):
+    """A root upload is one task in status/list/queue/review; child jobs stay
+    nested and tenant scoped. The review detail retains all six original pages
+    while child results declare their offsets into that file."""
+    monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/grouped.db")
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    import app.config as config
+    import app.db as db
+    config.get_settings.cache_clear()
+    db._engine = None
+    db._session_factory = None
+
+    from app.db import init_db, session_factory
+    from app.models import FileRecord, Transaction
+    await init_db()
+
+    def write_udr(name: str, pages: int):
+        path = tmp_path / name
+        path.write_text(json.dumps({
+            "pages": [{"page_no": i, "width": 595, "height": 842}
+                      for i in range(1, pages + 1)]
+        }), encoding="utf-8")
+        return str(path)
+
+    root_blob = tmp_path / "bundle.pdf"
+    root_blob.write_bytes(b"%PDF grouped-test")
+    sf = session_factory()
+    async with sf() as s:
+        txn = Transaction(tenant_id="default", skill_code="invoice", skill_version=1,
+                          status="completed")
+        s.add(txn)
+        await s.flush()
+        root = FileRecord(
+            tenant_id="default", transaction_id=txn.id, file_name="bundle.pdf",
+            storage_path=str(root_blob), udr_path=write_udr("root.json", 6),
+            status="split", page_count=6)
+        s.add(root)
+        await s.flush()
+        for i, (pages, status) in enumerate(((2, "pending_verification"),
+                                             (1, "passed"),
+                                             (3, "pending_verification")), 1):
+            child = FileRecord(
+                tenant_id="default", transaction_id=txn.id, parent_file_id=root.id,
+                file_name=f"bundle#doc{i}.pdf", storage_path=str(root_blob),
+                udr_path=write_udr(f"child{i}.json", pages), status=status,
+                page_count=pages, result={
+                    "invoice_no": {"$value": f"INV-{i}", "$confidence": 3,
+                                   "$pages": 1, "$bbox": [1, 2, 3, 4]}})
+            s.add(child)
+
+        foreign_txn = Transaction(tenant_id="other", skill_code="invoice", skill_version=1)
+        s.add(foreign_txn)
+        await s.flush()
+        foreign = FileRecord(
+            tenant_id="other", transaction_id=foreign_txn.id, file_name="private.pdf",
+            storage_path=str(root_blob), status="pending_verification", page_count=1)
+        s.add(foreign)
+        await s.commit()
+        txn_id, root_id, foreign_id = txn.id, root.id, foreign.id
+
+    from app.main import create_app
+    async with AsyncClient(transport=ASGITransport(app=create_app()),
+                           base_url="http://test") as client:
+        status = (await client.get(f"/api/v1/status/{txn_id}")).json()
+        assert len(status["files"]) == 1
+        assert status["files"][0]["file_id"] == root_id
+        assert status["files"][0]["child_count"] == 3
+        assert len(status["files"][0]["children"]) == 3
+
+        files = (await client.get("/api/v1/files")).json()
+        assert files["total"] == 1 and len(files["data"]) == 1
+        assert files["data"][0]["file_id"] == root_id
+        assert files["data"][0]["status"] == "pending_verification"
+        assert files["data"][0]["pending_children"] == 2
+        assert (await client.get("/api/v1/files", params={"status": "passed"})).json()[
+            "total"] == 0
+
+        queue = (await client.get("/api/v1/review/queue")).json()
+        assert len(queue) == 1 and queue[0]["file_id"] == root_id
+        assert queue[0]["child_count"] == 3 and queue[0]["pending_children"] == 2
+
+        detail = (await client.get(f"/api/v1/review/{root_id}")).json()
+        assert detail["file_id"] == root_id and len(detail["pages"]) == 6
+        assert [c["page_offset"] for c in detail["children"]] == [0, 2, 3]
+        first_child_id = detail["children"][0]["file_id"]
+        by_child_url = (await client.get(f"/api/v1/review/{first_child_id}")).json()
+        assert by_child_url["file_id"] == root_id
+        assert len(by_child_url["children"]) == 3
+
+        assert (await client.get(f"/api/v1/review/{foreign_id}")).status_code == 404
+        foreign_files = (await client.get(
+            "/api/v1/files", headers={"X-Tenant-Id": "other"})).json()
+        assert foreign_files["total"] == 1
+        assert foreign_files["data"][0]["file_id"] == foreign_id

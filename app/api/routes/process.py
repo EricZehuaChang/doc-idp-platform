@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
 from app.config import get_settings
 from app.db import session_factory
@@ -151,8 +152,8 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
             raise HTTPException(404, "transaction not found")
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id))).scalars().all()
-        files = []
-        for f in rows:
+
+        def file_payload(f: FileRecord) -> dict:
             result = f.result
             if result is not None and not include_confidence_flag:
                 # plain-value view: scalars collapse to $value, table rows drop
@@ -166,12 +167,33 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
                                 if isinstance(r, dict) else r for r in v]
                     return v
                 result = {k: _plain(v) for k, v in result.items()}
-            files.append({
+            return {
                 "file_id": f.id, "file_name": f.file_name, "status": f.status,
                 "page_count": f.page_count, "msg": f.error or "",
                 "input_tokens": f.input_tokens, "output_tokens": f.output_tokens,
-                "result": result,
+                "result": result, "parent_file_id": f.parent_file_id,
+            }
+
+        # One API row per uploaded file. Internal split jobs remain available as
+        # explicit children instead of masquerading as six independent uploads.
+        roots = [f for f in rows if f.parent_file_id is None]
+        by_parent: dict[str, list[FileRecord]] = {}
+        for f in rows:
+            if f.parent_file_id:
+                by_parent.setdefault(f.parent_file_id, []).append(f)
+        files = []
+        for root in roots:
+            children = sorted(by_parent.get(root.id, []), key=lambda x: (x.created_at, x.id))
+            meta = task_summary(root, children)
+            item = file_payload(root)
+            item.update({
+                "status": meta["status"], "msg": meta["error"] or "",
+                "child_count": meta["child_count"],
+                "pending_children": meta["pending_children"],
+                "status_counts": meta["status_counts"],
+                "children": [file_payload(c) for c in children],
             })
+            files.append(item)
         return {"success": True, "transaction_id": txn.id, "status": txn.status,
                 "skill_code": txn.skill_code, "skill_version": txn.skill_version,
                 "files": files}
