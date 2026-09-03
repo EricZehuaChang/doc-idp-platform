@@ -33,6 +33,15 @@
       </div>
     </div>
 
+    <div class="stage-cols">
+    <!-- page-number rail (需求5): the left side lists every page and clicking
+         one scrolls the document to it; the current page is highlighted -->
+    <nav v-if="isPdf && pdfPages.length > 1" class="page-rail" aria-label="页码">
+      <button v-for="p in pdfPages" :key="p.no"
+              :class="{ on: p.no === activePage }"
+              :title="`第 ${p.no} 页`" @click="gotoPage(p.no)">{{ p.no }}</button>
+    </nav>
+
     <div class="scaler" :style="scalerStyle">
     <!-- images render directly; single page, UDR dims from pages[0] -->
     <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate && !rotation }"
@@ -97,6 +106,7 @@
       </div>
     </template>
     </div>
+    </div>
   </div>
 </template>
 
@@ -126,6 +136,9 @@ const props = defineProps<{
   boxes?: StageBox[];                 // all locatable fields (click to select)
   activeKey?: string;
   regions?: RegionOverlay[] | null;   // seal/signature overlay (/detect)
+  /** server-converted PDF for Office originals (需求3): when set, the stage
+   *  renders this instead of `src`, which stays the download target */
+  previewSrc?: string;
 }>();
 const emit = defineEmits<{
   (e: "box", page: number, bbox: number[]): void;
@@ -144,8 +157,12 @@ const loadError = ref("");
 const blankRender = ref(false);
 const pageErrors = ref<Record<number, string>>({});
 
-const isImage = computed(() => /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
-const isPdf = computed(() => /\.pdf$/i.test(props.fileName));
+// what to draw: Office originals render their converted PDF (previewSrc);
+// without it, the decision follows the file extension
+const renderSrc = computed(() => props.previewSrc || props.src);
+const isImage = computed(() =>
+  !props.previewSrc && /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
+const isPdf = computed(() => !!props.previewSrc || /\.pdf$/i.test(props.fileName));
 
 // —— zoom / rotate (UX debt) ——
 const zoom = ref(1);
@@ -186,7 +203,7 @@ const imgUrl = ref("");
 
 async function loadImage() {
   if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
-  imgUrl.value = URL.createObjectURL(await fetchBlob(props.src));
+  imgUrl.value = URL.createObjectURL(await fetchBlob(renderSrc.value));
 }
 
 /** Did anything at all get painted? A document that renders 100% white is the
@@ -213,7 +230,7 @@ async function renderPdf() {
   loading.value = true;
   try {
     if (isImage.value) { await loadImage(); return; }
-    const blob = await fetchBlob(props.src);
+    const blob = await fetchBlob(renderSrc.value);
     const pdfjs = await loadPdfjs();
     loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer(), ...PDFJS_ASSETS });
     const doc = await loadingTask.promise;
@@ -334,7 +351,14 @@ watch(() => [props.activeBox, props.activePage] as const, async () => {
     ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
-watch(() => props.src, () => {
+/** Jump the document to a page (page-number rail + part switch, 需求5). */
+function gotoPage(no: number) {
+  const el = stageEl.value?.querySelector(`[data-page="${no}"]`);
+  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+defineExpose({ gotoPage });
+
+watch(() => [props.src, props.previewSrc] as const, () => {
   ready.value = false;
   zoom.value = 1;
   rotation.value = 0;
@@ -348,6 +372,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .stage { display: flex; flex-direction: column; gap: 12px; }
+.stage-cols { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.page-rail { position: sticky; top: 46px; display: flex; flex-direction: column; gap: 3px;
+  max-height: calc(100vh - 180px); overflow-y: auto; padding-right: 2px; flex-shrink: 0; }
+.page-rail button { min-width: 30px; padding: 3px 8px; font-size: 12px;
+  font-variant-numeric: tabular-nums; text-align: center; }
+.page-rail button.on { background: var(--accent); color: var(--accent-text);
+  border-color: var(--accent); font-weight: 700; }
 .tools { display: flex; align-items: center; gap: 6px; position: sticky; top: 0;
   z-index: 5; background: var(--bg); padding: 2px 0 6px; }
 .tools button { padding: 2px 10px; font-size: 13px; }
@@ -362,23 +393,27 @@ onBeforeUnmount(() => {
 .err-acts { display: flex; gap: 8px; margin-top: 6px; }
 .page-err { position: absolute; left: 6px; top: 6px; font-size: 11px; color: #fff;
   background: var(--red); padding: 1px 7px; border-radius: 4px; }
-.scaler { align-self: flex-start; display: flex; flex-direction: column; gap: 12px; }
+.scaler { align-self: flex-start; display: flex; flex-direction: column; gap: 12px;
+  min-width: 0; }
 .page-wrap { position: relative; display: inline-block; align-self: flex-start; }
 .page-wrap.annotating { cursor: crosshair; }
 .page-wrap img, .page-wrap canvas { max-width: 100%; display: block; background: #fff;
   user-select: none; -webkit-user-drag: none; }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.hl { fill: rgba(240, 180, 41, 0.25); stroke: var(--accent); stroke-width: 4; }
-/* located fields: faint until hovered so they never fight the document */
-.fieldbox { fill: rgba(90, 170, 255, 0.05); stroke: rgba(90, 170, 255, 0.45);
-  stroke-width: 2; }
+/* selected-field highlight: translucent amber, thin — must never hide the text
+   under it (需求6) */
+.hl { fill: rgba(240, 180, 41, 0.10); stroke: var(--accent); stroke-width: 2; }
+/* located fields: faint translucent boxes that never fight the document;
+   each table cell draws its own box(es), not one table-wide block */
+.fieldbox { fill: rgba(90, 170, 255, 0.04); stroke: rgba(90, 170, 255, 0.30);
+  stroke-width: 1.2; }
 .fieldbox.pick { pointer-events: auto; cursor: pointer; }
-.fieldbox.pick:hover { fill: rgba(90, 170, 255, 0.2); stroke: var(--blue); stroke-width: 3; }
-.fieldbox.active { fill: rgba(240, 180, 41, 0.18); stroke: var(--accent); stroke-width: 3; }
-.region { stroke-width: 4; pointer-events: none; }
-.region.seal { fill: rgba(229, 72, 77, 0.18); stroke: #e5484d; }
-.region.signature { fill: rgba(90, 170, 255, 0.16); stroke: var(--blue); }
-.draw { fill: rgba(90, 170, 255, 0.15); stroke: var(--blue); stroke-width: 3;
+.fieldbox.pick:hover { fill: rgba(90, 170, 255, 0.12); stroke: var(--blue); stroke-width: 2; }
+.fieldbox.active { fill: rgba(240, 180, 41, 0.12); stroke: var(--accent); stroke-width: 2; }
+.region { stroke-width: 3; pointer-events: none; }
+.region.seal { fill: rgba(229, 72, 77, 0.14); stroke: #e5484d; }
+.region.signature { fill: rgba(90, 170, 255, 0.12); stroke: var(--blue); }
+.draw { fill: rgba(90, 170, 255, 0.15); stroke: var(--blue); stroke-width: 2;
   stroke-dasharray: 8 5; }
 .page-no { position: absolute; right: 6px; bottom: 6px; font-size: 11px;
   background: rgba(0, 0, 0, 0.55); color: #ddd; padding: 1px 7px; border-radius: 4px; }

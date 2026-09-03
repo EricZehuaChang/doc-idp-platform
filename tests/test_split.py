@@ -182,6 +182,7 @@ async def test_split_is_one_task_across_product_surfaces(tmp_path, monkeypatch):
 
     root_blob = tmp_path / "bundle.pdf"
     root_blob.write_bytes(b"%PDF grouped-test")
+    from datetime import datetime, timedelta, timezone
     sf = session_factory()
     async with sf() as s:
         txn = Transaction(tenant_id="default", skill_code="invoice", skill_version=1,
@@ -194,6 +195,10 @@ async def test_split_is_one_task_across_product_surfaces(tmp_path, monkeypatch):
             status="split", page_count=6)
         s.add(root)
         await s.flush()
+        # the root's own processing time: a split parent never extracts, so its
+        # finished-at is the last child's (需求1 aggregation)
+        finish = datetime.now(timezone.utc) + timedelta(seconds=5)
+        base = datetime.now(timezone.utc) - timedelta(minutes=1)
         for i, (pages, status) in enumerate(((2, "pending_verification"),
                                              (1, "passed"),
                                              (3, "pending_verification")), 1):
@@ -201,6 +206,10 @@ async def test_split_is_one_task_across_product_surfaces(tmp_path, monkeypatch):
                 tenant_id="default", transaction_id=txn.id, parent_file_id=root.id,
                 file_name=f"bundle#doc{i}.pdf", storage_path=str(root_blob),
                 udr_path=write_udr(f"child{i}.json", pages), status=status,
+                processed_at=finish,
+                # explicit increasing stamps: rows flushed together share one
+                # created_at default, and ordering must never fall to uuid tie-break
+                created_at=base + timedelta(seconds=i),
                 page_count=pages, result={
                     "invoice_no": {"$value": f"INV-{i}", "$confidence": 3,
                                    "$pages": 1, "$bbox": [1, 2, 3, 4]}})
@@ -230,6 +239,9 @@ async def test_split_is_one_task_across_product_surfaces(tmp_path, monkeypatch):
         assert files["data"][0]["file_id"] == root_id
         assert files["data"][0]["status"] == "pending_verification"
         assert files["data"][0]["pending_children"] == 2
+        # per-document speed on a split parent = last child finished − created
+        assert files["data"][0]["processing_seconds"] == 5.0
+        assert files["data"][0]["processed_at"] is not None
         assert (await client.get("/api/v1/files", params={"status": "passed"})).json()[
             "total"] == 0
 

@@ -53,6 +53,14 @@
               <td><span class="ftype">{{ r.type }}</span></td>
               <td class="dim">{{ size(r.size) }}</td>
               <td>{{ r.page_count }}</td>
+              <td class="nowrap" :title="speedTitle(r)">
+                <span v-if="r.processing_seconds != null" class="speed">
+                  {{ fmtSeconds(r.processing_seconds) }}
+                  <template v-if="r.page_count > 0">
+                    · {{ (r.page_count / r.processing_seconds).toFixed(2) }} 页/s</template>
+                </span>
+                <span v-else class="dim">—</span>
+              </td>
               <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
               <td class="dim nowrap">{{ ts(r.updated_at) }}</td>
               <td>
@@ -97,7 +105,7 @@
          horizontally, and an ancestor with overflow-x:auto also clips
          vertically, which would cut a menu off inside the table. -->
     <Teleport to="body">
-      <div v-if="openCol" class="fmenu" :style="menuStyle" @click.stop>
+      <div v-if="openCol" ref="menuEl" class="fmenu" :style="menuStyle" @click.stop>
         <template v-if="openCol === 'created'">
           <label>起<input type="date" v-model="f.date_from" :max="f.date_to || undefined" /></label>
           <label>止<input type="date" v-model="f.date_to" :min="f.date_from || undefined" /></label>
@@ -179,6 +187,7 @@ const COLUMNS = [
   { key: "file_type", label: "类型", filter: true, keys: ["file_type"] },
   { key: "size", label: "大小", filter: false, keys: [] },
   { key: "pages", label: "页数", filter: true, keys: ["pages_min", "pages_max"] },
+  { key: "speed", label: "处理速度", filter: false, keys: [] },
   { key: "status", label: "状态", filter: true, keys: ["status"] },
   { key: "updated", label: "更新时间", filter: true, keys: ["updated_from", "updated_to"] },
   { key: "verify", label: "校验", filter: true, keys: ["verify"] },
@@ -230,6 +239,7 @@ watch(() => route.query.status, (v) => {
 // —— per-column filter menus ——
 const openCol = ref("");
 const triggers = new Map<string, HTMLElement>();
+const menuEl = ref<HTMLElement>();
 const menuStyle = ref<Record<string, string>>({});
 function setTrigger(key: string, el: HTMLElement | null) {
   if (el) triggers.set(key, el);
@@ -262,17 +272,24 @@ function clearCol(key: string) {
   closeMenu();
 }
 function onEsc(e: KeyboardEvent) { if (e.key === "Escape") closeMenu(); }
+/** The catch-all scroll closer must ignore scrolls INSIDE the open menu: the
+ *  multi-row <select> listboxes scroll, and treating them as "scrolled away"
+ *  closed the menu mid-scroll — wheel and scrollbar drag both died (需求2). */
+function onScroll(e: Event) {
+  if (menuEl.value && e.target instanceof Node && menuEl.value.contains(e.target)) return;
+  closeMenu();
+}
 onMounted(() => {
   document.addEventListener("click", closeMenu);
   window.addEventListener("keydown", onEsc);
   window.addEventListener("resize", closeMenu);
-  window.addEventListener("scroll", closeMenu, true);
+  window.addEventListener("scroll", onScroll, true);
 });
 onUnmounted(() => {
   document.removeEventListener("click", closeMenu);
   window.removeEventListener("keydown", onEsc);
   window.removeEventListener("resize", closeMenu);
-  window.removeEventListener("scroll", closeMenu, true);
+  window.removeEventListener("scroll", onScroll, true);
 });
 
 // —— applied conditions, as removable chips in the top bar ——
@@ -358,6 +375,19 @@ function size(n: number | null): string {
   return `${(n / 1048576).toFixed(2)} MB`;
 }
 const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
+
+// —— per-document processing speed (需求1) ——
+function fmtSeconds(sec: number): string {
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}m ${s}s`;
+}
+function speedTitle(r: FileRow): string {
+  if (r.processing_seconds == null) return "处理尚未完成";
+  const pages = r.page_count > 0 ? ` · ${(r.page_count / r.processing_seconds).toFixed(2)} 页/s` : "";
+  return `处理用时 ${fmtSeconds(r.processing_seconds)}${pages}`;
+}
 </script>
 
 <style scoped>
@@ -386,6 +416,7 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 .fbtn.open { color: var(--accent); background: var(--bg-raised); }
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
+.speed { font-size: 12px; color: var(--text); white-space: nowrap; }
 .nowrap { white-space: nowrap; }
 .ftype { font-size: 11px; color: var(--red); font-weight: 700; }
 .err { color: var(--red); font-size: 12px; cursor: help; }

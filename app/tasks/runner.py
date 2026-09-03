@@ -10,6 +10,7 @@ siblings (§4.3); shadow billing meters every completed file (§12.6).
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -158,6 +159,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage) -> None:
         f.input_tokens = int(usage.get("prompt_tokens") or 0)
         f.output_tokens = int(usage.get("completion_tokens") or 0)
         f.status = new_status
+        f.processed_at = datetime.now(timezone.utc)   # per-doc speed figure (§task ledger)
         await s.commit()
         pages = f.page_count
     await shadow_meter(tenant_id=tenant, file_id=file_id, pages=pages, usage=usage)
@@ -237,6 +239,7 @@ async def mark_error(file_id: str, message: str) -> None:
         f = await s.get(FileRecord, file_id)
         f.status = "error"
         f.error = message
+        f.processed_at = datetime.now(timezone.utc)   # failed run still has a duration
         tenant = f.tenant_id
         await s.commit()
     await webhooks.fire(tenant, "file.error",

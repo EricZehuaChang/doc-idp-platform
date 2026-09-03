@@ -53,11 +53,21 @@ def display_error(root, children: list) -> str | None:
     return f"{failed} 个子任务失败" if failed else None
 
 
+def display_processed_at(root, children: list):
+    """When the pipeline finished with this root task. A split parent never
+    extracts itself — its finish time is the last child's."""
+    stamps = [x.processed_at for x in children if x.processed_at]
+    if root.processed_at:
+        stamps.append(root.processed_at)
+    return max(stamps) if stamps else None
+
+
 def summary(root, children: list) -> dict:
     counts = Counter(c.status for c in children)
     return {
         "status": display_status(root, children),
         "updated_at": display_updated_at(root, children),
+        "processed_at": display_processed_at(root, children),
         "verified_by": display_verified_by(root, children),
         "error": display_error(root, children),
         "child_count": len(children),

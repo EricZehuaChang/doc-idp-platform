@@ -76,7 +76,7 @@ select {
 .chip-completed, .chip-passed, .chip-published, .chip-active { color: var(--green); }
 .chip-error, .chip-rejected { color: var(--red); }
 .chip-processing, .chip-queued, .chip-draft { color: var(--accent); }
-.chip-split, .chip-archived, .chip-disabled { color: var(--text-dim); }
+.chip-split, .chip-archived, .chip-disabled, .chip-deleted { color: var(--text-dim); }
 
 .badge-r {
   display: inline-flex; align-items: center; justify-content: center;

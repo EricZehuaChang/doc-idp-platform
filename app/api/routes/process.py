@@ -1,7 +1,12 @@
 """Processing API (design v0.2 §7, aligned with Insavlo public API shape):
 POST /api/v1/process, GET /api/v1/status/{transaction_id}.
 """
+import asyncio
 import hashlib
+import os
+import shutil
+import subprocess
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -25,6 +30,54 @@ _MAX_SIZE = 50 * 1024 * 1024
 # with an HTML error the SPA cannot parse. The UI batches its selection against
 # this number instead; the API itself is unchanged for existing integrations.
 _MAX_BATCH = 80 * 1024 * 1024
+
+# —— original-document preview (需求3): Office formats convert to PDF on the
+# server so the review left pane can render them; the conversion result is
+# cached per file_id (storage is content-hash immutable). ——
+_OFFICE_PREVIEW = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+_preview_lock = asyncio.Lock()
+
+
+class PreviewConvertError(RuntimeError):
+    """LibreOffice ran but produced nothing usable."""
+
+
+def _find_soffice() -> str | None:
+    """Locate a LibreOffice binary: explicit env override, then PATH, then the
+    known install locations (dev WIN / production Linux / dev Mac)."""
+    env = os.environ.get("IDP_SOFFICE")
+    candidates = [env] if env else []
+    candidates += [shutil.which("soffice"), shutil.which("soffice.exe"),
+                   "/usr/bin/soffice", "/usr/bin/libreoffice",
+                   r"D:\Program Files\LibreOffice\program\soffice.exe",
+                   r"C:\Program Files\LibreOffice\program\soffice.exe",
+                   "/Applications/LibreOffice.app/Contents/MacOS/soffice"]
+    for cand in candidates:
+        if cand and Path(cand).exists():
+            return str(cand)
+    return None
+
+
+async def _convert_office_to_pdf(soffice: str, src: str, work_dir: Path) -> Path:
+    """Run LibreOffice headless in a worker thread. stdout/stderr go to a file
+    (never a pipe), one fresh UserInstallation profile per run so parallel
+    conversions cannot fight over the LO profile lock."""
+    def _run() -> Path:
+        profile = f"file:///{(work_dir / f'lo-{uuid.uuid4().hex[:8]}').as_posix()}"
+        log_path = work_dir / "soffice.log"
+        cmd = [soffice, "--headless", "--norestore", "--convert-to", "pdf",
+               "--outdir", str(work_dir), f"-env:UserInstallation={profile}", src]
+        try:
+            with open(log_path, "w", encoding="utf-8") as logf:
+                subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT,
+                               timeout=180, check=False)
+        except subprocess.TimeoutExpired as e:
+            raise PreviewConvertError("转换超时（180 秒）") from e
+        out = work_dir / f"{Path(src).stem}.pdf"
+        if not out.exists() or out.stat().st_size == 0:
+            raise PreviewConvertError("转换未产出 PDF")
+        return out
+    return await asyncio.to_thread(_run)
 
 
 class SubmitResponse(BaseModel):
@@ -140,6 +193,53 @@ async def download(file_id: str):
         # (frontend caching design v0.2 §9.0 layer ③)
         return FileResponse(f.storage_path, filename=f.file_name,
                             headers={"Cache-Control": "private, max-age=86400, immutable"})
+
+
+@router.get("/files/{file_id}/preview")
+async def preview(file_id: str):
+    """Renderable original for the review left pane (需求3: 对照原件加载不出来,
+    Doc 格式不支持预览). PDFs and images stream as-is; Office files (.doc/.docx/
+    .xls/.xlsx/.ppt/.pptx) are converted to PDF via LibreOffice and cached.
+    Formats with no converter (e.g. OFD) answer 422 — the UI falls back to the
+    download link instead of showing a blank pane."""
+    from fastapi.responses import FileResponse
+
+    sf = session_factory()
+    async with sf() as s:
+        f = await s.get(FileRecord, file_id)
+        if f is None or f.tenant_id != current_tenant():
+            raise HTTPException(404, "file not found")
+        suffix = Path(f.file_name).suffix.lower()
+        src = f.storage_path
+        stem = Path(f.file_name).stem
+    immutable = {"Cache-Control": "private, max-age=86400, immutable"}
+    if suffix in (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"):
+        return FileResponse(src, filename=f"{stem}{suffix}", headers=immutable)
+    if suffix not in _OFFICE_PREVIEW:
+        raise HTTPException(422, f"{suffix} 格式暂不支持原件预览，请下载原件查看")
+    cache_dir = Path(get_settings().data_dir) / "preview"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / f"{file_id}.pdf"
+    if cached.exists() and cached.stat().st_size > 0:
+        return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
+    soffice = _find_soffice()
+    if not soffice:
+        raise HTTPException(422, "该格式的原件预览需要服务器安装 LibreOffice，"
+                                 "当前服务器未安装；请下载原件查看")
+    async with _preview_lock:
+        # re-check under the lock: a concurrent request may have just converted
+        if cached.exists() and cached.stat().st_size > 0:
+            return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
+        work_dir = cache_dir / f"work-{file_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            out = await _convert_office_to_pdf(soffice, src, work_dir)
+            os.replace(out, cached)               # atomic cache write
+        except PreviewConvertError as e:
+            raise HTTPException(422, f"原件转换失败：{e}") from e
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+    return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
 
 
 @router.get("/status/{transaction_id}")

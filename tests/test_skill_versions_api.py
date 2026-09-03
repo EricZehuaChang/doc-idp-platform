@@ -87,8 +87,10 @@ async def test_model_options_lists_configured_providers_and_parsers(tmp_path, mo
             names = [p["name"] for p in body["providers"]]
             assert "qwen" in names and len(names) == len(set(names))
             assert sum(1 for p in body["providers"] if p["active"]) == 1
-            assert "pdfplumber" in [p["name"] for p in body["parsers"]]
-            assert all(set(p) == {"name", "type", "description"} for p in body["parsers"])
+            assert any(p["name"] == "pdfplumber" for p in body["parsers"])
+            # parsers ship name/type/description for the editor picker
+            assert all(set(p) == {"name", "type", "description"}
+                       for p in body["parsers"])
             # never leak key material through this non-admin route
             assert all(set(p) == {"name", "model", "active", "custom", "vision"}
                        for p in body["providers"])
@@ -136,6 +138,64 @@ async def test_file_list_filters_narrow_rows_and_total_together(tmp_path, monkey
             assert await rows(date_from=today, date_to=today) == ["alpha.pdf", "beta.pdf"]
             assert (await c.get("/api/v1/files", params={"date_from": "not-a-date"})
                     ).status_code == 400
+
+
+async def test_delete_archives_skill_and_restore_brings_it_back(tmp_path, monkeypatch):
+    """需求7: a deleted skill is an archive entry, not a burial — versions stay
+    intact and restore flips the state back to active."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            await c.post("/api/v1/skills", json={"package": _pkg(), "changelog": "v1"})
+            await c.post("/api/v1/skills/verspec/versions/1/publish")
+
+            r = await c.delete("/api/v1/skills/verspec")
+            assert r.json()["state"] == "deleted"
+            # hidden from the default roster…
+            assert all(x["skill_code"] != "verspec"
+                       for x in (await c.get("/api/v1/skills")).json())
+            # …but visible in the archive, with its published version retained
+            arch = (await c.get("/api/v1/skills", params={"state": "deleted"})).json()
+            assert [x["skill_code"] for x in arch] == ["verspec"]
+            assert arch[0]["published_version"] == 1
+
+            r = await c.post("/api/v1/skills/verspec/restore")
+            assert r.json() == {"skill_code": "verspec", "state": "active"}
+            assert [x["skill_code"] for x in (await c.get("/api/v1/skills")).json()] \
+                == ["verspec"]
+            # restoring an active skill is a 409, not a silent no-op
+            assert (await c.post("/api/v1/skills/verspec/restore")).status_code == 409
+            # cross-tenant restore is a 404 (no existence leak)
+            assert (await c.post("/api/v1/skills/verspec/restore",
+                                 headers={"X-Tenant-Id": "other"})).status_code == 404
+            # bogus lifecycle bucket is rejected loudly
+            assert (await c.get("/api/v1/skills", params={"state": "nope"})).status_code == 400
+
+
+async def test_delete_version_only_drafts_and_never_the_last_one(tmp_path, monkeypatch):
+    """需求8: 「删除当前版本」 removes exactly one draft; history (published/
+    archived) is immutable and a skill must keep at least one version."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            await c.post("/api/v1/skills", json={"package": _pkg(), "changelog": "v1"})
+            await c.post("/api/v1/skills/verspec/versions",
+                         json={"package": _pkg(), "changelog": "v2"})
+            r = await c.delete("/api/v1/skills/verspec/versions/2")
+            assert r.status_code == 200
+            d = (await c.get("/api/v1/skills/verspec")).json()
+            assert [v["version"] for v in d["versions"]] == [1]
+
+            # published versions are history and cannot be deleted
+            await c.post("/api/v1/skills/verspec/versions/1/publish")
+            r = await c.delete("/api/v1/skills/verspec/versions/1")
+            assert r.status_code == 409 and "删除技能" in r.json()["detail"]
+            # the last remaining version is protected the same way
+            r = await c.delete("/api/v1/skills/verspec/versions/1")
+            assert r.status_code == 409
+            assert (await c.delete("/api/v1/skills/verspec/versions/99")).status_code == 404
 
 
 async def test_file_search_treats_like_wildcards_literally(tmp_path, monkeypatch):

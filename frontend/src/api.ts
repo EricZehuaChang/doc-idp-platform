@@ -181,6 +181,8 @@ export interface FileRow {
   type: string; size: number | null; page_count: number; status: string;
   created_at: string; updated_at: string | null; verified_by: string | null;
   error: string | null;
+  /** pipeline finished stamp + duration (需求1: 任务页处理速度) */
+  processed_at: string | null; processing_seconds: number | null;
   child_count: number; pending_children: number; status_counts: Record<string, number>;
 }
 export interface FilesPage {
@@ -333,11 +335,20 @@ export const api = {
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
+  /** renderable original for the review left pane: Office files come back as
+   *  a server-converted PDF (需求3), PDF/images stream as-is */
+  previewUrl: (id: string) => `/api/v1/files/${id}/preview`,
   // skill studio (batch D)
   skillDetail: (code: string, version?: number) =>
     req<SkillDetail>("GET",
       `/api/v1/skills/${code}${version ? `?version=${version}` : ""}`),
   skillDelete: (code: string) => req("DELETE", `/api/v1/skills/${code}`),
+  /** bring an archived (soft-deleted) skill back (需求7) */
+  skillRestore: (code: string) =>
+    req<{ skill_code: string; state: string }>("POST", `/api/v1/skills/${code}/restore`),
+  /** delete exactly one draft version — history is immutable (需求8) */
+  skillDeleteVersion: (code: string, version: number) =>
+    req("DELETE", `/api/v1/skills/${code}/versions/${version}`),
   skillCreate: (pkg: SkillPackage, changelog = "") =>
     req("POST", "/api/v1/skills", { package: pkg, changelog }),
   skillNewDraft: (code: string, pkg: SkillPackage, changelog = "") =>
@@ -399,6 +410,9 @@ export const api = {
       "POST", `/api/v1/skills/${code}/versions/${version}/golden-check`),
   // data & stats
   skills: () => req<SkillInfo[]>("GET", "/api/v1/skills"),
+  /** roster of one lifecycle bucket; "deleted" is the delete archive (需求7) */
+  skillsByState: (state: "active" | "disabled" | "deleted") =>
+    req<SkillInfo[]>("GET", `/api/v1/skills?state=${state}`),
   cabinet: (skill: string) =>
     req<{ rows: Record<string, string>[] }>("GET", `/api/v1/cabinet/${skill}`),
   cabinetCsvUrl: (skill: string) => `/api/v1/cabinet/${skill}/export.csv`,

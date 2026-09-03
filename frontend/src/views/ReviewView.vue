@@ -8,9 +8,8 @@
         <button class="back" title="返回上级列表" @click="goBack">‹ 返回</button>
         <div class="nav-group">
           <button :disabled="queuePos <= 0" title="上一份 (←)" @click="goSibling(-1)">←</button>
-          <span class="pos dim" v-if="queueIds.length">{{ queuePos + 1 }} / {{ queueIds.length }}</span>
-          <button :disabled="queuePos < 0 || queuePos >= queueIds.length - 1"
-                  title="下一份 (→)" @click="goSibling(1)">→</button>
+          <span class="pos dim" v-if="queueIds.length">{{ queueLabel }}</span>
+          <button :disabled="nextDisabled" title="下一份 (→)" @click="goSibling(1)">→</button>
         </div>
         <strong class="fname-head" :title="detail.file_name">{{ detail.file_name }}</strong>
         <span class="chip" :class="`chip-${detail.status}`">{{ statusLabel }}</span>
@@ -26,7 +25,8 @@
         </button>
       </div>
       <div class="doc-body">
-        <DocStage :src="api.downloadUrl(detail.file_id)" :file-name="detail.file_name"
+        <DocStage ref="stage" :src="api.downloadUrl(detail.file_id)" :file-name="detail.file_name"
+                  :preview-src="previewSrc"
                   :pages="detail.pages" :active-box="activeBox" :active-page="activePage"
                   :annotate="annotate" :regions="sealRegions"
                   :boxes="stageBoxes" :active-key="activeKey"
@@ -103,9 +103,10 @@
             <span v-if="pendingBoxes[f.name]" class="badge-box" title="已重画定位框，待保存">▣</span>
             <span class="conf dim">c{{ f.cell.$confidence }}</span>
           </div>
-          <input v-model="edits[f.name]" :disabled="!locked"
-                 :ref="(el) => setInput(i, el as HTMLInputElement)"
-                 @focus="focusField(f)" @keydown.esc.prevent="blurInput" />
+          <textarea v-model="edits[f.name]" :disabled="!locked" rows="2" wrap="soft"
+                    :ref="(el) => setInput(i, el as HTMLTextAreaElement)"
+                    :title="edits[f.name]"
+                    @focus="focusField(f)" @keydown.esc.prevent="blurInput" />
           <div v-if="f.cell.$reasoning" class="reasoning dim">{{ f.cell.$reasoning }}</div>
           <div v-if="f.cell.$rule_failures" class="rulefail">{{ f.cell.$rule_failures.join("; ") }}</div>
         </div>
@@ -190,7 +191,7 @@
 
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
          type ReviewItem, type StageBox } from "../api";
@@ -202,6 +203,7 @@ const props = defineProps<{ fileId: string }>();
 const route = useRoute();
 const router = useRouter();
 const qc = useQueryClient();
+const stage = ref<InstanceType<typeof DocStage>>();
 
 // server state via TanStack Query (§9.0 layer ①)
 const { data: detail, isLoading, refetch } = useQuery({
@@ -209,10 +211,23 @@ const { data: detail, isLoading, refetch } = useQuery({
   queryFn: () => api.detail(props.fileId),
   retry: false,
 });
-// queue order drives Previous/Next (UX debt: 无 Previous/Next)
-const { data: queueData } = useQuery({ queryKey: ["queue"], queryFn: api.queue });
+// queue order drives Previous/Next (UX debt: 无 Previous/Next). Other reviewers
+// decide files all the time, so keep the worklist fresh instead of letting the
+// arrows go stale and dead (需求9).
+const { data: queueData } = useQuery({
+  queryKey: ["queue"], queryFn: api.queue,
+  refetchInterval: 10_000, refetchOnWindowFocus: true,
+});
 const queueIds = computed(() => (queueData.value ?? []).map((q) => q.file_id));
 const queuePos = computed(() => queueIds.value.indexOf(detail.value?.file_id ?? props.fileId));
+/** Position label: "—" when this file is not on the pending worklist (a decided
+ *  file opened from the task ledger) — the arrows still work. */
+const queueLabel = computed(() =>
+  queuePos.value >= 0 ? `${queuePos.value + 1} / ${queueIds.value.length}` : "—");
+const nextDisabled = computed(() => {
+  if (queuePos.value < 0) return queueIds.value.length === 0;   // not in list: jump to first
+  return queuePos.value >= queueIds.value.length - 1;
+});
 
 const STATUS_LABELS: Record<string, string> = {
   pending_verification: "待校验", completed: "已完成", passed: "已通过",
@@ -265,6 +280,13 @@ const detectMeta = ref<DetectResult | null>(null);
 // round-trip to a guaranteed 422, so the button greys out with a tooltip
 const detectSupported = computed(() =>
   !!detail.value && /\.(pdf|png|jpe?g|bmp|webp)$/i.test(detail.value.file_name));
+
+// Office originals render through the server's converted PDF (需求3: Doc 格式
+// 预览); PDF/images stream as-is and need no second URL
+const OFFICE_PREVIEW = /\.(docx?|xlsx?|pptx?)$/i;
+const previewSrc = computed(() =>
+  detail.value && OFFICE_PREVIEW.test(detail.value.file_name)
+    ? api.previewUrl(detail.value.file_id) : "");
 async function toggleDetect() {
   if (sealRegions.value) {                     // second click clears
     sealRegions.value = null;
@@ -304,8 +326,8 @@ async function toggleDetect() {
   }
 }
 const fieldsEl = ref<HTMLDivElement>();
-const inputEls = new Map<number, HTMLInputElement>();
-function setInput(i: number, el: HTMLInputElement | null) {
+const inputEls = new Map<number, HTMLTextAreaElement>();
+function setInput(i: number, el: HTMLTextAreaElement | null) {
   if (el) inputEls.set(i, el);
 }
 
@@ -343,12 +365,14 @@ function delRow(t: string, i: number) {
 
 // —— cell locations: rows carry $cells[col].$hits [{page,bbox,...}] ——
 interface CellHit { page?: number; bbox?: number[] }
-function cellHit(t: string, ri: number, col: string): CellHit | null {
+function cellHits(t: string, ri: number, col: string): CellHit[] {
   const row = tableEdits.value[t]?.[ri] as unknown as
     Record<string, { $hits?: CellHit[] }> | undefined;
   const cells = (row as unknown as { $cells?: Record<string, { $hits?: CellHit[] }> })?.$cells;
-  const hit = cells?.[col]?.$hits?.[0];
-  return hit?.bbox?.length === 4 ? hit : null;
+  return (cells?.[col]?.$hits ?? []).filter((h) => h?.bbox?.length === 4);
+}
+function cellHit(t: string, ri: number, col: string): CellHit | null {
+  return cellHits(t, ri, col)[0] ?? null;
 }
 const hasHit = (t: string, ri: number, col: string) => !!cellHit(t, ri, col);
 
@@ -387,10 +411,13 @@ const stageBoxes = computed<StageBox[]>(() => {
     const rows = tableEdits.value[t] ?? [];
     rows.forEach((row, ri) => {
       for (const col of Object.keys(row).filter((c) => !c.startsWith("$"))) {
-        const hit = cellHit(t, ri, col);
-        if (hit?.bbox && hit.page)
-          out.push({ key: `t:${t}:${ri}:${col}`, page: toRootPage(hit.page), bbox: hit.bbox,
-                     label: `${col}: ${row[col]}` });
+        // every occurrence gets its own box — a table renders as per-cell /
+        // per-region boxes, never one table-wide block (需求6)
+        cellHits(t, ri, col).forEach((hit, hi) => {
+          if (!hit.page) return;
+          out.push({ key: `t:${t}:${ri}:${col}:${hi}`, page: toRootPage(hit.page),
+                     bbox: hit.bbox!, label: `${col}: ${row[col]}` });
+        });
       }
     });
   }
@@ -589,6 +616,10 @@ async function switchPart(fileId: string) {
   await releaseLock(oldFileId);
   resetPartState();
   activeFileId.value = fileId;
+  // 需求5: 点击右侧单据,左侧原件跳到该单据的起始页
+  const start = (activeItem.value?.page_offset ?? 0) + 1;
+  await nextTick();
+  stage.value?.gotoPage(start);
 }
 
 /** Leave without judging the file. `discard` drops local edits; otherwise they
@@ -629,6 +660,8 @@ async function decide(kind: "confirm" | "reject") {
     if (nextPart) {
       resetPartState();
       activeFileId.value = nextPart.file_id;
+      await nextTick();
+      stage.value?.gotoPage((nextPart.page_offset ?? 0) + 1);   // 需求5: 跳到下一份的首页
       toast.ok(`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`);
       return;
     }
@@ -640,6 +673,14 @@ async function decide(kind: "confirm" | "reject") {
   } catch (e) { toast.error(e); }
 }
 function goSibling(delta: number) {
+  // A file opened from the task ledger may not be on the pending worklist
+  // (queuePos === -1): both arrows then lead to the head of the list instead
+  // of being dead buttons (需求9).
+  if (queuePos.value < 0) {
+    const first = queueIds.value[0];
+    if (first) router.push(`/review/${first}`);
+    return;
+  }
   const target = queueIds.value[queuePos.value + delta];
   if (target) router.push(`/review/${target}`);
 }
@@ -666,7 +707,8 @@ function moveField(delta: number) {
     ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 function onKey(ev: KeyboardEvent) {
-  const typing = (ev.target as HTMLElement)?.tagName === "INPUT";
+  const typing = (ev.target as HTMLElement)?.tagName === "INPUT"
+    || (ev.target as HTMLElement)?.tagName === "TEXTAREA";
   if (typing) {
     if (ev.key === "s" && ev.ctrlKey) { ev.preventDefault(); saveEdits(); }
     return;
@@ -753,6 +795,11 @@ onUnmounted(() => {
 .field { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px; cursor: pointer; }
 .field.active { border-color: var(--accent); }
+/* recognized-value box (需求4): soft-wraps long values and is drag-resizable
+   (corner handle) so the whole content can be revealed */
+.field textarea { min-height: 42px; max-height: 320px; resize: both; overflow: auto;
+  line-height: 1.5; font: inherit; width: 100%; white-space: pre-wrap;
+  word-break: break-word; }
 .field-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .fname { color: var(--blue); font-weight: 600; }
 .conf { margin-left: auto; font-size: 12px; }

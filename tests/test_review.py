@@ -58,6 +58,13 @@ async def test_review_loop(tmp_path, monkeypatch):
             assert r.json()["files"][0]["status"] == "pending_verification"
             fid = r.json()["files"][0]["file_id"]
 
+            # task ledger carries the per-document processing figure (需求1):
+            # processed_at was stamped by the pipeline and the duration is real
+            rows = (await client.get("/api/v1/files")).json()["data"]
+            row = next(x for x in rows if x["file_id"] == fid)
+            assert row["processed_at"] is not None
+            assert isinstance(row["processing_seconds"], float)
+
             # queue lists it
             r = await client.get("/api/v1/review/queue")
             assert any(item["file_id"] == fid for item in r.json())

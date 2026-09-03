@@ -35,7 +35,12 @@
           <button v-if="!isNew" @click="apiModal = true">🔌 API 接入</button>
           <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
             导出 YAML</button>
-          <button v-if="!isNew" class="danger" @click="removeSkill">删除</button>
+          <button v-if="!isNew && selectedStatus === 'draft'" class="danger"
+                  title="只删除当前这个草稿版本；已发布/已归档的版本不受影响"
+                  @click="removeVersion">删除当前版本</button>
+          <button v-if="!isNew" class="danger"
+                  title="删除整个技能（全部版本进存档，可在技能中心恢复）"
+                  @click="removeSkill">删除技能</button>
           <router-link to="/skills"><button class="ghost">‹ 返回技能列表</button></router-link>
         </div>
       </div>
@@ -402,11 +407,28 @@ async function publishSelected() {
     await load(selectedVersion.value);
   } catch (e) { toast.error(e); }
 }
+/** 需求8: 「删除当前版本」和「删除技能」是两个动作，各自说清作用范围。
+ *  版本删除只作用于草稿；技能删除进入可恢复的存档而不是永久抹掉。 */
+async function removeVersion() {
+  if (!selectedVersion.value) return;
+  const ok = confirm(`确定删除当前版本 v${selectedVersion.value}（草稿）？\n`
+    + "删除后该草稿将从版本历史中移除；已发布/已归档的版本不受影响。");
+  if (!ok) return;
+  try {
+    await api.skillDeleteVersion(props.code, selectedVersion.value);
+    toast.ok(`v${selectedVersion.value} 草稿已删除`);
+    await load();
+  } catch (e) { toast.error(e); }
+}
 async function removeSkill() {
-  if (!confirm(`确定删除技能 ${props.code}？运行中任务不受影响，技能将从列表消失。`)) return;
+  const name = pkg.value?.name || props.code;
+  const n = versions.value.length;
+  const ok = confirm(`确定删除技能「${name}」？\n`
+    + `全部 ${n} 个版本将进入「已删除」存档，可在技能中心恢复；运行中任务不受影响。`);
+  if (!ok) return;
   try {
     await api.skillDelete(props.code);
-    toast.ok("技能已删除");
+    toast.ok("技能已删除（可在技能中心「已删除」页签恢复）");
     router.push("/skills");
   } catch (e) { toast.error(e); }
 }

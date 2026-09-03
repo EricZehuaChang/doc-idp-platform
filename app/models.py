@@ -138,6 +138,10 @@ class FileRecord(Base):
     # tables are lists of row objects — same container, live-verified schema (sources/2026-07-14)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     udr_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # parsed UDR json on disk
+    # when the processing pipeline finished with this file (result written or
+    # failed): the per-document processing-speed figure on the task ledger.
+    # updated_at can't serve (review locks/corrections bump it too).
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)    # token-level cost metering
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     # review workflow: assignee = who SHOULD review; locked_by = who IS reviewing (PM item #2)

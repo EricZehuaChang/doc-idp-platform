@@ -87,13 +87,21 @@ async def create_skill(payload: SkillCreate):
 
 
 @router.get("")
-async def list_skills():
+async def list_skills(state: str | None = None):
+    """Skill roster. `state` selects a lifecycle bucket: the default view hides
+    deleted skills, `state=deleted` lists the archive (soft-deleted skills keep
+    every version and can be restored — 需求7 skill archive)."""
     tenant = current_tenant()
+    if state and state not in ("active", "disabled", "deleted"):
+        raise HTTPException(400, "state 只能是 active / disabled / deleted")
     sf = session_factory()
     async with sf() as s:
-        rows = (await s.execute(
-            select(Skill).where(Skill.tenant_id == tenant,
-                                Skill.state != "deleted"))).scalars().all()
+        cond = [Skill.tenant_id == tenant]
+        if state:
+            cond.append(Skill.state == state)
+        else:
+            cond.append(Skill.state != "deleted")
+        rows = (await s.execute(select(Skill).where(*cond))).scalars().all()
         # highest published version per skill: /process rejects a skill without
         # one (400), so the upload page must be able to hide those up front
         pub = dict((await s.execute(
@@ -186,6 +194,25 @@ async def delete_skill(skill_code: str):
     return {"skill_code": skill_code, "state": "deleted"}
 
 
+@router.post("/{skill_code}/restore")
+async def restore_skill(skill_code: str):
+    """Bring an archived (soft-deleted) skill back. Nothing was dropped by the
+    delete — versions, golden samples and history all stayed — so restoring is
+    a state flip back to active (需求7: 删除的技能可找回)."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, skill_code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        if skill.state != "deleted":
+            raise HTTPException(409, f"技能当前状态为 {skill.state}，无需恢复")
+        await _enforce_skill_seat(s, tenant)   # a restored skill is a seat again
+        skill.state = "active"
+        await s.commit()
+    return {"skill_code": skill_code, "state": "active"}
+
+
 class DraftUpdate(BaseModel):
     package: SkillPackage
     changelog: str = ""
@@ -244,6 +271,40 @@ async def update_draft(skill_code: str, version: int, payload: DraftUpdate):
         skill.name = payload.package.name or skill.name
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "draft"}
+
+
+@router.delete("/{skill_code}/versions/{version}")
+async def delete_version(skill_code: str, version: int):
+    """Delete one DRAFT version only (需求8: 「删除当前版本」与「删除技能」是两个动作).
+
+    Published/archived versions stay immutable (§5.1) — the whole point of the
+    archive is that history cannot be silently removed; a draft that was never
+    shipped can go. A skill must keep at least one version, so deleting the
+    last remaining one is refused — for that, delete the skill instead."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, skill_code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        row = (await s.execute(
+            select(SkillVersion).where(SkillVersion.skill_code == skill_code,
+                                       SkillVersion.tenant_id == tenant,
+                                       SkillVersion.version == version))).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "version not found")
+        if row.status != "draft":
+            raise HTTPException(409, f"v{version} 已{row.status}，历史版本不可删除；"
+                                     "如需移除整个技能请使用「删除技能」")
+        remaining = (await s.execute(
+            select(func.count(SkillVersion.id))
+            .where(SkillVersion.skill_code == skill_code,
+                   SkillVersion.tenant_id == tenant))).scalar_one()
+        if remaining <= 1:
+            raise HTTPException(409, "每个技能至少保留一个版本；要移除整个技能请使用「删除技能」")
+        await s.delete(row)
+        await s.commit()
+    return {"skill_code": skill_code, "version": version, "status": "deleted"}
 
 
 @router.post("/probe")

@@ -144,6 +144,13 @@ async def list_files(status: str | None = None, q: str | None = None,
                 size = Path(f.storage_path).stat().st_size
             except OSError:
                 pass
+            processed_at = meta["processed_at"]
+            processing_seconds = None
+            if processed_at is not None:
+                start = _utc(f.created_at) if f.created_at else None
+                end = _utc(processed_at)
+                if start is not None:
+                    processing_seconds = round((end - start).total_seconds(), 1)
             all_data.append({
                 "file_id": f.id, "transaction_id": f.transaction_id,
                 "file_name": f.file_name, "skill_code": sc,
@@ -151,6 +158,8 @@ async def list_files(status: str | None = None, q: str | None = None,
                 "size": size, "page_count": f.page_count, "status": meta["status"],
                 "created_at": f.created_at.isoformat(),
                 "updated_at": meta["updated_at"].isoformat(),
+                "processed_at": processed_at.isoformat() if processed_at else None,
+                "processing_seconds": processing_seconds,
                 "verified_by": meta["verified_by"], "error": meta["error"],
                 "child_count": meta["child_count"],
                 "pending_children": meta["pending_children"],
