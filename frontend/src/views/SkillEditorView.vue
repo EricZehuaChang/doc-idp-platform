@@ -160,19 +160,23 @@
         <div class="basic-grid">
           <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
             <input v-model="pkg.model_binding.extractor" list="dl-providers"
-                   placeholder="下拉选择或直接输入，如 qwen" /></label>
+                   placeholder="下拉选择或直接输入，如 qwen"
+                   @focus="comboOpen" @input="comboTyped" @blur="comboClose" /></label>
           <label>备用模型（fallback）
             <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
                    placeholder="可空；下拉选择或直接输入"
-                   @input="pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
+                   @focus="comboOpen" @blur="comboClose"
+                   @input="comboTyped($event); pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
           <label>挑战者模型（不一致标人审）
             <input :value="pkg.model_binding.challenger ?? ''" list="dl-providers"
                    placeholder="可空；下拉选择或直接输入"
-                   @input="pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
+                   @focus="comboOpen" @blur="comboClose"
+                   @input="comboTyped($event); pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
           <label>解析器（空=自动路由）
             <input :value="pkg.parser ?? ''" list="dl-parsers"
                    placeholder="自动；下拉选择或直接输入"
-                   @input="pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
+                   @focus="comboOpen" @blur="comboClose"
+                   @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
           <p class="span2 dim combo-note">
             模型与解析器均支持下拉选择或手动输入；手动输入的名称需在服务端
             <code>configs/providers.yaml</code> / <code>configs/parsers.yaml</code> 中存在才会生效。
@@ -407,6 +411,30 @@ async function publishSelected() {
     await load(selectedVersion.value);
   } catch (e) { toast.error(e); }
 }
+// —— combobox open behaviour (2026-09-04) ——
+// A datalist filters its options by what is already in the box, so a field
+// holding "qwen" collapsed the picker to that one entry and you had to clear
+// the box by hand before you could pick anything else. Emptying the input on
+// focus shows the whole list; if the user leaves without typing or picking,
+// the old text goes back. The bound value is only ever written by the real
+// @input handler, so merely opening the list changes nothing.
+function comboOpen(ev: FocusEvent) {
+  const el = ev.target as HTMLInputElement;
+  el.dataset.prev = el.value;
+  el.dataset.typed = "";
+  el.value = "";
+}
+function comboTyped(ev: Event) {
+  (ev.target as HTMLInputElement).dataset.typed = "1";
+}
+function comboClose(ev: FocusEvent) {
+  const el = ev.target as HTMLInputElement;
+  // restore only an untouched field — a value cleared on purpose must stick
+  if (!el.dataset.typed) el.value = el.dataset.prev ?? "";
+  delete el.dataset.prev;
+  delete el.dataset.typed;
+}
+
 /** 需求8: 「删除当前版本」和「删除技能」是两个动作，各自说清作用范围。
  *  版本删除只作用于草稿；技能删除进入可恢复的存档而不是永久抹掉。 */
 async function removeVersion() {
