@@ -145,12 +145,12 @@
              customer's internal gateway), so a closed <select> would lock them
              out. The lists come from the server's own config, never hardcoded. -->
         <datalist id="dl-providers">
-          <option v-for="p in providerOptions" :key="p.name" :value="p.name">
-            {{ p.model }}{{ p.active ? "（平台默认）" : "" }}{{ p.custom ? "（自定义）" : ""
-            }}{{ p.vision ? "・支持图像" : "" }}</option>
+          <option v-for="p in providerOptions" :key="p.name" :value="p.name"
+                  :label="`${p.name} · ${p.model}${p.active ? '（平台默认）' : ''}${p.custom ? '（自定义）' : ''}${p.vision ? '・支持图像' : ''}`" />
         </datalist>
         <datalist id="dl-parsers">
-          <option v-for="p in parserOptions" :key="p" :value="p" />
+          <option v-for="p in parserOptions" :key="p.name" :value="p.name"
+                  :label="p.description ? `${p.name} — ${p.description}` : p.name" />
         </datalist>
         <div class="basic-grid">
           <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
@@ -272,7 +272,7 @@ const isNew = computed(() => props.code === "new");
 // own copy (the hardcoded list had drifted from configs/parsers.yaml)
 const providerOptions = ref<{ name: string; model: string; active: boolean;
                               custom: boolean; vision: boolean }[]>([]);
-const parserOptions = ref<string[]>([]);
+const parserOptions = ref<{ name: string; type: string; description: string | null }[]>([]);
 const activeProvider = computed(() => providerOptions.value.find((p) => p.active)?.name ?? "");
 api.skillOptions()
   .then((o) => { providerOptions.value = o.providers; parserOptions.value = o.parsers; })

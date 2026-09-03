@@ -29,12 +29,19 @@ parsers:
   - name: vlm-qwen            # 千问 qwen3-vl-plus
     type: cloud_vlm
     provider: vision-qwen
+    description: 通义千问 Qwen3-VL Plus · 图/文/视频多模态
   - name: vlm-deepseek        # DeepSeek deepseek-v4-flash-vision-exp（实验版，慢）
     type: cloud_vlm
     provider: vision-deepseek
+    description: DeepSeek V4-Flash-Vision 实验版 · 慢，仅试跑勿跑批
   - name: vlm-glm             # 智谱 glm-5.3-flash
     type: cloud_vlm
     provider: vision-glm
+    description: 智谱 GLM-5.3-Flash · 320B MoE 原生多模态
+  - name: vlm-deepseek-pro    # DeepSeek deepseek-v4-pro（1.6T MoE 原生多模态，更强更慢）
+    type: cloud_vlm
+    provider: vision-deepseek-pro
+    description: DeepSeek V4-Pro · 1.6T MoE 原生多模态（更强更慢）
   # M2: glm-ocr-local (vLLM + PP-DocLayoutV3), monkeyocr (optional, weights research-licensed), rapidocr (CPU fallback)
 default_parser:
   lite: glm-ocr-cloud

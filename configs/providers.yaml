@@ -50,3 +50,10 @@ providers:
     model: glm-5.3-flash
     base_url: https://open.bigmodel.cn/api/paas/v4
     api_key_env: ZHIPU_API_KEY
+  # DeepSeek V4-Pro GA (2026-08-13): 1.6T-total / 49B-active MoE, native image
+  # reasoning — the larger multimodal sibling of the flash-vision-exp channel
+  # below. Added 2026-09-03 as an opt-in stronger tier; the flash channel stays.
+  - name: vision-deepseek-pro
+    model: deepseek-v4-pro
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY

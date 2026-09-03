@@ -247,7 +247,7 @@ export interface SkillOptions {
   providers: { name: string; model: string; active: boolean;
                custom: boolean; vision: boolean }[];
   fallback_chain: string[];
-  parsers: string[];
+  parsers: { name: string; type: string; description: string | null }[];
 }
 
 /** A console-registered model channel. The key is never returned — `has_key`

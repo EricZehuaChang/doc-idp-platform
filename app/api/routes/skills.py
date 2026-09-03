@@ -135,7 +135,10 @@ async def model_options():
     return {
         "providers": out,
         "fallback_chain": list(cfg.get("fallback") or []),
-        "parsers": [p.name for p in load_parsers()["parsers"].values()],
+        # parsers carry a description so the editor can show what each vlm-*
+        # routing name actually resolves to (model + capability), not just the key
+        "parsers": [{"name": p.name, "type": p.type, "description": p.description}
+                    for p in load_parsers()["parsers"].values()],
     }
 
 

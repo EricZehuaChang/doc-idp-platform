@@ -33,6 +33,8 @@ class ParserCfg(BaseModel):
     # swapping the model behind a parser is a config edit, not a release
     provider: str | None = None
     for_: str | None = None
+    # Human-readable blurb shown in the skill editor picker (hover/option text)
+    description: str | None = None
 
     model_config = {"populate_by_name": True}
 

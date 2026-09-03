@@ -87,7 +87,8 @@ async def test_model_options_lists_configured_providers_and_parsers(tmp_path, mo
             names = [p["name"] for p in body["providers"]]
             assert "qwen" in names and len(names) == len(set(names))
             assert sum(1 for p in body["providers"] if p["active"]) == 1
-            assert "pdfplumber" in body["parsers"]
+            assert "pdfplumber" in [p["name"] for p in body["parsers"]]
+            assert all(set(p) == {"name", "type", "description"} for p in body["parsers"])
             # never leak key material through this non-admin route
             assert all(set(p) == {"name", "model", "active", "custom", "vision"}
                        for p in body["providers"])

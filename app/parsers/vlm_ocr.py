@@ -44,6 +44,7 @@ _PROMPT = (
 @registry.register("parser", "vlm-qwen")
 @registry.register("parser", "vlm-deepseek")
 @registry.register("parser", "vlm-glm")
+@registry.register("parser", "vlm-deepseek-pro")
 class VlmOcrParser:
     """One class, three registered names. Which model each name uses comes from
     configs/parsers.yaml (`provider:`), resolved against providers.yaml — so
