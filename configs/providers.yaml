@@ -19,9 +19,9 @@ providers:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key_env: DASHSCOPE_API_KEY
     extra_body: {enable_thinking: false}
-  - name: gpt                 # cost-optimized tier; cheaper fallback: gpt-5.4-mini
-    model: gpt-5.6-luna
-    base_url: https://api.openai.com/v1
+  - name: gpt                 # third-party OpenAI relay (aiyuhub); fallback tier
+    model: gpt-5.6
+    base_url: https://ai.aiyuhub.com/v1
     api_key_env: OPENAI_API_KEY
   - name: deepseek
     model: deepseek-v4-pro
