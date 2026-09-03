@@ -15,7 +15,7 @@ from app.billing import engine as billing
 from app.config import get_settings
 from app.extraction.provider_client import ProviderError
 from app.db import session_factory
-from app.models import GoldenSample, Skill, SkillVersion
+from app.models import GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app.skillengine import studio
@@ -273,14 +273,30 @@ async def update_draft(skill_code: str, version: int, payload: DraftUpdate):
     return {"skill_code": skill_code, "version": version, "status": "draft"}
 
 
+# a transaction whose pipeline has not finished still reloads its package by
+# (skill_code, version) — anything past these two is history the runner never
+# reads again (2026-09-04)
+_LIVE_TXN = ("queued", "processing")
+
+
 @router.delete("/{skill_code}/versions/{version}")
 async def delete_version(skill_code: str, version: int):
-    """Delete one DRAFT version only (需求8: 「删除当前版本」与「删除技能」是两个动作).
+    """Delete the version on screen (需求8: 「删除当前版本」与「删除技能」是两个动作).
 
-    Published/archived versions stay immutable (§5.1) — the whole point of the
-    archive is that history cannot be silently removed; a draft that was never
-    shipped can go. A skill must keep at least one version, so deleting the
-    last remaining one is refused — for that, delete the skill instead."""
+    Widened 2026-09-04: draft-only was too narrow to be the button people
+    actually wanted — every archived version in a real console is one a task
+    once ran, so nothing in the version rail could ever be cleaned up. What
+    stays protected is only what is still load-bearing:
+
+    - the published version, because /process resolves submissions to it;
+    - the last remaining version, because a skill with none can neither be
+      opened in the editor nor submitted against;
+    - any version an unfinished task pinned, because runner._load_package
+      reads the row back by version number while the pipeline is running.
+
+    A completed task keeps its results and its recorded version number either
+    way: nothing outside /process and the runner reads a version row.
+    """
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
@@ -293,15 +309,23 @@ async def delete_version(skill_code: str, version: int):
                                        SkillVersion.version == version))).scalar_one_or_none()
         if row is None:
             raise HTTPException(404, "version not found")
-        if row.status != "draft":
-            raise HTTPException(409, f"v{version} 已{row.status}，历史版本不可删除；"
-                                     "如需移除整个技能请使用「删除技能」")
+        if row.status == "published":
+            raise HTTPException(409, f"v{version} 是当前发布版本，不可删除；"
+                                     "请先发布其它版本，或使用「删除技能」")
         remaining = (await s.execute(
             select(func.count(SkillVersion.id))
             .where(SkillVersion.skill_code == skill_code,
                    SkillVersion.tenant_id == tenant))).scalar_one()
         if remaining <= 1:
             raise HTTPException(409, "每个技能至少保留一个版本；要移除整个技能请使用「删除技能」")
+        live = (await s.execute(
+            select(func.count(Transaction.id))
+            .where(Transaction.tenant_id == tenant,
+                   Transaction.skill_code == skill_code,
+                   Transaction.skill_version == version,
+                   Transaction.status.in_(_LIVE_TXN)))).scalar_one()
+        if live:
+            raise HTTPException(409, f"v{version} 还有 {live} 个任务在跑，等跑完再删")
         await s.delete(row)
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "deleted"}

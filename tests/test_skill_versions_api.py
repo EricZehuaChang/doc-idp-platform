@@ -173,28 +173,56 @@ async def test_delete_archives_skill_and_restore_brings_it_back(tmp_path, monkey
             assert (await c.get("/api/v1/skills", params={"state": "nope"})).status_code == 400
 
 
-async def test_delete_version_only_drafts_and_never_the_last_one(tmp_path, monkeypatch):
-    """需求8: 「删除当前版本」 removes exactly one draft; history (published/
-    archived) is immutable and a skill must keep at least one version."""
+async def test_delete_version_takes_the_selected_one_but_never_a_live_one(tmp_path, monkeypatch):
+    """需求8, widened 2026-09-04: 「删除当前版本」 removes the version on screen,
+    drafts and archived alike — draft-only left nothing deletable, since every
+    archived version in a real console is one some task once ran. Refused only
+    while the row is still load-bearing: the published version, the last
+    remaining version, and a version an unfinished task pinned."""
     app = await _client(tmp_path, monkeypatch)
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app),
                                base_url="http://test") as c:
             await c.post("/api/v1/skills", json={"package": _pkg(), "changelog": "v1"})
-            await c.post("/api/v1/skills/verspec/versions",
-                         json={"package": _pkg(), "changelog": "v2"})
+            for n in ("v2", "v3"):
+                await c.post("/api/v1/skills/verspec/versions",
+                             json={"package": _pkg(), "changelog": n})
             r = await c.delete("/api/v1/skills/verspec/versions/2")
             assert r.status_code == 200
             d = (await c.get("/api/v1/skills/verspec")).json()
-            assert [v["version"] for v in d["versions"]] == [1]
+            assert [v["version"] for v in d["versions"]] == [1, 3]
 
-            # published versions are history and cannot be deleted
+            # publishing v3 archives v1 — the archived one is exactly what the
+            # rail is full of, and it must be removable
             await c.post("/api/v1/skills/verspec/versions/1/publish")
+            await c.post("/api/v1/skills/verspec/versions/3/publish")
+            d = (await c.get("/api/v1/skills/verspec")).json()
+            assert [(v["version"], v["status"]) for v in d["versions"]] == \
+                [(1, "archived"), (3, "published")]
+
+            from app.db import session_factory
+            from app.models import Transaction
+            async with session_factory()() as s:
+                # a finished task keeps its results whatever happens to the row
+                s.add(Transaction(id="done", tenant_id="default", skill_code="verspec",
+                                  skill_version=1, status="completed"))
+                # ...but a running one still reloads its package by version
+                s.add(Transaction(id="live", tenant_id="default", skill_code="verspec",
+                                  skill_version=1, status="processing"))
+                await s.commit()
             r = await c.delete("/api/v1/skills/verspec/versions/1")
-            assert r.status_code == 409 and "删除技能" in r.json()["detail"]
-            # the last remaining version is protected the same way
+            assert r.status_code == 409 and "还有 1 个任务在跑" in r.json()["detail"]
+
+            async with session_factory()() as s:
+                txn = await s.get(Transaction, "live")
+                txn.status = "completed"
+                await s.commit()
             r = await c.delete("/api/v1/skills/verspec/versions/1")
-            assert r.status_code == 409
+            assert r.status_code == 200, r.text
+
+            # the published version and the last remaining one stay put
+            r = await c.delete("/api/v1/skills/verspec/versions/3")
+            assert r.status_code == 409 and "发布版本" in r.json()["detail"]
             assert (await c.delete("/api/v1/skills/verspec/versions/99")).status_code == 404
 
 

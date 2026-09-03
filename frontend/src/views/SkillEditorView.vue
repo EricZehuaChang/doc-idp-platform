@@ -35,8 +35,11 @@
           <button v-if="!isNew" @click="apiModal = true">🔌 API 接入</button>
           <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
             导出 YAML</button>
-          <button v-if="!isNew && selectedStatus === 'draft'" class="danger"
-                  title="只删除当前这个草稿版本；已发布/已归档的版本不受影响"
+          <button v-if="!isNew && versions.length > 1" class="danger"
+                  :disabled="selectedStatus === 'published'"
+                  :title="selectedStatus === 'published'
+                          ? '当前发布版本不可删除——提交都按它跑；请先发布其它版本'
+                          : '只删除当前这一个版本，技能与其它版本不受影响'"
                   @click="removeVersion">删除当前版本</button>
           <button v-if="!isNew" class="danger"
                   title="删除整个技能（全部版本进存档，可在技能中心恢复）"
@@ -436,15 +439,17 @@ function comboClose(ev: FocusEvent) {
 }
 
 /** 需求8: 「删除当前版本」和「删除技能」是两个动作，各自说清作用范围。
- *  版本删除只作用于草稿；技能删除进入可恢复的存档而不是永久抹掉。 */
+ *  版本删除作用于当前选中的这一个版本（草稿或已归档，2026-09-04 放宽）；
+ *  技能删除进入可恢复的存档而不是永久抹掉。发布版本由服务端拒绝，按钮置灰。 */
 async function removeVersion() {
   if (!selectedVersion.value) return;
-  const ok = confirm(`确定删除当前版本 v${selectedVersion.value}（草稿）？\n`
-    + "删除后该草稿将从版本历史中移除；已发布/已归档的版本不受影响。");
+  const ok = confirm(`确定删除 v${selectedVersion.value}（${verLabel(selectedStatus.value ?? "")}）？\n`
+    + "该版本的定义将从版本历史中移除，技能与其它版本不受影响；"
+    + "已跑完的任务保留结果，不受影响。");
   if (!ok) return;
   try {
     await api.skillDeleteVersion(props.code, selectedVersion.value);
-    toast.ok(`v${selectedVersion.value} 草稿已删除`);
+    toast.ok(`v${selectedVersion.value} 已删除`);
     await load();
   } catch (e) { toast.error(e); }
 }
