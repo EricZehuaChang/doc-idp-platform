@@ -219,7 +219,13 @@ function hasInk(canvas: HTMLCanvasElement): boolean {
   } catch { return true; }          // tainted canvas: don't cry wolf
 }
 
+// Generation token: every load bumps it, so a superseded load (navigation
+// away mid-fetch, part switch, retry) cannot paint its stale error/loading
+// state over the newer one — its aborted pdf.js promise must die silently.
+let renderSeq = 0;
+
 async function renderPdf() {
+  const seq = ++renderSeq;
   loadingTask?.destroy();
   loadingTask = null;
   pdfPages.value = [];
@@ -264,17 +270,21 @@ async function renderPdf() {
                             intent: "print" }).promise;
         inked = inked || hasInk(canvas);
       } catch (e) {
+        if (seq !== renderSeq) return;      // superseded: stop touching shared state
         pageErrors.value = { ...pageErrors.value, [i]: String((e as Error)?.message ?? e) };
       }
     }
-    blankRender.value = doc.numPages > 0 && !inked;
+    if (seq === renderSeq) blankRender.value = doc.numPages > 0 && !inked;
   } finally {
-    loading.value = false;
+    if (seq === renderSeq) loading.value = false;
   }
 }
 
 function renderPdfSafe() {
+  const seq = renderSeq + 1;
   renderPdf().catch((e) => {
+    if (seq !== renderSeq) return;                 // superseded by a newer load
+    if (/abort/i.test(String((e as Error)?.message ?? e))) return;  // benign nav abort
     console.error("[DocStage] original failed to load:", e);
     loading.value = false;
     loadError.value = String((e as Error)?.message ?? e).slice(0, 300);

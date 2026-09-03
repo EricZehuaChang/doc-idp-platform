@@ -263,6 +263,11 @@ function toggleMenu(key: string) {
   place(key);
 }
 function closeMenu() {
+  // Guard: closeMenu is wired to every document click / Esc / resize / scroll.
+  // Without it, ANY click anywhere would run applyNow() -> a fresh `applied`
+  // object -> the applied-watcher resets the list to page 1 — that is exactly
+  // why the pager's 下一页 never seemed to work (需求9 root cause).
+  if (!openCol.value) return;
   applyNow();
   openCol.value = "";
 }
