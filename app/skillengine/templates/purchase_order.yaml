@@ -1,0 +1,183 @@
+skill_code: purchase_order
+name: 采购订单 / 客户订单
+description: 买方下达的订单：订单号、订单日期、售达方、供应商、送达方、提货窗口，以及交期与数量的明细行。适合对接 ERP 收货与排产。
+kind: extract
+doc_type_hint: purchase order / customer order
+system_prompt: ''
+fields:
+- name: PO Number
+  type: string
+  instruction: 提取订单号（PO Number, Purchase Order, Order No, Bestellnummer, 订单编号）。清洗规则：移除空格、连字符与斜杠，仅输出纯字母数字组合。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: PO Date
+  type: string
+  instruction: 提取订单日期（PO Date, Order Date, Bestelldatum, 下单日期）。清洗规则：识别任何日期格式，统一输出
+    YYYY-MM-DD；未列出则输出空值。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Order type
+  type: string
+  instruction: 提取订单类型（Order Type, Auftragsart，如标准订单/寄售/退货）。输出票面原文；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Sales org
+  type: string
+  instruction: 提取销售组织代码（Sales Org, Vertriebsorganisation）；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Sold to Party
+  type: string
+  instruction: 提取售达方，即下单的客户主体（Sold To, Sold to Party, Auftraggeber, 售达方）。票面同时给出客户编号与名称时优先输出编号；仅有名称则输出公司全称。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Ship to Party
+  type: string
+  instruction: 提取送达方（Ship To, Ship to Party, Warenempfänger, 送达方, 收货方）。区分逻辑：仔细区分送达方与售达方，两者常常不同；未单独列出时输出空值，不要拿售达方顶替。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor
+  type: string
+  instruction: 提取供应商，即本订单的接单方/我方代码（Vendor, Supplier, Lieferant, 供应商）。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Pick Up Date
+  type: string
+  instruction: 提取提货日期（Pick Up Date, Abholdatum, 提货日）。清洗规则：识别任何日期格式，统一输出 YYYY-MM-DD；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Pick Up from
+  type: string
+  instruction: 提取提货时间窗的起点（Pick Up From, 提货时间自）。输出票面原文时间（如 080000 或 08:00）；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Pick time to
+  type: string
+  instruction: 提取提货时间窗的终点（Pick Up To, 提货时间至）。同起点的输出规则。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Material
+  type: string
+  instruction: 提取本订单的物料号（Material, Material No, Artikelnummer, 物料编码）。位于明细行内时留空，由明细表负责。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Line Items
+  type: table
+  instruction: 提取订单明细行：每一个交货批次一行。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns:
+  - name: Delivery Date
+    type: string
+    instruction: 该行的交货日期（Delivery Date, Lieferdatum, 交期）。清洗规则：识别任何日期格式，统一输出 YYYY-MM-DD；未列出则输出空值。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Delivery Qty
+    type: string
+    instruction: 该行的交货数量（Delivery Qty, Menge, 数量）。清洗规则：移除所有非数字字符与千分位分隔符，仅输出数值。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Customer Material
+    type: string
+    instruction: 客户物料号（Customer Material, Kundenmaterial, 客户料号）——买方自己的编码，通常与我方物料号不同。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Material
+    type: string
+    instruction: 我方物料号（Material, Artikelnummer）。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Pick Up Date
+    type: string
+    instruction: 该行单独标注的提货日期；行上未标注时输出空值，不要回填抬头的提货日期。清洗规则：识别任何日期格式，统一输出 YYYY-MM-DD；未列出则输出空值。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  entity_list: false
+few_shot: []
+validators:
+- type: required
+  field: PO Number
+  pattern: null
+  target: null
+  parts: []
+- type: required
+  field: PO Date
+  pattern: null
+  target: null
+  parts: []
+review_policy:
+  mode: auto
+  confidence_threshold: 2
+model_binding:
+  extractor: ''
+  fallback: null
+  challenger: null
+parser: null
+additional_rules: 只识别订单本身，忽略随附的条款附页、图纸与包装说明。同一份文件含多个交货批次时全部进明细行，不要拆成多份订单。抬头字段与明细行字段同名时（如
+  Material、Pick Up Date），抬头取票面抬头区的值，明细行取各行自身的值，不要互相回填。

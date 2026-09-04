@@ -5,8 +5,19 @@
         <input type="file" accept=".yaml,.yml" hidden @change="importYaml" />
         <span class="btn-like">导入 YAML</span>
       </label>
+      <!-- one class or the other: `ghost primary` together leaves primary's dark
+           text on ghost's transparent background, i.e. an invisible button -->
+      <button :class="showGallery ? 'primary' : 'ghost'"
+              @click="showGallery = !showGallery">从模板新建</button>
       <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
     </PageHeader>
+
+    <!-- gallery on demand; the empty state opens it by itself below -->
+    <section v-if="showGallery && items.length" class="card-panel pad">
+      <h3 class="gal-title">选一个最接近的单据类型</h3>
+      <p class="dim gal-hint">导入后是草稿，字段可改可删，确认无误再发布。</p>
+      <SkillTemplateGallery />
+    </section>
 
     <section class="card-panel">
       <!-- lifecycle buckets: the active roster and the delete archive (需求7) -->
@@ -46,12 +57,17 @@
       <EmptyState v-else-if="showDeleted" title="没有已删除的技能" glyph="🗄️">
         删除技能后它会出现在这里，版本与历史全部保留，可随时恢复。
       </EmptyState>
-      <EmptyState v-else title="还没有技能" glyph="⚙️">
-        定义 1-2 个样本即可上线一个技能：上传样本预标注 → 核对字段 → 试跑 → 发布。
-        <template #action>
-          <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
-        </template>
-      </EmptyState>
+      <div v-else class="first-run">
+        <EmptyState title="还没有技能" glyph="⚙️">
+          技能 = 一类单据抽哪些字段。从下面挑一个最接近的开始，比从空白想字段快得多；
+          导入后是草稿，字段可改可删，确认无误再发布。
+          <template #action>
+            <router-link to="/skills/new">
+              <button class="ghost">从空白新建</button></router-link>
+          </template>
+        </EmptyState>
+        <SkillTemplateGallery class="first-gallery" />
+      </div>
     </section>
   </main>
 </template>
@@ -64,11 +80,13 @@ import { api, downloadFile, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
+import SkillTemplateGallery from "../components/SkillTemplateGallery.vue";
 import { toast } from "../toast";
 
 const router = useRouter();
 const qc = useQueryClient();
 const showDeleted = ref(false);
+const showGallery = ref(false);
 const { data, isLoading } = useQuery({
   queryKey: computed(() => ["skills", showDeleted.value]),
   queryFn: () => showDeleted.value ? api.skillsByState("deleted") : api.skills(),
@@ -106,6 +124,11 @@ async function importYaml(ev: Event) {
 </script>
 
 <style scoped>
+.pad { padding: 14px 16px 18px; }
+.gal-title { margin: 0 0 2px; font-size: 14px; }
+.gal-hint { margin: 0 0 12px; font-size: 12px; }
+.first-run { padding: 8px 16px 24px; }
+.first-gallery { margin-top: 4px; }
 .tabs { display: flex; gap: 8px; align-items: center; padding: 12px 14px 0; }
 .tabs .badge-r { margin-left: 4px; }
 .tabs .hint { margin-left: auto; font-size: 12px; }

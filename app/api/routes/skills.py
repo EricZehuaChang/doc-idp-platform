@@ -18,7 +18,7 @@ from app.db import session_factory
 from app.models import GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
-from app.skillengine import studio
+from app.skillengine import catalog, studio
 from app.skillengine.schema import SkillPackage
 from app.tenancy import current_actor, current_tenant
 
@@ -148,6 +148,50 @@ async def model_options():
         "parsers": [{"name": p.name, "type": p.type, "description": p.description}
                     for p in load_parsers()["parsers"].values()],
     }
+
+
+@router.get("/templates")
+async def list_skill_templates():
+    """Built-in starter templates for the "new skill" gallery (onboarding P0).
+
+    Read-only and tenant-independent — templates ship with the build, so there
+    is nothing here to scope. Declared before GET /{skill_code} so "templates"
+    is not read as a skill code.
+    """
+    return {"templates": catalog.list_templates()}
+
+
+@router.post("/templates/{template_id}/import", status_code=201)
+async def import_skill_template(template_id: str):
+    """Instantiate a built-in template as a draft skill for this tenant.
+
+    Same landing state as POST /import (draft v1, editor opens on it) — the
+    only difference is where the package came from. The skill code is derived
+    per tenant because `Skill.code` is a global primary key: handing out the
+    template id verbatim would 409 for every tenant after the first.
+    """
+    pkg = catalog.get_template(template_id)
+    if pkg is None:
+        raise HTTPException(404, f"模板不存在: {template_id}")
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await _enforce_skill_seat(s, tenant)   # a template still costs a seat
+        code = None
+        for cand in catalog.candidate_codes(template_id, tenant):
+            if await s.get(Skill, cand) is None:
+                code = cand
+                break
+        if code is None:
+            raise HTTPException(409, f"该模板已导入过多次，请先清理旧的「{pkg.name}」技能")
+        pkg.skill_code = code
+        s.add(Skill(code=code, tenant_id=tenant, name=pkg.name or code, kind=pkg.kind))
+        s.add(SkillVersion(tenant_id=tenant, skill_code=code, version=1,
+                           status="draft", package=pkg.model_dump(),
+                           changelog=f"从内置模板「{pkg.name}」创建"))
+        await s.commit()
+    return {"skill_code": code, "version": 1, "status": "draft",
+            "template_id": template_id, "name": pkg.name}
 
 
 @router.get("/{skill_code}")

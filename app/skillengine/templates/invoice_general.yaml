@@ -1,0 +1,366 @@
+skill_code: invoice_general
+name: 通用发票
+description: 国际商业发票：抬头、买卖双方、税号、金额税额、收款银行、明细行，含总额=不含税+税额的算术校验与交叉核对说明字段。
+kind: extract
+doc_type_hint: commercial invoice
+system_prompt: ''
+fields:
+- name: Invoice No.
+  type: string
+  instruction: 查找发票号码（可能标记为 Invoice No, Fatura No, Ref, Number 等）。清洗规则：移除所有空格、连字符(-)、斜杠(/)和特殊符号，仅输出纯字母数字组合。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Currency
+  type: string
+  instruction: 识别发票金额的币种（可能标记为 Currency, ISO, 或金额符号）。标准化规则：无论文档显示 'TL','USD','EUR'
+    还是 '¥'，输出 ISO 4217 三位大写代码（如 TRY, USD, JPY, KRW）。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Date
+  type: string
+  instruction: 查找开票日期（可能标记为 Date, Fatura Tarihi, Invoice Date）。清洗规则：识别任何日期格式并统一转换为
+    YYYY-MM-DD。日期格式冲突处理：如 11/02/2026，优先按国家判断——美国发票为 November 2 2026，其他国家通常为 February
+    11 2026。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Due Date
+  type: string
+  instruction: 查找付款到期日（Due Date, Vade Tarihi, Payment Date, Net 30）。统一转换为 YYYY-MM-DD；未明确列出则输出空值。日期格式冲突处理同开票日期。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Payment Terms
+  type: string
+  instruction: 提取付款条款描述（Payment Terms, Odeme Sarti, Bedingungen）。提取文本描述（如 'Net 30','Advance','见备注'）；未明确列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Tax Clauses
+  type: string
+  instruction: 提取税务条款或税务说明相关信息；未明确列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Country
+  type: string
+  instruction: 识别发票发行国家（Country, Issuer Country, 地址中的国家名）。标准化规则：按发票地址或内容判断，输出 ISO
+    3166-1 两位大写字母代码（TR, US, JP, GB, DE）。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Name
+  type: string
+  instruction: 提取开票方名称。寻找关键词：'Issuer','Seller','Supplier','Vendor','From','Bill From','Facturado
+    por','Fournisseur','Lieferant','Aussteller','Vendedor','Продавец','Satıcı','納税者名称','사업자명'
+    等标签后的信息。排版逻辑：找不到关键词时通常位于文档最顶端，且通常含公司后缀（Ltd, Inc, GmbH, S.A., 株式会社, 유한회사）。仅输出公司全称，不含地址或税号。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Tax ID
+  type: string
+  instruction: 提取开票方税号。寻找关键词：'Tax ID','VAT','TIN','SSN','EIN','CUIT','NIF','CIF','OGRN','INN','KVK','ABN','GST','BRN','NTN','PKD','UID','VKN','Mersis
+    No','納税者番号','사업자등록번호' 等。格式特征：通常由数字组成，欧盟国家常以国家代码开头（DE, FR, ES, IT）。注意：请勿提取银行账号（IBAN）或电话号码；未明确列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Address
+  type: string
+  instruction: 提取开票方地址（Address, Addr, Billing Address, Adresse, Dirección,Адрес, 住所,
+    주소）。通常含门牌号/邮编与街道城市国家；跨多行请合并；未列出则输出空值。位置提示：通常紧邻开票方名称下方或页眉区域。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Customer Name
+  type: string
+  instruction: '提取收票方名称（Bill To, Sold To, Customer, Client, Buyer, Ship To,Consignee,
+    Müşteri, 得意先, 고객명）。注意：请勿提取联系人姓名，仅提取公司名称；未列出则输出空值。位置提示：通常位于发票右上角 To: 区或左下角。'
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Customer Tax ID
+  type: string
+  instruction: 提取收票方税号（Tax ID, VAT, TIN, VKN, INN, NIF, CIF, 納税者番号,사업자등록번호）。区分逻辑：仔细区分这是买方税号而非卖方税号；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Customer Address
+  type: string
+  instruction: 提取收票方地址，通常位于 Customer 或 Bill To 区块内、收票方名称下方；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Total Invoice Amount
+  type: string
+  instruction: 提取发票总金额。寻找 'Total','Amount Due','Payable','Grand Total','Balance Due','Odenecek
+    Tutar','Saldo','Gesamtsumme','Montant Total' 等标签后的数值。清洗规则：移除所有货币符号（$ € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加
+    .00（100→100.00）。输出格式：仅数字 xxx.xx。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Amount (excl.Tax)
+  type: string
+  instruction: 提取发票不含税金额。寻找 'Subtotal','Net Amount','Amount without Tax','Net Total','Ara
+    Toplam','Netto','Sous-total' 等税前金额。注意：请勿提取含税总额或折扣后金额。清洗规则：移除所有货币符号（$ € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加
+    .00（100→100.00）。输出格式：仅数字 xxx.xx。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Tax Code
+  type: string
+  instruction: 提取发票税率：识别适用的单一税率或主要税率（'VAT','Tax Rate','KDV Oran','MwSt','Taux'）。输出格式：仅百分比数值，如
+    20%, 18.0%, 0%；存在多档税率时提取票面信息。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Invoice Tax Amount
+  type: string
+  instruction: 提取发票税额：单独列出的税金总额（'Tax','VAT','KDV Tutar','GST','IVA','Hesaplanan KDV','Umsatzsteuer','TVA'）。清洗规则：移除所有货币符号（$
+    € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加 .00（100→100.00）。输出格式：仅数字 xxx.xx。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Bank Account No.
+  type: string
+  instruction: 提取开票公司银行账号（'Account Number','Hesap Numarası','Konto-Nr','N° de compte'）。移除所有空格，输出连续数字字符串；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Bank Name
+  type: string
+  instruction: 提取收款银行名称（'Bank Name','Banka Adı','Banco'）。保留完整名称含品牌标识（HSBC, Deutsche
+    Bank），移除地址/账号信息；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Bank Address
+  type: string
+  instruction: 提取收款银行地址，保留街道/城市/邮编/国家，移除银行名称与账号；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Bank IBAN
+  type: string
+  instruction: 提取收款银行 IBAN。移除所有空格和连字符，输出连续字符串。某些发票将 IBAN 和 BIC/SWIFT 合并在同一字段，需要分离；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Vendor Bank BIC/SWIFT
+  type: string
+  instruction: 提取收款银行 BIC/SWIFT（'BIC','SWIFT','Bank Identifier Code','Bankleitzahl'）。移除空格连字符输出连续字符串；与
+    IBAN 合并时需分离；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Original Invoice Number
+  type: string
+  instruction: 提取红字发票中的被红冲发票号码。限定范围：先通过多语言关键词确认文档为红字发票（Credit Note）；若为非红字发票该字段为空。输出无空格连续字符串。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: Item
+  type: table
+  instruction: 提取发票中的明细项
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns:
+  - name: Item No.
+    type: string
+    instruction: 明细项序号：表格最左侧数字序号或 'Line','No','Sıra','Position' 标题下方；无显式序号时按表格行顺序从
+      1 自动生成。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Description
+    type: string
+    instruction: 明细描述：商品名称/服务描述（'Description','Product','Service','Açıklama','Beschreibung','Libellé'）。保留完整文本，换行符用空格代替。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Unit Price
+    type: string
+    instruction: 明细单价（'Unit Price','Birim Fiyat','Preis','Prix Unitaire'）。清洗规则：移除所有货币符号（$
+      € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加 .00（100→100.00）。输出格式：仅数字 xxx.xx。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Quantity
+    type: string
+    instruction: 明细数量（'Quantity','Qty','Miktar','Anzahl','Quantité'）。移除所有非数字字符。必须保留
+      8 位小数：整数补全为 .00000000，小数补零至 8 位（2→2.00000000，1.5→1.50000000）。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Unit
+    type: string
+    instruction: 明细单位：'Unit','Einheit','Birim','Unité' 标题下的简短文本（1-4 字符，如 Hour/Piece/Adet/Stk/Lot）；未找到输出空值。
+    mode: verbatim
+    required: false
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Amount
+    type: string
+    instruction: 明细含税金额。清洗规则：移除所有货币符号（$ € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加
+      .00（100→100.00）。输出格式：仅数字 xxx.xx。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Tax Rate
+    type: string
+    instruction: 明细税率（'Tax Rate','VAT %','KDV Oran','MwSt'）。输出百分比 xx% 或 xx.x%。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Tax Amount
+    type: string
+    instruction: 明细税额（'Tax Amount','VAT Amount','KDV Tutar','Montant TVA'）。清洗规则：移除所有货币符号（$
+      € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加 .00（100→100.00）。输出格式：仅数字 xxx.xx。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  - name: Amount excl. Tax
+    type: string
+    instruction: 明细不含税金额（'Net Amount','Subtotal','Mal/Hizmet Tutarı','Nettobetrag','Montant
+      HT'）。清洗规则：移除所有货币符号（$ € £ TL ¥）和千分位分隔符；小数点后只有一位则补零（150.5→150.50）；无小数点则加 .00（100→100.00）。输出格式：仅数字
+      xxx.xx。
+    mode: verbatim
+    required: true
+    anchor_hints: []
+    enum_values: []
+    columns: []
+    entity_list: false
+  entity_list: false
+- name: Cross Check
+  type: string
+  instruction: 核对发票总金额（Total Invoice Amount）是否等于不含税金额（Invoice Amount (excl.Tax)）加税额（Invoice
+    Tax Amount）；先输出结论，再用英文输出详细的计算过程。
+  mode: inferred
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+few_shot: []
+validators:
+- type: required
+  field: Invoice No.
+  pattern: null
+  target: null
+  parts: []
+- type: required
+  field: Total Invoice Amount
+  pattern: null
+  target: null
+  parts: []
+- type: sum_equals
+  field: null
+  pattern: null
+  target: Total Invoice Amount
+  parts:
+  - Invoice Amount (excl.Tax)
+  - Invoice Tax Amount
+review_policy:
+  mode: auto
+  confidence_threshold: 2
+model_binding:
+  extractor: ''
+  fallback: null
+  challenger: null
+parser: null
+additional_rules: 请识别文档中的所有发票，忽略申请表、报价单或非结算单据。存在部分发票分页的情况，不要识别为两张。提取的内容请直接输出原文（按各字段清洗规则规范化）。

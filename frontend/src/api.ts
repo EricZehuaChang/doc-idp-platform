@@ -126,6 +126,13 @@ export interface SkillInfo {
   published_version: number | null;
 }
 
+/** built-in starter template card — enough to choose without opening the editor */
+export interface SkillTemplate {
+  id: string; name: string; description: string; doc_type_hint: string;
+  field_count: number; table_count: number; column_count: number;
+  validator_count: number;
+}
+
 // —— upload surface ——
 export interface UploadLimits {
   extensions: string[]; max_files: number; max_size_mb: number; max_batch_mb: number;
@@ -365,6 +372,13 @@ export const api = {
     req("POST", `/api/v1/skills/${code}/versions/${version}/publish`),
   skillExportUrl: (code: string, version?: number) =>
     `/api/v1/skills/${code}/export${version ? `?version=${version}` : ""}`,
+  /** built-in starter templates: the gallery that replaces a blank editor */
+  skillTemplates: () =>
+    req<{ templates: SkillTemplate[] }>("GET", "/api/v1/skills/templates"),
+  /** instantiate a template as a draft skill (server derives a per-tenant code) */
+  skillTemplateImport: (id: string) =>
+    req<{ skill_code: string; version: number; name: string }>(
+      "POST", `/api/v1/skills/templates/${id}/import`),
   skillImport: (file: File) => {
     const f = new FormData();
     f.append("file", file);

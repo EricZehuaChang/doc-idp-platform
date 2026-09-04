@@ -1,0 +1,183 @@
+skill_code: travel_ticket
+name: 差旅票据（机票 / 火车票）
+description: 航空运输电子客票行程单与铁路电子客票：旅客、行程、票价与税费拆分、合计金额。适合差旅报销归集与合规校验。
+kind: extract
+doc_type_hint: air itinerary receipt / railway e-ticket
+system_prompt: ''
+fields:
+- name: 票据类型
+  type: enum
+  instruction: 判断本张票据是「航空运输电子客票行程单」还是「铁路电子客票」。输出固定二选一：机票 / 火车票。
+  mode: inferred
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 票号
+  type: string
+  instruction: 提取票号（机票为电子客票号码/票号，火车票为票号或电子客票号）。清洗规则：移除空格与连字符，输出连续字符串。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 旅客姓名
+  type: string
+  instruction: 提取旅客姓名。注意：只取乘车/乘机人姓名，不要取购票人或报销单位联系人。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 证件号码
+  type: string
+  instruction: 提取旅客身份证件号码。脱敏要求：票面本身打星号的按票面原样输出，不要尝试补全；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 出发站
+  type: string
+  instruction: 提取始发地：机票取出发机场/城市，火车票取出发站名。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 到达站
+  type: string
+  instruction: 提取目的地：机票取到达机场/城市，火车票取到达站名。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 航班号或车次
+  type: string
+  instruction: 机票提取航班号（如 CA1234），火车票提取车次（如 G101）。清洗规则：移除空格，字母统一大写。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 乘车或乘机日期
+  type: string
+  instruction: 提取实际出行日期，不是开票日期。清洗规则：识别任何日期格式，统一输出 YYYY-MM-DD；未列出则输出空值。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 出发时间
+  type: string
+  instruction: 提取票面出发时间；输出 HH:MM；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 座位等级
+  type: string
+  instruction: 提取舱位或席别（经济舱/公务舱/头等舱，二等座/一等座/商务座）。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 票价
+  type: string
+  instruction: 提取票价本身，不含税费与附加费。清洗规则：移除货币符号与千分位分隔符，保留两位小数（100→100.00）。输出格式：仅数字 xxx.xx。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 燃油附加费
+  type: string
+  instruction: 提取燃油附加费（YQ/YR）。火车票无此项时输出空值。清洗规则：移除货币符号与千分位分隔符，保留两位小数（100→100.00）。输出格式：仅数字
+    xxx.xx。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 民航发展基金
+  type: string
+  instruction: 提取民航发展基金/机场建设费（CN）。火车票无此项时输出空值。清洗规则：移除货币符号与千分位分隔符，保留两位小数（100→100.00）。输出格式：仅数字
+    xxx.xx。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 合计金额
+  type: string
+  instruction: 提取票面合计金额。清洗规则：移除货币符号与千分位分隔符，保留两位小数（100→100.00）。输出格式：仅数字 xxx.xx。
+  mode: verbatim
+  required: true
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 开票日期
+  type: string
+  instruction: 提取票据的开具日期，注意与出行日期区分。清洗规则：识别任何日期格式，统一输出 YYYY-MM-DD；未列出则输出空值。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+- name: 销售方
+  type: string
+  instruction: 提取出票方/销售单位名称（航空公司、代理机构或铁路运输企业）。
+  mode: verbatim
+  required: false
+  anchor_hints: []
+  enum_values: []
+  columns: []
+  entity_list: false
+few_shot: []
+validators:
+- type: required
+  field: 票号
+  pattern: null
+  target: null
+  parts: []
+- type: required
+  field: 合计金额
+  pattern: null
+  target: null
+  parts: []
+- type: sum_equals
+  field: null
+  pattern: null
+  target: 合计金额
+  parts:
+  - 票价
+  - 燃油附加费
+  - 民航发展基金
+review_policy:
+  mode: auto
+  confidence_threshold: 2
+model_binding:
+  extractor: ''
+  fallback: null
+  challenger: null
+parser: null
+additional_rules: 一份 PDF/OFD 内含多张票据时逐张识别，不要合并。火车票没有燃油附加费与民航发展基金，这两个字段输出空值，此时合计金额等于票价，算术校验按空值为
+  0 处理。
