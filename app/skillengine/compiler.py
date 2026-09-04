@@ -10,22 +10,58 @@ from app.skillengine.schema import FieldSpec, SkillPackage
 _MAX_DOC_CHARS = 24000   # final guard after multi-page detail-table map/reduce
 
 
+def _rule_text(instruction: str, indent: str) -> str:
+    """Render a field's rule without destroying its structure.
+
+    Authors write multi-step rules across several lines; concatenating them into
+    one run-on line inside a bullet lost the step boundaries the model is meant
+    to follow. Continuation lines are re-indented under the bullet instead.
+    """
+    lines = [ln.strip() for ln in (instruction or "").strip().splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return f" 规则: {lines[0]}"
+    body = ("\n" + indent + "  ").join(lines)
+    return f" 规则:\n{indent}  {body}"
+
+
+def _mode_note(f: FieldSpec) -> str:
+    return ("（推断字段：允许推理，必须给 reasoning）" if f.mode == "inferred"
+            else "（原文字段：值必须来自文档原文，绝不编造）")
+
+
+def _spec_line(f: FieldSpec, bullet: str, indent: str) -> str:
+    """One field/column definition line. Columns render through the same path as
+    scalars so a column never silently carries less than the author wrote."""
+    rule = _rule_text(f.instruction, indent)
+    anchors = f" 锚点词: {', '.join(f.anchor_hints)}" if f.anchor_hints else ""
+    required = " 必填" if f.required else ""
+    if f.type == "enum":
+        head = f"{f.name}: 枚举，只能取 {f.enum_values}。"
+    else:
+        head = f"{f.name}: {f.type}。"
+    return f"{indent}{bullet} {head}{_mode_note(f)}{required}{rule}{anchors}"
+
+
 def _field_lines(fields: list[FieldSpec]) -> str:
     lines = []
     for f in fields:
-        rule = f" 规则: {f.instruction}" if f.instruction else ""
-        anchors = f" 锚点词: {', '.join(f.anchor_hints)}" if f.anchor_hints else ""
-        mode = "（推断字段：允许推理，必须给 reasoning）" if f.mode == "inferred" else "（原文字段：值必须来自文档原文，绝不编造）"
         if f.type == "table":
-            cols = ", ".join(c.name for c in f.columns)
+            rule = _rule_text(f.instruction, "")
             sweep = ("（实体清单表：逐段扫描全文，找出所有命中值，每个值单独一行，"
                      "禁止遗漏；值必须逐字来自文档原文，同一值出现多处只输出一行）"
                      if f.entity_list else "")
+            cols = ", ".join(c.name for c in f.columns)
             lines.append(f"- {f.name}: 明细表，输出对象数组，列: [{cols}]。{sweep}{rule}")
-        elif f.type == "enum":
-            lines.append(f"- {f.name}: 枚举，只能取 {f.enum_values}。{mode}{rule}{anchors}")
+            # column rules used to be dropped entirely — only the names above
+            # reached the model, so any cleaning/format rule an author wrote on a
+            # line-item column was never sent at all
+            if f.columns:
+                lines.append("  每行对象的列定义：")
+                lines.extend(_spec_line(c, "·", "  ") for c in f.columns)
         else:
-            lines.append(f"- {f.name}: {f.type}。{mode}{rule}{anchors}")
+            lines.append(_spec_line(f, "-", ""))
     return "\n".join(lines)
 
 
@@ -53,13 +89,18 @@ def compile_messages(pkg: SkillPackage, udr: UDR,
     )
     if pkg.additional_rules:
         system += f"\n附加规则：{pkg.additional_rules}"
+    # Field definitions belong to the skill contract, not to the document, and
+    # they carry the author's per-field rules. Left in the user turn they were
+    # one bullet in a long list ahead of up to 24k chars of document text, which
+    # is why a rule written on a field lost to the same rule written as an
+    # additional rule. They ride in the system turn with the other constraints.
+    system += f"\n\n## 字段定义\n{_field_lines(pkg.fields)}"
 
     doc_text = udr.full_markdown or udr.full_text()
     if len(doc_text) > _MAX_DOC_CHARS:
         doc_text = doc_text[:_MAX_DOC_CHARS] + "\n...[截断]"
 
     user = (
-        f"## 字段定义\n{_field_lines(pkg.fields)}\n\n"
         f"## 输出契约（JSON，键必须完全一致）\n"
         f"{json.dumps(_output_contract(pkg.fields), ensure_ascii=False)}\n\n"
         f"## 文档内容\n{doc_text}"

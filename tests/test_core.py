@@ -33,11 +33,16 @@ PKG = SkillPackage(
 
 
 def test_compiler_builds_contract_and_fewshot():
+    """Field definitions ride in the system turn with the other constraints;
+    the user turn carries the output contract and the document."""
     msgs = compile_messages(PKG, UDR_SAMPLE)
     assert msgs[0]["role"] == "system"
-    body = msgs[-1]["content"]
-    assert "invoice_no" in body and "INV-2026-001" in body
-    assert "推断字段" in body        # inferred mode surfaces in prompt discipline
+    system, body = msgs[0]["content"], msgs[-1]["content"]
+    assert "invoice_no" in system and "发票号码" in system
+    assert "推断字段" in system      # inferred mode surfaces in prompt discipline
+    assert "INV-2026-001" in body    # document text stays in the user turn
+    assert "invoice_no" in body      # via the output contract
+    assert "## 字段定义" not in body
 
 
 def test_validators_rule_channel():
@@ -156,12 +161,43 @@ def test_table_cell_hits_carry_percent_coords_when_page_has_dims(monkeypatch):
     assert hit["w"] == 55.0 and hit["h"] == 5.0          # 110/200, 20/400
 
 
+def test_compiler_sends_table_column_rules():
+    """Column instructions used to be dropped outright — only column NAMES
+    reached the model — so any cleaning/format rule an author wrote on a
+    line-item column was never sent. Everything the author wrote must ship."""
+    pkg = SkillPackage(skill_code="t", fields=[
+        FieldSpec(name="Item", type="table", instruction="提取明细行", columns=[
+            FieldSpec(name="Qty", type="number", required=True,
+                      instruction="移除非数字字符，保留 8 位小数"),
+            FieldSpec(name="Unit", type="enum", enum_values=["Hour", "Piece"],
+                      instruction="单位缩写", anchor_hints=["Unit", "Einheit"]),
+        ])])
+    system = compile_messages(pkg, UDR_SAMPLE)[0]["content"]
+    assert "移除非数字字符，保留 8 位小数" in system      # the column rule itself
+    assert "单位缩写" in system
+    assert "['Hour', 'Piece']" in system                  # column enum values
+    assert "Einheit" in system                            # column anchor hints
+    assert "必填" in system                               # column required flag
+
+
+def test_compiler_keeps_multi_step_rule_structure():
+    """A rule authored across lines used to be flattened into one run-on line,
+    losing the step boundaries the model is supposed to follow."""
+    pkg = SkillPackage(skill_code="t", fields=[
+        FieldSpec(name="amount", instruction="① 去掉货币符号\n② 保留两位小数\n③ 输出 xxx.xx")])
+    system = compile_messages(pkg, UDR_SAMPLE)[0]["content"]
+    for step in ("① 去掉货币符号", "② 保留两位小数", "③ 输出 xxx.xx"):
+        assert step in system
+    # each step keeps its own (indented) line rather than collapsing into one
+    assert "\n  ② 保留两位小数\n" in system
+
+
 def test_compiler_entity_list_sweep_instruction():
     pkg = SkillPackage(skill_code="m", fields=[
         FieldSpec(name="打码字段", type="table", entity_list=True,
                   columns=[FieldSpec(name="内容")])])
-    body = compile_messages(pkg, UDR_SAMPLE)[-1]["content"]
-    assert "实体清单表" in body and "禁止遗漏" in body
+    system = compile_messages(pkg, UDR_SAMPLE)[0]["content"]
+    assert "实体清单表" in system and "禁止遗漏" in system
 
 
 def test_multi_page_detail_table_maps_and_reduces(monkeypatch):
