@@ -57,3 +57,23 @@ providers:
     model: deepseek-v4-pro
     base_url: https://api.deepseek.com/v1
     api_key_env: DEEPSEEK_API_KEY
+  # iruidong relay (2026-09-04): https://api.iruidong.com/v1, key IRUIDONG_API_KEY.
+  # OpenAI-compatible relay serving GLM-5.3-Flash / DeepSeek V4 Flash / DeepSeek V4 Pro / GLM-5.3
+  # (verified live 2026-09-04 against /models with the rk- key). Names are distinct from
+  # built-in + console channels so provider resolution never has two answers.
+  - name: iruidong-glm-flash
+    model: glm-5.3-flash
+    base_url: https://api.iruidong.com/v1
+    api_key_env: IRUIDONG_API_KEY
+  - name: iruidong-ds-flash
+    model: deepseek-v4-flash
+    base_url: https://api.iruidong.com/v1
+    api_key_env: IRUIDONG_API_KEY
+  - name: iruidong-ds-pro
+    model: deepseek-v4-pro
+    base_url: https://api.iruidong.com/v1
+    api_key_env: IRUIDONG_API_KEY
+  - name: iruidong-glm
+    model: glm-5.3
+    base_url: https://api.iruidong.com/v1
+    api_key_env: IRUIDONG_API_KEY
