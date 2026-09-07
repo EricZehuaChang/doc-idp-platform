@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -15,9 +16,9 @@ from sqlalchemy import select
 
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
-from app.config import get_settings
 from app.db import session_factory
 from app.models import FileRecord, Skill, SkillVersion, Transaction
+from app.storage import get_storage
 from app.tasks import runner
 from app.tenancy import current_actor, current_tenant
 
@@ -158,16 +159,14 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
                                     "请充值后重试(失败页不会扣费)。")
 
         out = []
-        store_dir = Path(get_settings().data_dir) / "files" / tenant / txn.id
-        store_dir.mkdir(parents=True, exist_ok=True)
+        st = get_storage()
         for name, blob in blobs:
             # content-hash name: dedupe-friendly, no path injection from filename
             digest = hashlib.sha256(blob).hexdigest()[:16]
             suffix = Path(name).suffix.lower()
-            path = store_dir / f"{digest}{suffix}"
-            path.write_bytes(blob)
+            key = st.put_bytes(f"files/{tenant}/{txn.id}/{digest}{suffix}", blob)
             rec = FileRecord(tenant_id=tenant, transaction_id=txn.id,
-                             file_name=name or path.name, storage_path=str(path))
+                             file_name=name or Path(key).name, storage_path=key)
             s.add(rec)
             await s.flush()
             out.append({"file_id": rec.id, "original_filename": rec.file_name})
@@ -191,7 +190,8 @@ async def download(file_id: str):
         # content is immutable per file_id (content-hash storage): let the
         # browser cache it — second open of the review page renders instantly
         # (frontend caching design v0.2 §9.0 layer ③)
-        return FileResponse(f.storage_path, filename=f.file_name,
+        return FileResponse(get_storage().local_path(f.storage_path),
+                            filename=f.file_name,
                             headers={"Cache-Control": "private, max-age=86400, immutable"})
 
 
@@ -210,36 +210,37 @@ async def preview(file_id: str):
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
         suffix = Path(f.file_name).suffix.lower()
-        src = f.storage_path
+        src = get_storage().local_path(f.storage_path)
         stem = Path(f.file_name).stem
     immutable = {"Cache-Control": "private, max-age=86400, immutable"}
     if suffix in (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"):
         return FileResponse(src, filename=f"{stem}{suffix}", headers=immutable)
     if suffix not in _OFFICE_PREVIEW:
         raise HTTPException(422, f"{suffix} 格式暂不支持原件预览，请下载原件查看")
-    cache_dir = Path(get_settings().data_dir) / "preview"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached = cache_dir / f"{file_id}.pdf"
-    if cached.exists() and cached.stat().st_size > 0:
-        return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
+    st = get_storage()
+    cached_key = f"preview/{file_id}.pdf"
+    if st.exists(cached_key) and st.size(cached_key) > 0:
+        return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
+                            headers=immutable)
     soffice = _find_soffice()
     if not soffice:
         raise HTTPException(422, "该格式的原件预览需要服务器安装 LibreOffice，"
                                  "当前服务器未安装；请下载原件查看")
     async with _preview_lock:
         # re-check under the lock: a concurrent request may have just converted
-        if cached.exists() and cached.stat().st_size > 0:
-            return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
-        work_dir = cache_dir / f"work-{file_id}"
-        work_dir.mkdir(parents=True, exist_ok=True)
+        if st.exists(cached_key) and st.size(cached_key) > 0:
+            return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
+                                headers=immutable)
+        work_dir = Path(tempfile.mkdtemp(prefix=f"idp-preview-{file_id}-"))
         try:
             out = await _convert_office_to_pdf(soffice, src, work_dir)
-            os.replace(out, cached)               # atomic cache write
+            st.put_file(cached_key, str(out))     # atomic-enough cache write
         except PreviewConvertError as e:
             raise HTTPException(422, f"原件转换失败：{e}") from e
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
-    return FileResponse(cached, filename=f"{stem}.pdf", headers=immutable)
+    return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
+                        headers=immutable)
 
 
 @router.get("/status/{transaction_id}")

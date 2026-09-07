@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./data/idp.db"
     data_dir: Path = REPO_ROOT / "data"
+    storage_backend: str = "local"  # only LocalStorage exists (WP2); seam for a future object store
     deploy_tier: str = "lite"      # lite | standard | air_gapped (design §8)
     default_tenant: str = "default"
 

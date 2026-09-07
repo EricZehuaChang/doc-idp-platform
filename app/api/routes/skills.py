@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.billing import engine as billing
-from app.config import get_settings
 from app.extraction.provider_client import ProviderError
 from app.db import session_factory
 from app.models import GoldenSample, Skill, SkillVersion, Transaction
@@ -20,6 +19,7 @@ from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app.skillengine import catalog, studio
 from app.skillengine.schema import SkillPackage
+from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant
 
 
@@ -56,11 +56,10 @@ async def _parse_upload_kept(up: UploadFile, tenant: str,
     blob = await up.read()
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(up.filename or "sample").suffix.lower()
-    store = Path(get_settings().data_dir) / "samples" / tenant
-    store.mkdir(parents=True, exist_ok=True)
-    path = store / f"{digest}{suffix}"
-    path.write_bytes(blob)
-    return str(path), await asyncio.to_thread(parse_document, str(path), pinned)
+    st = get_storage()
+    key = st.put_bytes(f"samples/{tenant}/{digest}{suffix}", blob)
+    local = st.local_path(key)
+    return local, await asyncio.to_thread(parse_document, local, pinned)
 
 
 class SkillCreate(BaseModel):
@@ -571,19 +570,17 @@ async def add_golden(skill_code: str, file: UploadFile = File(...),
     blob = await file.read()
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(file.filename or "golden").suffix.lower()
-    store = Path(get_settings().data_dir) / "golden" / tenant / skill_code
-    store.mkdir(parents=True, exist_ok=True)
-    path = store / f"{digest}{suffix}"
-    path.write_bytes(blob)
+    key = get_storage().put_bytes(f"golden/{tenant}/{skill_code}/{digest}{suffix}",
+                                  blob)
     sf = session_factory()
     async with sf() as s:
         if (await s.get(Skill, skill_code)) is None:
             raise HTTPException(404, "skill not found")
         s.add(GoldenSample(tenant_id=tenant, skill_code=skill_code,
-                           storage_path=str(path),
+                           storage_path=key,
                            expected=_json.loads(expected)))
         await s.commit()
-    return {"skill_code": skill_code, "stored": path.name}
+    return {"skill_code": skill_code, "stored": Path(key).name}
 
 
 @router.post("/{skill_code}/versions/{version}/golden-check")
@@ -610,8 +607,9 @@ async def golden_check(skill_code: str, version: int):
     def _run():
         # the gate must exercise the parser the version actually pins, or it
         # certifies something production will not run
-        pairs = [(parse_document(g.storage_path, pkg.parser), g.expected or {})
-                 for g in goldens]
+        st = get_storage()
+        pairs = [(parse_document(st.local_path(g.storage_path), pkg.parser),
+                  g.expected or {}) for g in goldens]
         return studio.golden_check(pkg, pairs)
 
     return await asyncio.to_thread(_run)

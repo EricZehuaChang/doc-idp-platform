@@ -17,6 +17,7 @@ from sqlalchemy import func, or_, select
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
 from app.models import Correction, CreditAccount, CreditLedger, FileRecord, Transaction
+from app.storage import get_storage
 from app.tenancy import current_tenant
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
@@ -141,7 +142,7 @@ async def list_files(status: str | None = None, q: str | None = None,
                 continue
             size = None
             try:
-                size = Path(f.storage_path).stat().st_size
+                size = get_storage().size(f.storage_path)
             except OSError:
                 pass
             processed_at = meta["processed_at"]

@@ -148,8 +148,10 @@ def test_end_to_end_split_flow(tmp_path, monkeypatch):
     assert all(c.status == "completed" for c in children)
     # physical PDF slices exist and differ from the parent path
     from pypdf import PdfReader
-    assert len(PdfReader(children[0].storage_path).pages) == 1
-    assert len(PdfReader(children[1].storage_path).pages) == 2
+    from app.storage import get_storage
+    st = get_storage()
+    assert len(PdfReader(st.local_path(children[0].storage_path)).pages) == 1
+    assert len(PdfReader(st.local_path(children[1].storage_path)).pages) == 2
     # split parents settle the transaction
     assert txn.status == "completed"
     assert any(e == "file.split" and p["documents"] == 2 for e, p in fired)

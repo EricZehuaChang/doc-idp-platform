@@ -65,3 +65,25 @@ def test_pure_core_has_no_infrastructure_imports():
     assert not violations, (
         "pure document core must not import infrastructure "
         "(docs/ARCHITECTURE.md §2):\n" + "\n".join(violations))
+
+
+# WP2: only the storage seam (and the bootstrap that owns data_dir itself)
+# may touch Settings.data_dir — business code addresses blobs by key.
+DATA_DIR_ALLOWED = {"app/config.py", "app/main.py"} | {
+    str(p.relative_to(REPO_ROOT))
+    for p in (REPO_ROOT / "app" / "storage").rglob("*.py")
+    if "__pycache__" not in p.parts
+}
+
+
+def test_data_dir_only_touched_by_storage_layer():
+    violations = []
+    for f in sorted((REPO_ROOT / "app").rglob("*.py")):
+        rel = str(f.relative_to(REPO_ROOT))
+        if "__pycache__" in f.parts or rel in DATA_DIR_ALLOWED:
+            continue
+        if "data_dir" in f.read_text(encoding="utf-8"):
+            violations.append(rel)
+    assert not violations, (
+        "Settings.data_dir must stay inside app/storage (docs/ARCHITECTURE.md "
+        "§3):\n" + "\n".join(violations))

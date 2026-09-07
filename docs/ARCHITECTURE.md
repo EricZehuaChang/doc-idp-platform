@@ -55,7 +55,7 @@ parsers ──► skillengine ──► extraction/pipeline(纯函数) ──►
 6. **`Skill.code` 全局主键**(`models.py`),tenant_id 只是普通列;模板导入按租户派生代码。
 7. **RLS**:PG 上每张带 tenant_id 的表 FORCE RLS + GUC;Alembic 新表必须重跑 `apply_rls`。
 8. **`IDP_SECRET_KEY` 禁入 env**(env 优先于 platform_settings 持久化的 key,一加全部密文失效)。
-9. **systemd `WorkingDirectory=/opt/doc-idp/current`**:SQLite 缺省路径相对 CWD——Storage 改造落地后此坑应消失。
+9. **systemd `WorkingDirectory=/opt/doc-idp/current`**:WP2 后 blob 路径(`data_dir` 缺省锚定 REPO_ROOT)不再依赖 CWD,但 **SQLite 缺省 URL(`./data/idp.db`)仍是 CWD 相对**——生产必须在 `idp.env` 里显式设 `IDP_DATABASE_URL`。
 
 ## 6. 双档纪律
 

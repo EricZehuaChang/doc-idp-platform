@@ -9,6 +9,7 @@
 """
 import asyncio
 import socket
+from pathlib import Path
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -94,3 +95,33 @@ async def test_adopt_pre_alembic_db_via_stamp(tmp_path):
     from alembic.script import ScriptDirectory
     head = ScriptDirectory.from_config(alembic_config(url)).get_current_head()
     assert version == head, "stamp head must pin the current head"
+
+
+async def test_storage_key_backfill_migration(tmp_path, monkeypatch):
+    """0002: absolute data_dir paths (pre-WP2 rows) become relative keys."""
+    import app.config as config
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path / "data"))
+    config.get_settings.cache_clear()
+    url = f"sqlite+aiosqlite:///{tmp_path}/backfill.db"
+    engine = create_async_engine(url)
+    try:
+        await asyncio.to_thread(
+            command.upgrade, alembic_config(url), "c8c989251f69")
+        root = str(config.get_settings().data_dir)
+        legacy = str(Path(root) / "files" / "t1" / "x1" / "h.pdf")
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "INSERT INTO files (id, tenant_id, transaction_id, file_name,"
+                " storage_path, status, page_count, input_tokens, output_tokens,"
+                " cleanup_status, created_at, updated_at) VALUES"
+                " ('f1','t1','x1','h.pdf',"
+                f" '{legacy}', 'queued', 0, 0, 0, 'keep',"
+                " '2026-01-01 00:00:00', '2026-01-01 00:00:00')")
+        await asyncio.to_thread(command.upgrade, alembic_config(url), "head")
+        async with engine.connect() as conn:
+            stored = (await conn.exec_driver_sql(
+                "SELECT storage_path FROM files WHERE id='f1'")).scalar()
+        assert stored == "files/t1/x1/h.pdf", "absolute path must become a key"
+    finally:
+        await engine.dispose()
+        config.get_settings.cache_clear()

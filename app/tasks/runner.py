@@ -24,6 +24,7 @@ from app.models import FileRecord, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import escalate_if_tables_missing, parse_document
 from app.skillengine.schema import SkillPackage
+from app.storage import get_storage
 
 
 def skill_expects_tables(pkg: SkillPackage) -> bool:
@@ -95,21 +96,20 @@ async def parse_stage(file_id: str, parser_pin: str | None,
         f = await s.get(FileRecord, file_id)
         f.status = "processing"
         await s.commit()
-        path = f.storage_path
+        path = get_storage().local_path(f.storage_path)
 
     # blocking parse runs in a worker thread (async app stays responsive)
     udr = await asyncio.to_thread(parse_document, path, parser_pin)
     if expects_tables and not parser_pin:
         udr = await asyncio.to_thread(escalate_if_tables_missing, path, udr)
 
-    udr_path = Path(get_settings().data_dir) / "udr" / f"{file_id}.json"
-    udr_path.parent.mkdir(parents=True, exist_ok=True)
-    udr_path.write_text(udr.model_dump_json(), encoding="utf-8")
+    udr_key = get_storage().put_bytes(
+        f"udr/{file_id}.json", udr.model_dump_json().encode("utf-8"))
 
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         f.page_count = len(udr.pages)
-        f.udr_path = str(udr_path)
+        f.udr_path = udr_key
         await s.commit()
 
 
@@ -134,7 +134,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage) -> None:
         await byok.warm(s, tenant)
         await custom_providers.warm(s, tenant)
 
-    udr = UDR.model_validate_json(Path(udr_path).read_text(encoding="utf-8"))
+    udr = UDR.model_validate_json(get_storage().read_bytes(udr_path))
 
     # children never re-split (bounded recursion); "off" kills the feature
     if not is_child and get_settings().multi_doc_split == "auto" and len(udr.pages) >= 2:
@@ -172,7 +172,7 @@ async def _fan_out_children(file_id: str, udr: UDR, groups: list[list[int]]) -> 
     physical PDF slice when possible, parent marked split."""
     from app.extraction.splitter import slice_udr, split_pdf
 
-    data_dir = Path(get_settings().data_dir)
+    st = get_storage()
     sf = session_factory()
     child_ids: list[str] = []
     async with sf() as s:
@@ -187,14 +187,12 @@ async def _fan_out_children(file_id: str, udr: UDR, groups: list[list[int]]) -> 
             s.add(child)
             await s.flush()
             c_udr = slice_udr(udr, pages)
-            udr_path = data_dir / "udr" / f"{child.id}.json"
-            udr_path.parent.mkdir(parents=True, exist_ok=True)
-            udr_path.write_text(c_udr.model_dump_json(), encoding="utf-8")
-            child.udr_path = str(udr_path)
-            dst = data_dir / "files" / f"{child.id}.pdf"
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if await asyncio.to_thread(split_pdf, parent.storage_path, pages, str(dst)):
-                child.storage_path = str(dst)
+            child.udr_path = st.put_bytes(
+                f"udr/{child.id}.json", c_udr.model_dump_json().encode("utf-8"))
+            split_key = f"split/{child.id}.pdf"
+            if await asyncio.to_thread(split_pdf, st.local_path(parent.storage_path),
+                                       pages, st.local_path(split_key)):
+                child.storage_path = split_key
             child_ids.append(child.id)
         parent.status = "split"
         await s.commit()

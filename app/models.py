@@ -130,6 +130,8 @@ class FileRecord(Base):
     # the parent ends in status "split" and is never extracted itself
     parent_file_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     file_name: Mapped[str] = mapped_column(String(500))
+    # storage key under the configured backend ('files/...'), or a legacy
+    # absolute path from before the WP2 storage seam (read-compatible)
     storage_path: Mapped[str] = mapped_column(String(1000))
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -137,7 +139,7 @@ class FileRecord(Base):
     # result: {field: {"$value","$confidence"(0-3),"$bbox","$pages","inferred"?,"$reasoning"?}}
     # tables are lists of row objects — same container, live-verified schema (sources/2026-07-14)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    udr_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # parsed UDR json on disk
+    udr_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # UDR json storage key (or legacy absolute path)
     # when the processing pipeline finished with this file (result written or
     # failed): the per-document processing-speed figure on the task ledger.
     # updated_at can't serve (review locks/corrections bump it too).
@@ -178,6 +180,7 @@ class GoldenSample(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     skill_code: Mapped[str] = mapped_column(String(64), index=True)
+    # storage key ('golden/...') or a legacy absolute path (read-compatible)
     storage_path: Mapped[str] = mapped_column(String(1000))
     expected: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
