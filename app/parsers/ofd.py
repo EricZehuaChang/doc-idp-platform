@@ -14,7 +14,6 @@ Level 3 — render fallback: no attachment + no text = scan wrapped in OFD;
 All three levels can stack: level 1 fields are prepended to full_markdown so
 extraction sees issuer truth first, while level 2 blocks give bbox anchors.
 """
-import io
 import re
 import zipfile
 from pathlib import Path
