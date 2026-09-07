@@ -64,4 +64,4 @@ def test_pure_core_has_no_infrastructure_imports():
                 violations.append(f"{rel}: imports {mod}")
     assert not violations, (
         "pure document core must not import infrastructure "
-        f"(docs/ARCHITECTURE.md §2):\n" + "\n".join(violations))
+        "(docs/ARCHITECTURE.md §2):\n" + "\n".join(violations))
