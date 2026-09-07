@@ -1,13 +1,12 @@
 """OpenDataLoader parser: bbox y-flip math, CJK gap stripping, the
 unavailable->pdfplumber->scan fallback chain, real JVM parsing (auto-skipped
 without Java), and the table-escalation rule wired through the runner."""
-import shutil
+import subprocess
 
 import pytest
 
 from app.parsers.base import UDR, Block, Page, ParserUnavailable
-from app.parsers.opendataloader import (
-    OpenDataLoaderParser, flip_bbox, strip_cjk_gaps)
+from app.parsers.opendataloader import OpenDataLoaderParser, flip_bbox, strip_cjk_gaps
 
 
 def _text_pdf(path, page_texts: list[str], header: str = "", footer: str = "") -> None:
@@ -57,7 +56,14 @@ def _odl_ready() -> bool:
         import opendataloader_pdf  # noqa: F401
     except ImportError:
         return False
-    return shutil.which("java") is not None
+    # `which("java")` alone is not enough: macOS ships a /usr/bin/java stub
+    # that exists on PATH but fails at exec time without a real JVM — probe
+    # an actual version print so the real-parse tests skip instead of error.
+    try:
+        return subprocess.run(["java", "-version"], capture_output=True,
+                              timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 needs_java = pytest.mark.skipif(
