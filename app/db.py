@@ -10,12 +10,17 @@ request's tenant contextvar on every transaction. Unset GUC = zero rows
 connect as a plain role (see ensure_app_role / docker-compose.dev.yml notes);
 the dev superuser keeps working because the application layer still filters.
 """
+import asyncio
+from pathlib import Path
+
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Session as OrmSession
 
 from app.config import get_settings
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Base(DeclarativeBase):
@@ -92,26 +97,38 @@ async def ensure_app_role(conn, role: str, password: str) -> None:
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
 
 
+def alembic_config(url: str | None = None):
+    """Alembic Config bound to this app's migrations and — by default — the
+    current settings URL. Shared by init_db, the migration tests and anyone
+    running `python -c` maintenance against a database copy."""
+    from alembic.config import Config as AlembicConfig
+
+    cfg = AlembicConfig(str(REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url",
+                        (url or get_settings().database_url).replace("%", "%%"))
+    return cfg
+
+
+def upgrade_to_head() -> None:
+    """Blocking `alembic upgrade head` — call from a worker thread in async
+    contexts (the env runs its own asyncio loop in that thread)."""
+    from alembic import command
+
+    command.upgrade(alembic_config(), "head")
+
+
 async def init_db() -> None:
-    """M1: create_all on startup. TODO(M1.5): switch to Alembic migrations
-    (two-version backward compatibility rule, feasibility v2.0 §3.2)."""
+    """Schema = Alembic migrations (docs/ARCHITECTURE.md §4): every boot runs
+    `upgrade head`, so a fresh database is built from the baseline revision
+    and an adopted one is migrated in place. Runtime schema patching
+    (create_all / PRAGMA ADD COLUMN) is gone — new columns require a revision.
+    Pre-alembic databases must be adopted once via `alembic stamp head`
+    (see docs/ALEMBIC.md); after stamping, upgrade is a no-op."""
     from app import models  # noqa: F401  register tables
 
+    await asyncio.to_thread(upgrade_to_head)
     engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        if engine.dialect.name == "sqlite":
-            # dev stopgap until Alembic (M4): create_all never ALTERs, so new
-            # model columns break existing dev DBs — add missing ones here.
-            # Simple ADD COLUMN only; anything structural still needs Alembic.
-            for table in Base.metadata.tables.values():
-                rows = await conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')
-                existing = {r[1] for r in rows}
-                for col in table.columns:
-                    if col.name not in existing:
-                        ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" ' \
-                              f"{col.type.compile(engine.dialect)}"
-                        await conn.exec_driver_sql(ddl)
     if engine.dialect.name == "postgresql":
         # separate tx: RLS DDL needs table ownership. When the app runs as the
         # fenced idp_app role (production posture), DDL belongs to provisioning
