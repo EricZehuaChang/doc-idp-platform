@@ -23,12 +23,15 @@ async def _client(tmp_path, monkeypatch):
     return create_app()
 
 
-async def _seed(tmp_path, name: str, blob: bytes) -> str:
+async def _seed(tmp_path, name: str, blob: bytes | None = b"x") -> str:
+    """Seed one root FileRecord. blob=None leaves the on-disk file unwritten —
+    the WP1 shape: a DB row whose original never made it to this host."""
     from app.db import init_db, session_factory
     from app.models import FileRecord, Transaction
     await init_db()
     path = tmp_path / name
-    path.write_bytes(blob)
+    if blob is not None:
+        path.write_bytes(blob)
     sf = session_factory()
     async with sf() as s:
         txn = Transaction(tenant_id="default", skill_code="inv", skill_version=1)
@@ -114,3 +117,108 @@ async def test_preview_is_tenant_scoped(tmp_path, monkeypatch):
             r = await c.get(f"/api/v1/files/{fid}/preview",
                             headers={"X-Tenant-Id": "other"})
             assert r.status_code == 404
+
+
+# —— WP1: a row whose blob is gone answers a distinguishable 404, never a 500 ——
+
+
+async def test_download_missing_blob_answers_original_missing(tmp_path, monkeypatch):
+    app = await _client(tmp_path, monkeypatch)
+    fid = await _seed(tmp_path, "pii_sample.pdf", None)   # row exists, blob never landed
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/download")
+            assert r.status_code == 404
+            assert r.json()["detail"]["code"] == "original_missing"
+            assert "恢复" in r.json()["detail"]["message"]
+            # never leak the on-disk location or storage internals
+            assert str(tmp_path) not in r.text
+            assert "storage_path" not in r.text
+
+
+async def test_preview_missing_blob_answers_original_missing(tmp_path, monkeypatch):
+    app = await _client(tmp_path, monkeypatch)
+    fid = await _seed(tmp_path, "scan.pdf", None)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/preview")
+            assert r.status_code == 404
+            assert r.json()["detail"]["code"] == "original_missing"
+
+
+async def test_missing_blob_check_does_not_create_directories(tmp_path, monkeypatch):
+    """The read-only existence check must not mkdir through local_path — a
+    probing request against an empty host leaves no stray directory tree."""
+    from app.db import init_db, session_factory
+    from app.models import FileRecord, Transaction
+    app = await _client(tmp_path, monkeypatch)
+    await init_db()
+    sf = session_factory()
+    async with sf() as s:
+        txn = Transaction(tenant_id="default", skill_code="inv", skill_version=1)
+        s.add(txn)
+        await s.flush()
+        f = FileRecord(tenant_id="default", transaction_id=txn.id,
+                       file_name="gone.pdf", storage_path="files/default/x/deadbeef.pdf")
+        s.add(f)
+        await s.commit()
+        fid = f.id
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/download")
+            assert r.status_code == 404
+            assert r.json()["detail"]["code"] == "original_missing"
+    assert not (tmp_path / "files").exists()
+
+
+async def test_office_preview_missing_original_serves_existing_cache(tmp_path, monkeypatch):
+    """The original is gone but the converted PDF survived: preview keeps
+    working from the cache, download still answers original_missing."""
+    from app.storage import get_storage
+    app = await _client(tmp_path, monkeypatch)
+    fid = await _seed(tmp_path, "contract.docx", None)
+    get_storage().put_bytes(f"preview/{fid}.pdf", b"%PDF-cached-preview")
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/preview")
+            assert r.status_code == 200
+            assert r.content == b"%PDF-cached-preview"
+            r2 = await c.get(f"/api/v1/files/{fid}/download")
+            assert r2.status_code == 404
+            assert r2.json()["detail"]["code"] == "original_missing"
+
+
+async def test_office_preview_missing_original_and_cache_is_original_missing(
+        tmp_path, monkeypatch):
+    """No original, no cache: a clean 404 — LibreOffice must never run against
+    a nonexistent source file."""
+    def _must_not_run(*a):
+        raise AssertionError("LibreOffice must not run without the original")
+
+    monkeypatch.setattr(process_routes, "_find_soffice", _must_not_run)
+    app = await _client(tmp_path, monkeypatch)
+    fid = await _seed(tmp_path, "sheet.xlsx", None)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/preview")
+            assert r.status_code == 404
+            assert r.json()["detail"]["code"] == "original_missing"
+
+
+async def test_download_streams_original_and_is_tenant_scoped(tmp_path, monkeypatch):
+    app = await _client(tmp_path, monkeypatch)
+    fid = await _seed(tmp_path, "a.pdf", b"%PDF-1.4 original-bytes")
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.get(f"/api/v1/files/{fid}/download")
+            assert r.status_code == 200
+            assert r.content == b"%PDF-1.4 original-bytes"
+            r2 = await c.get(f"/api/v1/files/{fid}/download",
+                             headers={"X-Tenant-Id": "other"})
+            assert r2.status_code == 404

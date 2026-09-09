@@ -43,6 +43,25 @@ class PreviewConvertError(RuntimeError):
     """LibreOffice ran but produced nothing usable."""
 
 
+# —— WP1: a DB row whose blob is gone from this host (e.g. rows written on the
+# old Windows box before the storage-key migration) must answer a
+# distinguishable 404 instead of an unhandled 500 from FileResponse. The
+# message stays action-safe: no disk paths, nothing implying retry can help. ——
+_ORIGINAL_MISSING = {
+    "code": "original_missing",
+    "message": "原件暂不可用，请联系管理员恢复或重新上传",
+}
+
+
+def _original_readable(st, key: str) -> bool:
+    """True when the row's blob can actually be served. Read-only on purpose:
+    unlike `local_path()` this must never create directories."""
+    try:
+        return st.exists(key) and st.size(key) > 0
+    except OSError:
+        return False
+
+
 def _find_soffice() -> str | None:
     """Locate a LibreOffice binary: explicit env override, then PATH, then the
     known install locations (dev WIN / production Linux / dev Mac)."""
@@ -187,10 +206,13 @@ async def download(file_id: str):
         f = await s.get(FileRecord, file_id)
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
+        st = get_storage()
+        if not _original_readable(st, f.storage_path):
+            raise HTTPException(404, detail=_ORIGINAL_MISSING)
         # content is immutable per file_id (content-hash storage): let the
         # browser cache it — second open of the review page renders instantly
         # (frontend caching design v0.2 §9.0 layer ③)
-        return FileResponse(get_storage().local_path(f.storage_path),
+        return FileResponse(st.local_path(f.storage_path),
                             filename=f.file_name,
                             headers={"Cache-Control": "private, max-age=86400, immutable"})
 
@@ -201,7 +223,9 @@ async def preview(file_id: str):
     Doc 格式不支持预览). PDFs and images stream as-is; Office files (.doc/.docx/
     .xls/.xlsx/.ppt/.pptx) are converted to PDF via LibreOffice and cached.
     Formats with no converter (e.g. OFD) answer 422 — the UI falls back to the
-    download link instead of showing a blank pane."""
+    download link instead of showing a blank pane. WP1: a row whose original is
+    missing answers 404 original_missing; an Office file may still serve its
+    converted cache, and LibreOffice never runs against a nonexistent source."""
     from fastapi.responses import FileResponse
 
     sf = session_factory()
@@ -210,22 +234,30 @@ async def preview(file_id: str):
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
         suffix = Path(f.file_name).suffix.lower()
-        src = get_storage().local_path(f.storage_path)
         stem = Path(f.file_name).stem
+    st = get_storage()
     immutable = {"Cache-Control": "private, max-age=86400, immutable"}
+    cached_key = f"preview/{file_id}.pdf"
+    has_cache = (suffix in _OFFICE_PREVIEW
+                 and st.exists(cached_key) and st.size(cached_key) > 0)
+    if not _original_readable(st, f.storage_path):
+        if not has_cache:
+            raise HTTPException(404, detail=_ORIGINAL_MISSING)
+        return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
+                            headers=immutable)
     if suffix in (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"):
-        return FileResponse(src, filename=f"{stem}{suffix}", headers=immutable)
+        return FileResponse(st.local_path(f.storage_path),
+                            filename=f"{stem}{suffix}", headers=immutable)
     if suffix not in _OFFICE_PREVIEW:
         raise HTTPException(422, f"{suffix} 格式暂不支持原件预览，请下载原件查看")
-    st = get_storage()
-    cached_key = f"preview/{file_id}.pdf"
-    if st.exists(cached_key) and st.size(cached_key) > 0:
+    if has_cache:
         return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
                             headers=immutable)
     soffice = _find_soffice()
     if not soffice:
         raise HTTPException(422, "该格式的原件预览需要服务器安装 LibreOffice，"
                                  "当前服务器未安装；请下载原件查看")
+    src = st.local_path(f.storage_path)   # original exists: mkdir here is safe
     async with _preview_lock:
         # re-check under the lock: a concurrent request may have just converted
         if st.exists(cached_key) and st.size(cached_key) > 0:

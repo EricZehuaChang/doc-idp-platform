@@ -11,11 +11,16 @@
       <span v-if="loading" class="hint load">⏳ 正在加载原件…</span>
     </div>
 
-    <!-- load failed: say why and offer the two ways out, instead of a blank pane -->
+    <!-- load failed: say why and offer the two ways out, instead of a blank pane.
+         WP1: a missing original (original_missing) gets its own honest banner —
+         retry cannot bring the blob back, so its buttons are not offered. -->
     <div v-if="loadError" class="stage-error">
-      <p class="err-title">原件加载失败</p>
+      <p class="err-title">{{ loadErrorCode === "original_missing" ? "原件不可用" : "原件加载失败" }}</p>
       <p class="err-msg">{{ loadError }}</p>
-      <div class="err-acts">
+      <p v-if="loadErrorCode === 'original_missing'" class="err-msg">
+        该记录的原件数据缺失，重试或刷新无法恢复。
+      </p>
+      <div v-if="loadErrorCode !== 'original_missing'" class="err-acts">
         <button class="primary" @click="retry">重试</button>
         <button class="ghost" @click="downloadFile(src, fileName)">下载原件</button>
       </div>
@@ -115,7 +120,7 @@
 // located field boxes, and — in annotate mode — lets the reviewer drag a new
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { downloadFile, fetchBlob, type RegionOverlay } from "../api";
+import { downloadFile, fetchBlob, FetchBlobError, type RegionOverlay } from "../api";
 import { loadPdfjs, PDFJS_ASSETS, type PdfjsModule } from "../pdfjs";
 
 /** One locatable thing on the page: a scalar field or one table cell. */
@@ -154,6 +159,7 @@ let loadingTask: ReturnType<PdfjsModule["getDocument"]> | null = null;
 // —— load state (P01): a silent failure used to leave an unexplained blank pane ——
 const loading = ref(false);
 const loadError = ref("");
+const loadErrorCode = ref("");
 const blankRender = ref(false);
 const pageErrors = ref<Record<number, string>>({});
 
@@ -231,6 +237,7 @@ async function renderPdf() {
   pdfPages.value = [];
   pageErrors.value = {};
   loadError.value = "";
+  loadErrorCode.value = "";
   blankRender.value = false;
   if (!isImage.value && !isPdf.value) return;
   loading.value = true;
@@ -287,6 +294,7 @@ function renderPdfSafe() {
     if (/abort/i.test(String((e as Error)?.message ?? e))) return;  // benign nav abort
     console.error("[DocStage] original failed to load:", e);
     loading.value = false;
+    loadErrorCode.value = e instanceof FetchBlobError ? e.code : "";
     loadError.value = String((e as Error)?.message ?? e).slice(0, 300);
   });
 }

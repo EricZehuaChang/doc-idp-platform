@@ -293,17 +293,47 @@ export interface GiftRequestRow {
   decided_by: string | null; created_at: string | null;
 }
 
+/** structured binary-fetch failure (WP1): HTTP status plus the API's business
+ *  code when it answered with a JSON detail object ({code, message}) — callers
+ *  can tell "original gone for good" apart from a transient failure */
+export class FetchBlobError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "FetchBlobError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 /** authenticated binary fetch — <img>/pdf.js/anchor can't carry the Bearer */
-export async function fetchBlob(url: string): Promise<Blob> {
+export async function fetchBlob(url: string,
+                                opts?: { signal?: AbortSignal }): Promise<Blob> {
   const headers: Record<string, string> = { "X-Tenant-Id": "default" };
   if (session.token) headers["Authorization"] = `Bearer ${session.token}`;
-  const resp = await fetch(url, { headers });
+  const resp = await fetch(url, { headers, signal: opts?.signal });
   if (resp.status === 401 && session.authRequired) {
     clearSession();
     window.location.hash = "#/login";
     throw new Error("登录已过期，请重新登录");
   }
-  if (!resp.ok) throw new Error(`下载失败（HTTP ${resp.status}）`);
+  if (!resp.ok) {
+    // WP1: the API usually has something useful to say (original_missing, a
+    // 422 hint) — read a string detail or a {code,message} object and keep
+    // the HTTP status; raw server internals / disk paths never reach the UI
+    let code = "";
+    let msg = `下载失败（HTTP ${resp.status}）`;
+    try {
+      const detail = (await resp.json())?.detail;
+      if (typeof detail === "string" && detail) msg = detail;
+      else if (detail && typeof detail === "object") {
+        code = String(detail.code ?? "");
+        if (detail.message) msg = String(detail.message);
+      }
+    } catch { /* non-JSON body: keep the generic line */ }
+    throw new FetchBlobError(resp.status, code, msg);
+  }
   return resp.blob();
 }
 
