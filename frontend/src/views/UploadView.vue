@@ -214,7 +214,10 @@ const accept = computed(() => limits.value.extensions.join(","));
 const { data: skills, isFetched: skillsLoaded } = useQuery({
   queryKey: ["skills"], queryFn: api.skills });
 const usableSkills = computed<SkillInfo[]>(
-  () => (skills.value ?? []).filter((s) => s.published_version != null));
+  // WP4: only ACTIVE skills with a published version can take submissions —
+  // disabled/deleted ones must not even appear in the picker
+  () => (skills.value ?? [])
+    .filter((s) => s.state === "active" && s.published_version != null));
 const skillCode = ref(String(route.query.skill || ""));
 const selectedSkill = computed(
   () => usableSkills.value.find((s) => s.skill_code === skillCode.value) ?? null);

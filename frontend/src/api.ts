@@ -124,6 +124,11 @@ export interface SkillInfo {
   skill_code: string; name: string; kind: string; state: string;
   /** highest published version, null = never published (cannot be submitted to) */
   published_version: number | null;
+  /** WP5 (P26-29): one-line description projected from SkillPackage — the
+   *  published version's wording, or the newest draft's when never published */
+  description?: string | null;
+  /** "published_vN" | "draft_vN" — tells draft wording from live wording */
+  description_source?: string | null;
 }
 
 /** built-in starter template card — enough to choose without opening the editor */
@@ -380,6 +385,10 @@ export const api = {
     req<SkillDetail>("GET",
       `/api/v1/skills/${code}${version ? `?version=${version}` : ""}`),
   skillDelete: (code: string) => req("DELETE", `/api/v1/skills/${code}`),
+  /** WP4 (P19-23): enable/disable without touching versions */
+  skillSetState: (code: string, action: "disable" | "enable") =>
+    req<{ skill_code: string; state: string }>(
+      "PATCH", `/api/v1/skills/${code}/state`, { action }),
   /** bring an archived (soft-deleted) skill back (需求7) */
   skillRestore: (code: string) =>
     req<{ skill_code: string; state: string }>("POST", `/api/v1/skills/${code}/restore`),

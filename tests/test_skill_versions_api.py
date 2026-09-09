@@ -246,3 +246,115 @@ async def test_file_search_treats_like_wildcards_literally(tmp_path, monkeypatch
             body = (await c.get("/api/v1/files", params={"q": "SO1_EA"})).json()
             assert [r["file_name"] for r in body["data"]] == ["SO1_EA_1.pdf"]
             assert body["total"] == 1
+
+
+async def test_skill_state_disable_enable_and_guards(tmp_path, monkeypatch):
+    """WP4 (P19-23): PATCH /state flips active<->disabled without touching
+    versions; disabled stays on the roster but submission refuses it; deleted
+    answers 409; unknown action 422; cross-tenant 404."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.post("/api/v1/skills",
+                             json={"package": _pkg(), "changelog": "第一版"})
+            assert r.status_code == 201
+
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "archive"})
+            assert r.status_code == 422
+
+            # disable: the default roster still lists it, greyed out
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "disable"})
+            assert r.status_code == 200 and r.json() == {"skill_code": "verspec",
+                                                         "state": "disabled"}
+            default = (await c.get("/api/v1/skills")).json()
+            assert [s["skill_code"] for s in default] == ["verspec"]
+            assert default[0]["state"] == "disabled"
+            assert (await c.get("/api/v1/skills", params={"state": "active"})).json() == []
+            disabled = (await c.get("/api/v1/skills", params={"state": "disabled"})).json()
+            assert [s["skill_code"] for s in disabled] == ["verspec"]
+
+            # submission refuses a disabled skill (process keeps a 404 contract)
+            r = await c.post("/api/v1/process",
+                             files={"files": ("a.pdf", b"%PDF-1.4 x", "application/pdf")},
+                             data={"skill_code": "verspec"})
+            assert r.status_code == 404
+
+            # re-enable brings it back to active
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "enable"})
+            assert r.status_code == 200 and r.json()["state"] == "active"
+
+            # once soft-deleted, the state endpoint must not resurrect it
+            await c.delete("/api/v1/skills/verspec")
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "enable"})
+            assert r.status_code == 409 and "归档" in r.json()["detail"]
+            assert (await c.patch("/api/v1/skills/nope/state",
+                                  json={"action": "disable"})).status_code == 404
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "disable"},
+                              headers={"X-Tenant-Id": "other"})
+            assert r.status_code == 404
+
+
+async def test_skill_enable_rechecks_the_plan_seat(tmp_path, monkeypatch):
+    """Re-enabling occupies a seat again — the cap is enforced at the edge."""
+    from app.billing import engine as billing
+
+    async def _cap_exceeded(s, tenant):
+        raise billing.EntitlementExceeded("pro", "skills", 3)
+
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            # create and disable run under the real (permissive) cap check
+            await c.post("/api/v1/skills",
+                         json={"package": _pkg(), "changelog": ""})
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "disable"})
+            assert r.status_code == 200
+            # only then arm the cap: re-enabling must hit it
+            monkeypatch.setattr(billing, "enforce_skill_cap", _cap_exceeded)
+            r = await c.patch("/api/v1/skills/verspec/state", json={"action": "enable"})
+            assert r.status_code == 403 and "上限" in r.json()["detail"]
+            # the skill stayed disabled — a failed enable flips nothing back
+            assert (await c.get("/api/v1/skills")).json()[0]["state"] == "disabled"
+
+
+async def test_skill_list_projects_description_with_source(tmp_path, monkeypatch):
+    """WP5 (P26-29): the roster lists the one-line description taken from the
+    highest PUBLISHED version (draft fallback) plus an honest source tag."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            r = await c.post("/api/v1/skills", json={
+                "package": _pkg(description="识别增值税发票的字段与价税合计"),
+                "changelog": "第一版"})
+            assert r.status_code == 201
+
+            rows = (await c.get("/api/v1/skills")).json()
+            assert rows[0]["description"] == "识别增值税发票的字段与价税合计"
+            assert rows[0]["description_source"] == "draft_v1"
+
+            await c.post("/api/v1/skills/verspec/versions/1/publish")
+            rows = (await c.get("/api/v1/skills")).json()
+            assert rows[0]["description_source"] == "published_v1"
+
+            # a newer draft with different wording must NOT override the
+            # published description — submitters get v1, the list says so
+            r = await c.post("/api/v1/skills/verspec/versions",
+                             json={"package": _pkg(description="草稿里的新简介"),
+                                   "changelog": "改描述"})
+            assert r.status_code == 201
+            rows = (await c.get("/api/v1/skills")).json()
+            assert rows[0]["description"] == "识别增值税发票的字段与价税合计"
+            assert rows[0]["description_source"] == "published_v1"
+            assert rows[0]["published_version"] == 1
+
+            # empty description -> nulls, never an empty-string column
+            await c.post("/api/v1/skills", json={
+                "package": SkillPackage(skill_code="nodesc", name="无简介",
+                                        fields=[FieldSpec(name="a")]).model_dump(),
+                "changelog": ""})
+            rows = (await c.get("/api/v1/skills", params={"state": "active"})).json()
+            nd = next(x for x in rows if x["skill_code"] == "nodesc")
+            assert nd["description"] is None and nd["description_source"] is None

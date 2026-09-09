@@ -108,8 +108,29 @@ async def list_skills(state: str | None = None):
             .where(SkillVersion.skill_code.in_([r.code for r in rows]),
                    SkillVersion.status == "published")
             .group_by(SkillVersion.skill_code))).all())
+        # WP5 (P26-29): the one-line description lives in SkillPackage;
+        # project it from the highest published version (what submitters
+        # actually get), falling back to the newest draft. The source tag keeps
+        # the two apart — no new DB column, no model-generated text.
+        desc: dict[str, tuple[str | None, str | None]] = {}
+        ver_rows = (await s.execute(
+            select(SkillVersion.skill_code, SkillVersion.status,
+                   SkillVersion.version, SkillVersion.package)
+            .where(SkillVersion.skill_code.in_([r.code for r in rows]))
+            .order_by(SkillVersion.skill_code, SkillVersion.version))).all()
+        by_code: dict[str, list] = {}
+        for code, status, version, package in ver_rows:
+            by_code.setdefault(code, []).append((status, version, package))
+        for code, versions in by_code.items():
+            published = [v for v in versions if v[0] == "published"]
+            _, ver, pkg = published[-1] if published else versions[-1]
+            text = (pkg or {}).get("description") or None
+            desc[code] = (text, f"{'published' if published else 'draft'}_v{ver}"
+                          if text else None)
         return [{"skill_code": r.code, "name": r.name, "kind": r.kind, "state": r.state,
-                 "published_version": pub.get(r.code)}
+                 "published_version": pub.get(r.code),
+                 "description": desc.get(r.code, (None, None))[0],
+                 "description_source": desc.get(r.code, (None, None))[1]}
                 for r in rows]
 
 
@@ -220,6 +241,35 @@ async def get_skill(skill_code: str, version: int | None = None):
                               "created_at": v.created_at.isoformat()} for v in versions],
                 "selected_version": selected.version if selected else None,
                 "latest_package": selected.package if selected else None}
+
+
+class SkillStateBody(BaseModel):
+    action: str  # "disable" | "enable"
+
+
+@router.patch("/{skill_code}/state")
+async def set_skill_state(skill_code: str, body: SkillStateBody):
+    """Enable/disable a skill without touching its versions (需求: 停用和删除
+    入口, P19-23). Disabled stays on the roster (grey) but disappears from
+    submission — running tasks keep their pinned versions either way. Re-
+    enabling occupies a plan seat again, so the cap is re-checked."""
+    tenant = current_tenant()
+    if body.action not in ("disable", "enable"):
+        raise HTTPException(422, "action 只能是 disable / enable")
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, skill_code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        if skill.state == "deleted":
+            raise HTTPException(409, "已删除技能请在归档页签中恢复")
+        if body.action == "disable":
+            skill.state = "disabled"
+        else:
+            await _enforce_skill_seat(s, tenant)
+            skill.state = "active"
+        await s.commit()
+    return {"skill_code": skill_code, "state": skill.state}
 
 
 @router.delete("/{skill_code}")
