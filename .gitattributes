@@ -1,0 +1,6 @@
+# Built frontend bundles are tracked ON PURPOSE: releases ship via `git archive
+# HEAD` and the server never runs npm build, so app/webdist must stay in git.
+# linguist still must not count minified bundles as source — mark generated
+# (GitHub excludes linguist-generated paths from the language bar).
+app/webdist/** linguist-generated=true
+frontend/dist/** linguist-generated=true

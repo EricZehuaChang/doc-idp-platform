@@ -16,3 +16,4 @@ frontend/node_modules/
 
 # real sample documents (may contain sensitive invoice data) never enter git
 samples/
+*.tsbuildinfo
