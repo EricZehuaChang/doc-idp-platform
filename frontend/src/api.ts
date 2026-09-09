@@ -200,6 +200,12 @@ export interface FileRow {
 export interface FilesPage {
   total: number; page: number; page_size: number; total_pages: number; data: FileRow[];
 }
+/** Operation-log row (audit_log): one append-only entry per audited action. */
+export interface AuditRow {
+  id: string; actor: string; action: string;
+  detail: Record<string, unknown> | null; created_at: string;
+}
+export interface AuditPage { total: number; page: number; limit: number; data: AuditRow[] }
 /** Task-list narrowing (P09). One field per column of the task table, so the
  *  UI can sit each control on the column it narrows. Dates are inclusive
  *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none. */
@@ -510,6 +516,16 @@ export const api = {
     req("POST", "/api/v1/auth/invite", { email, role }),
   patchUser: (id: string, patch: { active?: boolean; role?: string }) =>
     req("PATCH", `/api/v1/auth/users/${id}`, patch),
+  // 2026-09-09: admin resets a user's password (SMTP-less); the account must
+  // change it on next login and every older session dies with the reset
+  resetUserPassword: (id: string, password: string) =>
+    req("POST", `/api/v1/auth/users/${id}/reset-password`, { password }),
+  // operation log: admin view over the append-only audit trail
+  auditLogs: (p: { q?: string; action?: string; page?: number; limit?: number }) =>
+    req<AuditPage>("GET",
+      `/api/v1/audit/logs?${new URLSearchParams(
+        Object.fromEntries(Object.entries(p).filter(([, v]) => v != null && v !== "")
+          .map(([k, v]) => [k, String(v)]))).toString()}`),
   getSmtp: () => req<SmtpInfo>("GET", "/api/v1/settings/smtp"),
   putSmtp: (cfg: Record<string, unknown>) => req<SmtpInfo>("PUT", "/api/v1/settings/smtp", cfg),
   testSmtp: (to: string) => req("POST", "/api/v1/settings/smtp/test", { to }),

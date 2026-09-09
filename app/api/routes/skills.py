@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from app.billing import engine as billing
 from app.extraction.provider_client import ProviderError
 from app.db import session_factory
-from app.models import GoldenSample, Skill, SkillVersion, Transaction
+from app.models import AuditLog, GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app.skillengine import catalog, studio
@@ -81,6 +81,9 @@ async def create_skill(payload: SkillCreate):
         s.add(SkillVersion(tenant_id=tenant, skill_code=pkg.skill_code, version=1,
                            status="draft", package=pkg.model_dump(),
                            changelog=payload.changelog or "initial draft"))
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.created",
+                       detail={"skill_code": pkg.skill_code, "name": pkg.name}))
         await s.commit()
     return {"skill_code": pkg.skill_code, "version": 1, "status": "draft"}
 
@@ -268,6 +271,9 @@ async def set_skill_state(skill_code: str, body: SkillStateBody):
         else:
             await _enforce_skill_seat(s, tenant)
             skill.state = "active"
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.state_changed",
+                       detail={"skill_code": skill_code, "state": skill.state}))
         await s.commit()
     return {"skill_code": skill_code, "state": skill.state}
 
@@ -283,6 +289,9 @@ async def delete_skill(skill_code: str):
         if skill is None or skill.tenant_id != tenant:
             raise HTTPException(404, "skill not found")
         skill.state = "deleted"
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.deleted",
+                       detail={"skill_code": skill_code, "name": skill.name}))
         await s.commit()
     return {"skill_code": skill_code, "state": "deleted"}
 
@@ -302,6 +311,8 @@ async def restore_skill(skill_code: str):
             raise HTTPException(409, f"技能当前状态为 {skill.state}，无需恢复")
         await _enforce_skill_seat(s, tenant)   # a restored skill is a seat again
         skill.state = "active"
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.restored", detail={"skill_code": skill_code}))
         await s.commit()
     return {"skill_code": skill_code, "state": "active"}
 
@@ -420,6 +431,9 @@ async def delete_version(skill_code: str, version: int):
         if live:
             raise HTTPException(409, f"v{version} 还有 {live} 个任务在跑，等跑完再删")
         await s.delete(row)
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.version_deleted",
+                       detail={"skill_code": skill_code, "version": version}))
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "deleted"}
 
@@ -603,6 +617,10 @@ async def import_yaml(file: UploadFile = File(...)):
         s.add(SkillVersion(tenant_id=tenant, skill_code=pkg.skill_code,
                            version=next_ver, status="draft",
                            package=pkg.model_dump(), changelog="imported from YAML"))
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.imported",
+                       detail={"skill_code": pkg.skill_code,
+                               "version": next_ver, "new": skill is None}))
         await s.commit()
     return {"skill_code": pkg.skill_code, "version": next_ver, "status": "draft"}
 
@@ -685,6 +703,10 @@ async def publish(skill_code: str, version: int):
         for c in current:
             c.status = "archived"
         target.status = "published"
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="skills.published",
+                       detail={"skill_code": skill_code, "version": version,
+                               "name": (target.package or {}).get("name")}))
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "published"}
 

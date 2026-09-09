@@ -46,6 +46,9 @@ class User(Base):
     auth_provider: Mapped[str] = mapped_column(String(32), default="local")
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     unlimited: Mapped[bool] = mapped_column(Boolean, default=False)  # Owner Root flag (§12.7)
+    # bumped on every password reset/rotation: sessions issued before the bump
+    # (they carry the older epoch) stop resolving — reset actually resets
+    session_epoch: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

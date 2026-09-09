@@ -45,7 +45,8 @@ async def login(body: LoginBody):
         if not ok:
             raise HTTPException(401, "invalid email or password")
         token = security.create_session_token(
-            user_id=user.id, tenant_id=user.tenant_id, role=user.role, email=user.email)
+            user_id=user.id, tenant_id=user.tenant_id, role=user.role,
+            email=user.email, session_epoch=user.session_epoch)
         s.add(AuditLog(tenant_id=user.tenant_id, actor=user.email, action="auth.login"))
         await s.commit()
     return {"access_token": token, "token_type": "bearer",
@@ -288,9 +289,46 @@ async def reset_password(body: ResetBody):
             raise HTTPException(400, "链接无效或已过期，请重新发起找回")
         user.password_hash = security.hash_password(body.password)
         user.must_change_password = False
+        # cut every session minted before this reset (self-service path of the
+        # same guarantee the admin reset endpoint gives)
+        user.session_epoch += 1
         s.add(AuditLog(tenant_id=user.tenant_id, actor=user.email, action="auth.password_reset"))
         await s.commit()
     return {"email": user.email, "status": "ok"}
+
+
+class AdminResetBody(BaseModel):
+    password: str = Field(min_length=8)
+
+
+@router.post("/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, body: AdminResetBody):
+    """Admin resets a user's password without SMTP (需求 2026-09-09: 管理员可
+    重置所有用户密码). The new password is one-time knowledge: the account must
+    change it on next login; every session minted before the reset dies, so a
+    leaked/stolen session cannot survive the reset."""
+    if not has_role("admin"):
+        raise HTTPException(403, "admin role required")
+    actor = current_actor()
+    sf = session_factory()
+    async with sf() as s:
+        u = await s.get(User, user_id)
+        if u is None or u.tenant_id != current_tenant():
+            raise HTTPException(404, "user not found")
+        if u.id == actor.get("user_id"):
+            raise HTTPException(400, "不能重置自己的密码，请使用右上角个人密码修改")
+        if u.auth_provider != "local" or u.password_hash is None:
+            raise HTTPException(409, "该账号没有本地密码（SSO 或未激活），"
+                                     "请停用后重新邀请")
+        u.password_hash = security.hash_password(body.password)
+        u.must_change_password = True
+        u.session_epoch += 1
+        s.add(AuditLog(tenant_id=u.tenant_id, actor=actor["name"],
+                       action="auth.password_reset_admin",
+                       detail={"email": u.email}))
+        await s.commit()
+    return {"id": u.id, "email": u.email, "status": "password_reset",
+            "must_change_password": True}
 
 
 class ChangePasswordBody(BaseModel):
@@ -373,7 +411,8 @@ async def oidc_callback(code: str = "", state: str = ""):
             return RedirectResponse(f"{_frontend_base()}/#/login?error=sso_denied",
                                     status_code=302)
         token = security.create_session_token(
-            user_id=user.id, tenant_id=user.tenant_id, role=user.role, email=user.email)
+            user_id=user.id, tenant_id=user.tenant_id, role=user.role,
+            email=user.email, session_epoch=user.session_epoch)
         s.add(AuditLog(tenant_id=user.tenant_id, actor=user.email, action="auth.login_oidc"))
         await s.commit()
     return RedirectResponse(f"{_frontend_base()}/#/oidc?token={token}", status_code=302)

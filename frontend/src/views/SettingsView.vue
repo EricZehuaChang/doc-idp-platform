@@ -4,6 +4,7 @@
     <div class="tabs">
       <button :class="{ primary: tab === 'email' }" @click="tab = 'email'">邮件（SMTP）</button>
       <button :class="{ primary: tab === 'users' }" @click="tab = 'users'">用户</button>
+      <button :class="{ primary: tab === 'logs' }" @click="tab = 'logs'">操作日志</button>
       <button :class="{ primary: tab === 'billing' }" @click="tab = 'billing'">计费</button>
       <button :class="{ primary: tab === 'byok' }" @click="tab = 'byok'">模型通道与密钥</button>
       <button :class="{ primary: tab === 'sso' }" @click="tab = 'sso'">单点登录（SSO）</button>
@@ -68,12 +69,51 @@
             <td class="dim">{{ u.auth_provider }}</td>
             <td class="row-ops">
               <button v-if="u.pending" @click="resend(u)">重发邀请</button>
+              <button v-if="!u.pending && u.auth_provider === 'local' && u.active"
+                      @click="resetPw(u)" title="重置密码：该用户下次登录必须改密，旧登录会话立即失效">
+                重置密码</button>
               <button v-if="u.active" class="danger" @click="toggle(u, false)">停用</button>
               <button v-else @click="toggle(u, true)">恢复</button>
             </td>
           </tr>
         </tbody>
       </table>
+    </section>
+
+    <!-- —— operation log (2026-09-09) —— -->
+    <section v-if="tab === 'logs'" class="panel">
+      <div class="row">
+        <select v-model="logAction" @change="loadLogs(1)" class="log-sel">
+          <option value="">全部操作</option>
+          <option v-for="(label, fam) in LOG_ACTIONS" :key="fam" :value="fam">
+            {{ label }}</option>
+        </select>
+        <input v-model="logQ" placeholder="按操作人或动作搜索" class="test-to"
+               @keyup.enter="loadLogs(1)" />
+        <button class="primary" @click="loadLogs(1)">查询</button>
+        <span class="dim log-count">共 {{ logTotal }} 条</span>
+        <span class="grow"></span>
+        <button :disabled="logPage <= 1" @click="loadLogs(logPage - 1)">上一页</button>
+        <span class="dim">第 {{ logPage }} 页</span>
+        <button :disabled="logPage * logLimit >= logTotal" @click="loadLogs(logPage + 1)">
+          下一页</button>
+      </div>
+      <p class="dim log-hint">登录、用户与技能管理、审核、平台设置与密钥的关键操作都会记录（追加式，不可篡改）。
+        只显示本租户范围内的记录。</p>
+      <table v-if="logRows.length" class="log-table">
+        <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>详情</th></tr></thead>
+        <tbody>
+          <tr v-for="r in logRows" :key="r.id">
+            <td class="dim log-time">{{ fmtTime(r.created_at) }}</td>
+            <td class="log-actor">{{ r.actor }}</td>
+            <td>{{ actionLabel(r.action) }}</td>
+            <td class="log-det"><code>{{ fmtDetail(r.detail) }}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <EmptyState v-else title="没有操作记录" glyph="🗒️">
+        此筛选条件下暂无操作日志。账号、技能、审核与设置的关键操作都会记录在这里。
+      </EmptyState>
     </section>
 
     <!-- —— billing (§12) —— -->
@@ -369,13 +409,14 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
-import { api, type BillingAccount, type CustomProvider, type GiftRequestRow,
-         type LedgerRow, type SmtpInfo } from "../api";
+import { api, type AuditRow, type BillingAccount, type CustomProvider,
+         type GiftRequestRow, type LedgerRow, type SmtpInfo } from "../api";
+import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
 
-const tab = ref<"email" | "users" | "billing" | "byok" | "sso" | "apikeys">("email");
+const tab = ref<"email" | "users" | "logs" | "billing" | "byok" | "sso" | "apikeys">("email");
 
 // —— SMTP ——
 const smtpInfo = ref<SmtpInfo | null>(null);
@@ -449,6 +490,60 @@ async function toggle(u: UserRow, active: boolean) {
 async function setRole(u: UserRow, role: string) {
   try { await api.patchUser(u.id, { role }); toast.ok(`${u.email} → ${role}`); await loadUsers(); }
   catch (e) { toast.error(e); }
+}
+async function resetPw(u: UserRow) {
+  const p1 = window.prompt(`为 ${u.email} 设置新密码（至少 8 位）`);
+  if (!p1) return;
+  if (p1.length < 8) { toast.error("密码至少 8 位"); return; }
+  const p2 = window.prompt("再输入一次确认");
+  if (p1 !== p2) { toast.error("两次输入不一致，未修改"); return; }
+  try {
+    await api.resetUserPassword(u.id, p1);
+    toast.ok(`已重置 ${u.email}：下次登录必须改密，旧登录会话已全部失效`);
+  } catch (e) { toast.error(e); }
+}
+
+// —— operation log (2026-09-09) ——
+const LOG_ACTIONS: Record<string, string> = {
+  auth: "登录与账号", skills: "技能", review: "审核",
+  settings: "设置与密钥", billing: "计费", process: "处理",
+};
+const logRows = ref<AuditRow[]>([]);
+const logTotal = ref(0);
+const logPage = ref(1);
+const logLimit = 50;
+const logQ = ref("");
+const logAction = ref("");
+
+async function loadLogs(page = 1) {
+  logPage.value = page;
+  try {
+    const d = await api.auditLogs({ q: logQ.value, action: logAction.value,
+                                    page, limit: logLimit });
+    logRows.value = d.data;
+    logTotal.value = d.total;
+  } catch (e) { toast.error(e); }
+}
+function actionLabel(action: string): string {
+  const fam = action.split(".")[0];
+  return ACTION_TEXT[action] ?? `${LOG_ACTIONS[fam] ?? fam} · ${action.split(".")[1] ?? action}`;
+}
+const ACTION_TEXT: Record<string, string> = {
+  "auth.login": "登录", "auth.login_oidc": "SSO 登录", "auth.activated": "激活账号",
+  "auth.user_created": "创建用户", "auth.user_updated": "变更用户", "auth.invite_sent": "发送邀请",
+  "auth.password_changed": "修改密码（本人）", "auth.password_reset": "重置密码（自助）",
+  "auth.password_reset_admin": "重置密码（管理员）",
+  "skills.created": "新建技能", "skills.published": "发布版本",
+  "skills.state_changed": "启停技能", "skills.deleted": "删除技能",
+  "skills.restored": "恢复技能", "skills.version_deleted": "删除版本", "skills.imported": "导入技能",
+  "review.assign": "分配审单",
+};
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+function fmtDetail(detail: Record<string, unknown> | null): string {
+  return detail ? JSON.stringify(detail) : "—";
 }
 
 // —— billing (§12) ——
@@ -700,6 +795,7 @@ onMounted(() => { loadSmtp(); loadUsers(); loadProviders(); loadCustoms(); loadO
                   loadKeys(); });
 watch(tab, (t) => {
   if (t === "users") loadUsers();
+  if (t === "logs") loadLogs(1);
   if (t === "billing") loadBilling();
   if (t === "byok") { loadProviders(); loadCustoms(); }
   if (t === "sso") loadOidc();
@@ -734,6 +830,15 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
   color: var(--text-dim); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .test-to { max-width: 220px; }
+.log-sel { width: 150px; }
+.grow { flex: 1; }
+.log-count { font-size: 12px; }
+.log-hint { margin: -4px 0 0; font-size: 12px; }
+.log-table td { vertical-align: top; padding: 6px 10px; }
+.log-time { white-space: nowrap; font-size: 12px; }
+.log-actor { font-size: 12.5px; }
+.log-det code { font-size: 11.5px; font-family: Consolas, monospace;
+  word-break: break-all; color: var(--text-dim); }
 select { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; }
 table { width: 100%; border-collapse: collapse; }

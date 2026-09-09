@@ -51,9 +51,9 @@ async def pg(monkeypatch):
     async with su.begin() as conn:
         await conn.execute(text(
             "INSERT INTO users (id, tenant_id, email, role, auth_provider, unlimited, active,"
-            " email_verified, must_change_password, created_at) VALUES"
-            " ('u1', 't1', 'a@example.com', 'operator', 'local', false, true, true, false, now()),"
-            " ('u2', 't2', 'b@example.com', 'operator', 'local', false, true, true, false, now())"))
+            " email_verified, must_change_password, session_epoch, created_at) VALUES"
+            " ('u1', 't1', 'a@example.com', 'operator', 'local', false, true, true, false, 0, now()),"
+            " ('u2', 't2', 'b@example.com', 'operator', 'local', false, true, true, false, 0, now())"))
     await su.dispose()
 
     app_engine = create_async_engine(APP_URL)
@@ -80,9 +80,9 @@ async def test_cross_tenant_insert_rejected(pg):
         with pytest.raises(Exception) as exc:
             await conn.execute(text(
                 "INSERT INTO users (id, tenant_id, email, role, auth_provider, unlimited,"
-                " active, created_at)"
+                " active, session_epoch, created_at)"
                 " VALUES ('evil', 't2', 'evil@example.com', 'admin', 'local', false, true,"
-                " now())"))
+                " 0, now())"))
         assert "row-level security" in str(exc.value).lower()
 
 

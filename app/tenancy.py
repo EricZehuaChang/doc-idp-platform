@@ -83,7 +83,11 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
     if payload is not None:
         async with sf() as s:
             user = await s.get(User, payload.get("sub"))
-        if user is None or not user.active:
+        # a password reset bumps session_epoch: tokens minted before it (missing
+        # claim = epoch 0) no longer resolve — the reset really cuts old
+        # sessions, including one an attacker may still hold
+        if user is None or not user.active \
+                or payload.get("ep", 0) != user.session_epoch:
             return None
         return user.tenant_id, {"name": user.email, "role": user.role, "user_id": user.id,
                                 "unlimited": user.unlimited}  # Owner Root flag (§12.7)

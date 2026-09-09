@@ -47,9 +47,12 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(dk, expected)
 
 
-def create_session_token(*, user_id: str, tenant_id: str, role: str, email: str) -> str:
+def create_session_token(*, user_id: str, tenant_id: str, role: str, email: str,
+                         session_epoch: int = 0) -> str:
     now = int(time.time())
     payload = {"sub": user_id, "tenant": tenant_id, "role": role, "email": email,
+               "ep": session_epoch,   # session epoch: password reset bumps it,
+                                       # older tokens stop resolving (tenancy.py)
                "iat": now, "exp": now + SESSION_TOKEN_TTL_SECONDS}
     return jwt.encode(payload, get_secret(), algorithm=ALGORITHM)
 
