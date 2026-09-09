@@ -7,9 +7,11 @@
              (browser back was the only exit) — P10 -->
         <button class="back" title="返回上级列表" @click="goBack">‹ 返回</button>
         <div class="nav-group">
-          <button :disabled="queuePos <= 0" title="上一份 (←)" @click="goSibling(-1)">←</button>
+          <button :disabled="queuePos <= 0" title="上一文件 (←)" @click="goSibling(-1)">←</button>
           <span class="pos dim" v-if="queueIds.length">{{ queueLabel }}</span>
-          <button :disabled="nextDisabled" title="下一份 (→)" @click="goSibling(1)">→</button>
+          <button :disabled="nextDisabled" title="下一文件 (→)" @click="goSibling(1)">→</button>
+          <button class="fid" :title="`复制 file_id：${detail.file_id}`"
+                  @click="copyFid">⧉</button>
         </div>
         <strong class="fname-head" :title="detail.file_name">{{ detail.file_name }}</strong>
         <span class="chip" :class="`chip-${detail.status}`">{{ statusLabel }}</span>
@@ -39,7 +41,8 @@
       <div v-if="detail.children.length" class="parts">
         <div class="parts-head">
           <strong>识别为 {{ detail.child_count }} 份单据</strong>
-          <span class="dim">同一原文件 · {{ detail.page_count }} 页</span>
+          <span class="dim">当前第 {{ activePartIdx + 1 }} / {{ detail.children.length }} 份
+            · 原件第 {{ partRange(activeItem!) }} 页 · 同一原文件 {{ detail.page_count }} 页</span>
         </div>
         <div class="part-list">
           <button v-for="(part, i) in detail.children" :key="part.file_id"
@@ -169,7 +172,7 @@
                   @click="exitReview(true)">放弃修改退出</button>
           <span class="spacer" />
           <button class="danger" @click="decide('reject')">拒绝 X</button>
-          <button class="confirm big" @click="decide('confirm')">✓ 通过并下一份 C</button>
+          <button class="confirm big" @click="decide('confirm')">✓ {{ confirmLabel }} C</button>
         </template>
         <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出编辑 · T 页签 · B 框选 · L 锁定 · S 保存 · Q 退出 · C 通过 · X 拒绝 · ←/→ 上下份">⌨</span>
       </div>
@@ -192,7 +195,7 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
          type ReviewItem, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
@@ -220,10 +223,13 @@ const { data: queueData } = useQuery({
 });
 const queueIds = computed(() => (queueData.value ?? []).map((q) => q.file_id));
 const queuePos = computed(() => queueIds.value.indexOf(detail.value?.file_id ?? props.fileId));
-/** Position label: "—" when this file is not on the pending worklist (a decided
- *  file opened from the task ledger) — the arrows still work. */
+/** Position label (WP3): the M in "N / M" is the size of the returned pending
+ *  batch, never the total task count — and a file opened from the task ledger
+ *  says so instead of showing a meaningless dash. */
 const queueLabel = computed(() =>
-  queuePos.value >= 0 ? `${queuePos.value + 1} / ${queueIds.value.length}` : "—");
+  queuePos.value >= 0
+    ? `待审批次 ${queuePos.value + 1} / ${queueIds.value.length}`
+    : "当前文件不在待审批次");
 const nextDisabled = computed(() => {
   if (queuePos.value < 0) return queueIds.value.length === 0;   // not in list: jump to first
   return queuePos.value >= queueIds.value.length - 1;
@@ -248,6 +254,17 @@ const activeItem = computed<ReviewItem | null>(() => {
     ?? detail.value.children[0];
 });
 const reviewable = computed(() => activeItem.value?.status === "pending_verification");
+const activePartIdx = computed(() => {
+  const kids = detail.value?.children ?? [];
+  const idx = kids.findIndex((c) => c.file_id === activeItem.value?.file_id);
+  return idx >= 0 ? idx : 0;
+});
+async function copyFid() {
+  try {
+    await navigator.clipboard.writeText(detail.value?.file_id ?? props.fileId);
+    toast.ok("已复制 file_id");
+  } catch { toast.error("复制失败，请手动从任务列表复制"); }
+}
 const pageOffset = computed(() => activeItem.value?.page_offset ?? 0);
 const toRootPage = (page: number) => page + pageOffset.value;
 const toLocalPage = (page: number) => Math.max(1, page - pageOffset.value);
@@ -567,6 +584,38 @@ watch(detail, (v) => {
 watch(activeItem, (v) => { if (v) syncFromDetail(); }, { immediate: true });
 watch(edits, saveDraft, { deep: true });
 
+// —— navigation destination, one source of truth (WP3): the browse arrows and
+// the post-decision jump used to be two independently coded orderings. Both go
+// through here; `queue` overrides the (possibly stale) polled snapshot. ——
+function resolveDestination(intent: "browse" | "afterDecision", delta: number,
+                            rootId: string,
+                            queue?: { file_id: string; locked_by?: string | null }[]):
+  string | null {
+  const rows = queue ?? queueData.value ?? [];
+  const ids = rows.map((q) => q.file_id);
+  if (intent === "browse") {
+    const pos = ids.indexOf(rootId);
+    return pos < 0 ? (ids[0] ?? null) : (ids[pos + delta] ?? null);
+  }
+  // after a decision: the next operable root — files locked by someone else
+  // are not actually reachable, so skip them instead of dead-ending there
+  const locks = new Map(rows.map((q) => [q.file_id, q.locked_by ?? null]));
+  return ids.find((id) => id !== rootId
+    && (!locks.get(id) || locks.get(id) === api.currentUser)) ?? null;
+}
+
+/** Where the ✓ button will actually take you — shown on the button itself so
+ *  the two review actions stop looking interchangeable (WP3). */
+const confirmLabel = computed(() => {
+  const cur = activeItem.value?.file_id;
+  const hasSiblingPart = !!detail.value?.children.some(
+    (c) => c.status === "pending_verification" && c.file_id !== cur);
+  if (hasSiblingPart) return "通过并校验下一单据";
+  const rootId = detail.value?.file_id ?? props.fileId;
+  return resolveDestination("afterDecision", 0, rootId)
+    ? "通过并打开下一文件" : "通过并返回列表";
+});
+
 async function acquire() {
   if (!activeItem.value || !reviewable.value) return;
   try { await api.lock(activeItem.value.file_id); locked.value = true; }
@@ -586,9 +635,11 @@ async function saveEdits(): Promise<boolean> {
   if (!changed.length) return true;
   const fileId = activeItem.value?.file_id;
   if (!fileId) return false;
-  try {
+  const dkey = draftKey();                       // captured: the reviewer may switch
+  try {                                          // parts while the PATCH is in flight
     await api.patchFields(fileId, changed);
-    sessionStorage.removeItem(draftKey());
+    if (activeItem.value?.file_id !== fileId) return true;   // switched away: never
+    sessionStorage.removeItem(dkey);                         // touch the NEW part's state
     pendingBoxes.value = {};
     toast.ok(`已保存 ${changed.length} 处修正`);
     await refetch();
@@ -610,16 +661,21 @@ async function releaseLock(fileId = activeItem.value?.file_id) {
 }
 
 async function switchPart(fileId: string) {
-  if (fileId === activeItem.value?.file_id) return;
+  if (fileId === activeItem.value?.file_id || navBusy.value) return;
   const oldFileId = activeItem.value?.file_id;
-  if (dirty.value && !(await saveEdits())) return;
-  await releaseLock(oldFileId);
-  resetPartState();
-  activeFileId.value = fileId;
-  // 需求5: 点击右侧单据,左侧原件跳到该单据的起始页
-  const start = (activeItem.value?.page_offset ?? 0) + 1;
-  await nextTick();
-  stage.value?.gotoPage(start);
+  navBusy.value = true;
+  try {
+    if (dirty.value && !(await saveEdits())) return;
+    await releaseLock(oldFileId);
+    resetPartState();
+    activeFileId.value = fileId;
+    // 需求5: 点击右侧单据,左侧原件跳到该单据的起始页
+    const start = (activeItem.value?.page_offset ?? 0) + 1;
+    await nextTick();
+    stage.value?.gotoPage(start);
+  } finally {
+    navBusy.value = false;
+  }
 }
 
 /** Leave without judging the file. `discard` drops local edits; otherwise they
@@ -643,18 +699,30 @@ function goBack() {
   router.push(backTarget.value);
 }
 
+// one busy gate for every decision-shaped action (WP3): double clicks, the C/X
+// hotkeys and a stray second press must not queue two decide() runs — a
+// settled first run is the only thing allowed to navigate, exactly once
+const navBusy = ref(false);
+
 async function decide(kind: "confirm" | "reject") {
+  if (navBusy.value) return;
+  navBusy.value = true;
   try {
+    const rootAtStart = detail.value?.file_id ?? props.fileId;
     if (dirty.value && !(await saveEdits())) return;
     const fileId = activeItem.value?.file_id;
     if (!fileId) return;
     await (kind === "confirm" ? api.confirm(fileId) : api.reject(fileId));
+    // the reviewer may have ←/→-ed away while the request flew: a settling
+    // stale decision must never navigate or reset the NEW file (WP3)
+    if ((detail.value?.file_id ?? props.fileId) !== rootAtStart) return;
     toast.ok(kind === "confirm" ? "已通过" : "已拒绝");
     locked.value = false;
     qc.invalidateQueries({ queryKey: ["queue"] });
     // Keep reviewing the same original file until all of its internal units
     // are decided; only then advance to the next root-file task.
     const refreshed = await refetch();
+    if ((detail.value?.file_id ?? props.fileId) !== rootAtStart) return;
     const nextPart = refreshed.data?.children.find(
       (c) => c.status === "pending_verification" && c.file_id !== fileId);
     if (nextPart) {
@@ -665,30 +733,36 @@ async function decide(kind: "confirm" | "reject") {
       toast.ok(`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`);
       return;
     }
-    const next = (await api.queue()).find(
-      (q) => q.file_id !== detail.value?.file_id
-        && (!q.locked_by || q.locked_by === api.currentUser));
+    const next = resolveDestination("afterDecision", 0, rootAtStart, await api.queue());
+    if ((detail.value?.file_id ?? props.fileId) !== rootAtStart) return;
     leavingCleanly = true;
-    router.push(next ? `/review/${next.file_id}` : backTarget.value);
-  } catch (e) { toast.error(e); }
+    router.push(next
+      ? { path: `/review/${next}`, query: route.query.back ? { back: route.query.back } : {} }
+      : backTarget.value);
+  } catch (e) { toast.error(e); } finally { navBusy.value = false; }
 }
 function goSibling(delta: number) {
   // A file opened from the task ledger may not be on the pending worklist
   // (queuePos === -1): both arrows then lead to the head of the list instead
   // of being dead buttons (需求9).
-  if (queuePos.value < 0) {
-    const first = queueIds.value[0];
-    if (first) router.push(`/review/${first}`);
-    return;
+  const target = resolveDestination("browse", delta,
+    detail.value?.file_id ?? props.fileId);
+  if (target) {
+    router.push({ path: `/review/${target}`,
+                  query: route.query.back ? { back: route.query.back } : {} });
   }
-  const target = queueIds.value[queuePos.value + delta];
-  if (target) router.push(`/review/${target}`);
 }
 
 // leaving with unsaved work (browser back, nav click) must not silently drop it
 onBeforeRouteLeave(() => {
   if (leavingCleanly || !dirty.value) return true;
   return confirm("有未保存的修改，确定离开？（点“取消”可返回并保存）");
+});
+// same-route param change (←/→ 文件) reuses this component — the guard must
+// cover it too, or the arrows would bypass the unsaved-changes protection (WP3)
+onBeforeRouteUpdate(() => {
+  if (leavingCleanly || !dirty.value) return true;
+  return confirm("有未保存的修改，确定切换文件？（点“取消”可返回并保存）");
 });
 // closing the tab / reloading with unsaved work
 function beforeUnload(ev: BeforeUnloadEvent) {
@@ -768,13 +842,17 @@ onUnmounted(() => {
 .back { padding: 2px 10px; }
 .nav-group { display: flex; align-items: center; gap: 6px; }
 .nav-group button { padding: 2px 10px; }
+.nav-group .fid { padding: 2px 7px; font-size: 12px; }
 .pos { font-size: 12px; }
 .fname-head { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 34%; }
 .anno { margin-left: auto; flex-shrink: 0; }
 .anno + .anno { margin-left: 0; }
-.doc-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px;
-  overscroll-behavior: contain; }
+/* WP2: the stage manages its own scroll viewport now — this body just gives it
+   a definite flex height (min-height:0 chain) and stops double-scrolling */
+.doc-body { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 0 12px 12px;
+  overscroll-behavior: contain; display: flex; flex-direction: column; }
+.doc-body > :deep(.stage) { flex: 1 1 auto; min-height: 0; }
 .field-pane { display: flex; flex-direction: column; background: var(--bg-panel);
   min-width: 0; min-height: 0; }
 .parts { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }

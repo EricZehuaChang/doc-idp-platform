@@ -1,13 +1,17 @@
 <template>
   <div class="stage" ref="stageEl">
-    <!-- zoom / rotate toolbar (UX debt: 图片无缩放) -->
+    <!-- zoom / rotate toolbar (WP2): same tool semantics for images and PDFs —
+         左转/右转、适应页面、放大/缩小、1:1、重置; the toolbar and rail always
+         stay upright because only page content is transformed -->
     <div class="tools">
+      <button title="左转 90°" @click="rotateBy(-90)">⟲</button>
+      <button title="右转 90°" @click="rotateBy(90)">⟳</button>
+      <button title="适应页面" :class="{ on: fitMode }" @click="fitMode = true">适应</button>
       <button title="缩小" @click="zoomBy(-0.25)">－</button>
       <span class="zoom-val">{{ Math.round(zoom * 100) }}%</span>
       <button title="放大" @click="zoomBy(0.25)">＋</button>
-      <button title="实际大小" @click="zoom = 1">1:1</button>
-      <button v-if="isImage" title="旋转 90°" @click="rotate()">⟳</button>
-      <span v-if="rotation && annotate" class="hint">旋转视图下暂不支持框选</span>
+      <button title="实际大小 (100%)" @click="zoomOne()">1:1</button>
+      <button title="重置视图（转正并适应页面）" @click="resetView()">重置</button>
       <span v-if="loading" class="hint load">⏳ 正在加载原件…</span>
     </div>
 
@@ -38,79 +42,90 @@
       </div>
     </div>
 
-    <div class="stage-cols">
-    <!-- page-number rail (需求5): the left side lists every page and clicking
-         one scrolls the document to it; the current page is highlighted -->
-    <nav v-if="isPdf && pdfPages.length > 1" class="page-rail" aria-label="页码">
-      <button v-for="p in pdfPages" :key="p.no"
-              :class="{ on: p.no === activePage }"
-              :title="`第 ${p.no} 页`" @click="gotoPage(p.no)">{{ p.no }}</button>
-    </nav>
+    <!-- the scroll container (WP2): zoomed/rotated pages overflow INSIDE this
+         pane — every edge stays reachable, the outer page never scrolls -->
+    <div class="stage-viewport" ref="viewportEl">
+      <!-- page-number rail (需求5): forward-facing, sticky in both axes -->
+      <nav v-if="isPdf && pdfPages.length > 1" class="page-rail" aria-label="页码">
+        <button v-for="p in pdfPages" :key="p.no"
+                :class="{ on: p.no === activePage }"
+                :title="`第 ${p.no} 页`" @click="gotoPage(p.no)">{{ p.no }}</button>
+      </nav>
 
-    <div class="scaler" :style="scalerStyle">
-    <!-- images render directly; single page, UDR dims from pages[0] -->
-    <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate && !rotation }"
-         @pointerdown="down($event, 1)" @pointermove="move" @pointerup="up">
-      <img v-if="imgUrl" :src="imgUrl" @load="ready = true" draggable="false" />
-      <svg v-if="ready && pageDim(1)" class="overlay"
-           :viewBox="`0 0 ${pageDim(1)!.width} ${pageDim(1)!.height}`"
-           preserveAspectRatio="none">
-        <!-- every locatable field, clickable: canvas -> field selection (P02) -->
-        <rect v-for="b in boxesOn(1)" :key="b.key" v-bind="rectOf(b.bbox)"
-              class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
-              @click="emit('pick', b.key)">
-          <title>{{ b.label }}</title>
-        </rect>
-        <rect v-if="activeBox && activePage === 1" :x="activeBox[0]" :y="activeBox[1]"
-              :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
-              class="hl" />
-        <template v-for="(rg, ri) in regionsOn(1)" :key="`rg1-${ri}`">
-          <polygon v-if="rg.mask?.length" :points="regionPoints(rg, 1)"
-                   class="region" :class="rg.label" />
-          <rect v-else v-bind="regionRect(rg, 1)" class="region" :class="rg.label" />
-        </template>
-        <rect v-if="drag && drag.page === 1" :x="dragRect[0]" :y="dragRect[1]"
-              :width="dragRect[2]" :height="dragRect[3]" class="draw" />
-      </svg>
-    </div>
-
-    <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
-    <div v-else-if="!isPdf" class="no-preview dim">
-      该格式暂不支持原件预览 ——
-      <a href="#" @click.prevent="downloadFile(src, fileName)">下载原件</a>
-    </div>
-
-    <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay -->
-    <template v-else>
-      <div v-for="p in pdfPages" :key="p.no" class="page-wrap pdf"
-           :class="{ annotating: annotate }" :data-page="p.no"
-           @pointerdown="down($event, p.no)" @pointermove="move" @pointerup="up">
-        <canvas :ref="(el) => setCanvas(p.no, el as HTMLCanvasElement)"></canvas>
-        <span v-if="pageErrors[p.no]" class="page-err" :title="pageErrors[p.no]">
-          ⚠ 此页渲染失败</span>
-        <svg v-if="pageDim(p.no)" class="overlay"
-             :viewBox="`0 0 ${pageDim(p.no)!.width} ${pageDim(p.no)!.height}`"
-             preserveAspectRatio="none">
-          <rect v-for="b in boxesOn(p.no)" :key="b.key" v-bind="rectOf(b.bbox)"
-                class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
-                @click="emit('pick', b.key)">
-            <title>{{ b.label }}</title>
-          </rect>
-          <rect v-if="activeBox && activePage === p.no" :x="activeBox[0]" :y="activeBox[1]"
-                :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
-                class="hl" />
-          <template v-for="(rg, ri) in regionsOn(p.no)" :key="`rg${p.no}-${ri}`">
-            <polygon v-if="rg.mask?.length" :points="regionPoints(rg, p.no)"
-                     class="region" :class="rg.label" />
-            <rect v-else v-bind="regionRect(rg, p.no)" class="region" :class="rg.label" />
-          </template>
-          <rect v-if="drag && drag.page === p.no" :x="dragRect[0]" :y="dragRect[1]"
-                :width="dragRect[2]" :height="dragRect[3]" class="draw" />
-        </svg>
-        <span class="page-no dim">{{ p.no }} / {{ pdfPages.length }}</span>
+      <div class="scaler">
+      <!-- images render directly; single page, UDR dims from pages[0] -->
+      <div v-if="isImage" class="page-wrap" :class="{ annotating: annotate }"
+           :data-page="1" :style="pageBoxStyle(1)"
+           @pointerdown="down($event, 1)" @pointermove="move" @pointerup="up">
+        <div class="page-inner" :style="innerStyle(1)">
+          <img v-if="imgUrl" :src="imgUrl" @load="onImgLoad" draggable="false" />
+          <svg v-if="ready && pageDim(1)" class="overlay"
+               :viewBox="`0 0 ${pageDim(1)!.width} ${pageDim(1)!.height}`"
+               preserveAspectRatio="none">
+            <!-- every locatable field, clickable: canvas -> field selection (P02) -->
+            <rect v-for="b in boxesOn(1)" :key="b.key" v-bind="rectOf(b.bbox)"
+                  class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
+                  @click="emit('pick', b.key)">
+              <title>{{ b.label }}</title>
+            </rect>
+            <rect v-if="activeBox && activePage === 1" :x="activeBox[0]" :y="activeBox[1]"
+                  :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
+                  class="hl" />
+            <template v-for="(rg, ri) in regionsOn(1)" :key="`rg1-${ri}`">
+              <polygon v-if="rg.mask?.length" :points="regionPoints(rg, 1)"
+                       class="region" :class="rg.label" />
+              <rect v-else v-bind="regionRect(rg, 1)" class="region" :class="rg.label" />
+            </template>
+            <rect v-if="drag && drag.page === 1" :x="dragRect[0]" :y="dragRect[1]"
+                  :width="dragRect[2]" :height="dragRect[3]" class="draw" />
+          </svg>
+        </div>
       </div>
-    </template>
-    </div>
+
+      <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
+      <div v-else-if="!isPdf" class="no-preview dim">
+        该格式暂不支持原件预览 ——
+        <a href="#" @click.prevent="downloadFile(src, fileName)">下载原件</a>
+      </div>
+
+      <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay.
+           Each page sits in an explicit placeholder sized to the rotated,
+           zoomed bounding box; the content inside carries the transform, so
+           the page never lands in unreachable negative coordinates. -->
+      <template v-else>
+        <div v-for="p in pdfPages" :key="p.no" class="page-wrap pdf"
+             :class="{ annotating: annotate }" :data-page="p.no"
+             :style="pageBoxStyle(p.no)"
+             @pointerdown="down($event, p.no)" @pointermove="move" @pointerup="up">
+          <div class="page-inner" :style="innerStyle(p.no)">
+            <canvas :ref="(el) => setCanvas(p.no, el as HTMLCanvasElement)"></canvas>
+            <svg v-if="pageDim(p.no)" class="overlay"
+                 :viewBox="`0 0 ${pageDim(p.no)!.width} ${pageDim(p.no)!.height}`"
+                 preserveAspectRatio="none">
+              <rect v-for="b in boxesOn(p.no)" :key="b.key" v-bind="rectOf(b.bbox)"
+                    class="fieldbox" :class="{ active: b.key === activeKey, pick: !annotate }"
+                    @click="emit('pick', b.key)">
+                <title>{{ b.label }}</title>
+              </rect>
+              <rect v-if="activeBox && activePage === p.no" :x="activeBox[0]" :y="activeBox[1]"
+                    :width="activeBox[2] - activeBox[0]" :height="activeBox[3] - activeBox[1]"
+                    class="hl" />
+              <template v-for="(rg, ri) in regionsOn(p.no)" :key="`rg${p.no}-${ri}`">
+                <polygon v-if="rg.mask?.length" :points="regionPoints(rg, p.no)"
+                         class="region" :class="rg.label" />
+                <rect v-else v-bind="regionRect(rg, p.no)" class="region" :class="rg.label" />
+              </template>
+              <rect v-if="drag && drag.page === p.no" :x="dragRect[0]" :y="dragRect[1]"
+                    :width="dragRect[2]" :height="dragRect[3]" class="draw" />
+            </svg>
+          </div>
+          <!-- page chrome lives OUTSIDE the transformed box: it stays upright -->
+          <span v-if="pageErrors[p.no]" class="page-err" :title="pageErrors[p.no]">
+            ⚠ 此页渲染失败</span>
+          <span class="page-no dim">{{ p.no }} / {{ pdfPages.length }}</span>
+        </div>
+      </template>
+      </div>
     </div>
   </div>
 </template>
@@ -119,9 +134,14 @@
 // Document stage: renders the original (image or PDF via pdf.js), overlays the
 // located field boxes, and — in annotate mode — lets the reviewer drag a new
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+// WP2: every page renders into an explicit placeholder sized by
+// documentGeometry.ts (rotated bounding box × zoom); zoom/rotate transform the
+// page content, never the toolbar/rail, and fit-to-page is the default.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { downloadFile, fetchBlob, FetchBlobError, type RegionOverlay } from "../api";
 import { loadPdfjs, PDFJS_ASSETS, type PdfjsModule } from "../pdfjs";
+import { fitScale, normRotation, rotatedSize, rotatedTranslate, viewToUdr,
+         type Rotation } from "../documentGeometry";
 
 /** One locatable thing on the page: a scalar field or one table cell. */
 export interface StageBox {
@@ -151,8 +171,9 @@ const emit = defineEmits<{
 }>();
 
 const stageEl = ref<HTMLDivElement>();
+const viewportEl = ref<HTMLDivElement>();
 const ready = ref(false);
-const pdfPages = ref<{ no: number; vpW: number; vpH: number }[]>([]);
+const pdfPages = ref<{ no: number; w: number; h: number }[]>([]);
 const canvases = new Map<number, HTMLCanvasElement>();
 let loadingTask: ReturnType<PdfjsModule["getDocument"]> | null = null;
 
@@ -170,15 +191,79 @@ const isImage = computed(() =>
   !props.previewSrc && /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
 const isPdf = computed(() => !!props.previewSrc || /\.pdf$/i.test(props.fileName));
 
-// —— zoom / rotate (UX debt) ——
+// —— zoom / rotate (WP2: fit-to-page default, per-page placeholders) ——
 const zoom = ref(1);
-const rotation = ref(0);            // image-only; box-select disabled while rotated
-function zoomBy(d: number) { zoom.value = Math.min(4, Math.max(0.5, zoom.value + d)); }
-function rotate() { rotation.value = (rotation.value + 90) % 360; }
-const scalerStyle = computed(() => ({
-  transform: `scale(${zoom.value}) rotate(${rotation.value}deg)`,
-  transformOrigin: "top left",
-}));
+const rotation = ref<Rotation>(0);
+const fitMode = ref(true);
+const imgNatural = ref<{ w: number; h: number } | null>(null);
+
+function rotateBy(deg: number) { rotation.value = normRotation(rotation.value + deg); }
+function zoomBy(d: number) {
+  fitMode.value = false;
+  zoom.value = Math.min(4, Math.max(0.5, zoom.value + d));   // manual clamp only
+}
+function zoomOne() { fitMode.value = false; zoom.value = 1; }
+function resetView() { rotation.value = 0; fitMode.value = true; }
+watch(rotation, () => { if (fitMode.value) refit(); });
+watch(fitMode, (v) => { if (v) refit(); });
+
+/** Layout base of a page in CSS px at zoom 1 (canvas point size / image
+ *  natural size). The overlay's UDR space stretches onto this box. */
+function contentDim(no: number): { w: number; h: number } | null {
+  if (isImage.value) {
+    if (imgNatural.value) return imgNatural.value;
+    const p = props.pages.find((x) => x.page_no === 1);
+    return p && p.width > 0 ? { w: p.width, h: p.height } : null;
+  }
+  const v = pdfPages.value.find((x) => x.no === no);
+  return v ? { w: v.w, h: v.h } : null;
+}
+
+/** Placeholder = the page's rotated bounding box × zoom. */
+function pageBoxStyle(no: number): Record<string, string> {
+  const dim = contentDim(no);
+  if (!dim) return {};
+  const { w, h } = rotatedSize(dim.w, dim.h, rotation.value);
+  return { width: `${w * zoom.value}px`, height: `${h * zoom.value}px` };
+}
+
+/** Content transform: translate into the positive quadrant, then rotate and
+ *  scale — origin 0 0, same matrix the pointer mapping inverts. */
+function innerStyle(no: number): Record<string, string> {
+  const dim = contentDim(no);
+  if (!dim) return {};
+  const z = zoom.value;
+  const [tx, ty] = rotatedTranslate(dim.w, dim.h, rotation.value, z);
+  return {
+    width: `${dim.w}px`, height: `${dim.h}px`,
+    transform: `translate(${tx}px, ${ty}px) rotate(${rotation.value}deg) scale(${z})`,
+  };
+}
+
+function currentPageNo(): number {
+  return isImage.value ? 1 : (props.activePage || 1);
+}
+
+/** Fit the current page into the real available viewport (minus rail and
+ *  padding). Unbounded — a big page may fit below 50% by design. */
+function refit() {
+  const vp = viewportEl.value;
+  const dim = contentDim(currentPageNo());
+  if (!vp || !dim) return;
+  const rail = vp.querySelector<HTMLElement>(".page-rail");
+  const availW = vp.clientWidth - (rail ? rail.offsetWidth + 10 : 0) - 28;
+  const availH = vp.clientHeight - 28;
+  const f = fitScale(availW, availH, dim.w, dim.h, rotation.value);
+  if (f != null && Number.isFinite(f) && f > 0) zoom.value = f;
+}
+
+// refit on pane resizes only — the viewport box never changes with content,
+// so observing it cannot feed back into itself
+let ro: ResizeObserver | null = null;
+onMounted(() => {
+  ro = new ResizeObserver(() => { if (fitMode.value) refit(); });
+  if (viewportEl.value) ro.observe(viewportEl.value);
+});
 
 // UDR page dims are the bbox coordinate base; fall back to the pdf.js viewport
 // when the parser produced no page geometry (e.g. markitdown)
@@ -186,7 +271,7 @@ function pageDim(no: number): { width: number; height: number } | null {
   const p = props.pages.find((x) => x.page_no === no);
   if (p && p.width > 0 && p.height > 0) return p;
   const v = pdfPages.value.find((x) => x.no === no);
-  if (v) return { width: v.vpW, height: v.vpH };
+  if (v) return { width: v.w, height: v.h };
   // last resort: seed the viewBox from the /detect raster dims — geometry-less
   // parses (OCR chain without page info) leave UDR pages at 0x0, which would
   // otherwise suppress the overlay SVG entirely while the toast reports hits;
@@ -207,9 +292,11 @@ function rectOf(bbox: number[]) {
 // and pdf.js URL loading can't carry the Bearer token (401 under auth-on)
 const imgUrl = ref("");
 
-async function loadImage() {
-  if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
-  imgUrl.value = URL.createObjectURL(await fetchBlob(renderSrc.value));
+function onImgLoad(ev: Event) {
+  const img = ev.target as HTMLImageElement;
+  imgNatural.value = { w: img.naturalWidth, h: img.naturalHeight };
+  ready.value = true;
+  if (fitMode.value) refit();
 }
 
 /** Did anything at all get painted? A document that renders 100% white is the
@@ -229,12 +316,19 @@ function hasInk(canvas: HTMLCanvasElement): boolean {
 // away mid-fetch, part switch, retry) cannot paint its stale error/loading
 // state over the newer one — its aborted pdf.js promise must die silently.
 let renderSeq = 0;
+// WP3: each load owns an AbortController — a superseded fetch dies outright
+// instead of resolving late and fighting the newer document for shared state
+let loadAbort: AbortController | null = null;
 
 async function renderPdf() {
   const seq = ++renderSeq;
+  loadAbort?.abort();
+  const abort = new AbortController();
+  loadAbort = abort;
   loadingTask?.destroy();
   loadingTask = null;
   pdfPages.value = [];
+  imgNatural.value = null;
   pageErrors.value = {};
   loadError.value = "";
   loadErrorCode.value = "";
@@ -242,34 +336,48 @@ async function renderPdf() {
   if (!isImage.value && !isPdf.value) return;
   loading.value = true;
   try {
-    if (isImage.value) { await loadImage(); return; }
-    const blob = await fetchBlob(renderSrc.value);
+    if (isImage.value) {
+      const blob = await fetchBlob(renderSrc.value, { signal: abort.signal });
+      if (seq !== renderSeq) return;          // superseded mid-fetch
+      const url = URL.createObjectURL(blob);
+      if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);   // revoke only after a good fetch
+      imgUrl.value = url;
+      return;
+    }
+    const blob = await fetchBlob(renderSrc.value, { signal: abort.signal });
+    if (seq !== renderSeq) return;
     const pdfjs = await loadPdfjs();
-    loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer(), ...PDFJS_ASSETS });
-    const doc = await loadingTask.promise;
+    if (seq !== renderSeq) return;
+    const task = pdfjs.getDocument({ data: await blob.arrayBuffer(), ...PDFJS_ASSETS });
+    if (seq !== renderSeq) { task.destroy(); return; }
+    loadingTask = task;
+    const doc = await task.promise;
+    if (seq !== renderSeq) { task.destroy(); return; }
     pdfPages.value = await Promise.all(
       Array.from({ length: doc.numPages }, async (_, i) => {
         const page = await doc.getPage(i + 1);
         const vp = page.getViewport({ scale: 1 });
-        return { no: i + 1, vpW: vp.width, vpH: vp.height };
+        return { no: i + 1, w: vp.width, h: vp.height };  // zoom 1 == true 1:1 (points)
       }));
+    if (seq !== renderSeq) return;
     await nextTick();
-    const width = (stageEl.value?.clientWidth || 800) - 24;
+    if (fitMode.value) refit();            // first paint already fits
+    consumePendingPage();
     let inked = false;
     for (let i = 1; i <= doc.numPages; i++) {
+      if (seq !== renderSeq) return;       // stop painting after a newer load won
       const canvas = canvases.get(i);
       if (!canvas) continue;
       // one bad page must not abort the rest of the document
       try {
         const page = await doc.getPage(i);
         const base = page.getViewport({ scale: 1 });
-        const scale = width / base.width;
         const dpr = window.devicePixelRatio || 1;
-        const vp = page.getViewport({ scale: scale * dpr });
+        const vp = page.getViewport({ scale: dpr });
         canvas.width = vp.width;
         canvas.height = vp.height;
-        canvas.style.width = `${vp.width / dpr}px`;
-        canvas.style.height = `${vp.height / dpr}px`;
+        canvas.style.width = `${base.width}px`;    // CSS size = points; zoom scales it
+        canvas.style.height = `${base.height}px`;
         // intent "print": one-shot static raster. The default display intent
         // schedules paint slices via requestAnimationFrame, which never fires in
         // hidden/background pages (preview panes, prefetch) — render would hang.
@@ -302,6 +410,7 @@ function retry() { renderPdfSafe(); }
 
 function setCanvas(no: number, el: HTMLCanvasElement | null) {
   if (el) canvases.set(no, el);
+  else canvases.delete(no);
 }
 
 // —— seal/signature overlay: detect raster px -> UDR viewBox px ——
@@ -326,18 +435,25 @@ function regionPoints(rg: RegionOverlay, no: number): string {
 }
 
 // —— box-select (annotate mode): pointer px -> UDR page-pixel space ——
+// Works under rotation too (WP2): the placeholder rect shows the rotated
+// content, so unzoom, invert the rotation, then rescale into UDR space.
 const drag = ref<{ page: number; x0: number; y0: number; x1: number; y1: number } | null>(null);
 
 function toUdr(ev: PointerEvent, page: number): [number, number] | null {
   const wrap = (ev.currentTarget as HTMLElement);
-  const dim = pageDim(page);
-  if (!dim) return null;
+  const dim = pageDim(page);        // UDR space (overlay coordinate base)
+  const box = contentDim(page);     // CSS px at zoom 1 (layout base)
+  if (!dim || !box) return null;
   const r = wrap.getBoundingClientRect();
-  return [((ev.clientX - r.left) / r.width) * dim.width,
-          ((ev.clientY - r.top) / r.height) * dim.height];
+  const vx = (ev.clientX - r.left) / zoom.value;
+  const vy = (ev.clientY - r.top) / zoom.value;
+  const [ix, iy] = viewToUdr(vx, vy, box.w, box.h, rotation.value);
+  // the overlay stretches UDR space onto the content box (preserveAspectRatio
+  // "none") — rescale the inverse-rotated point the same way
+  return [ix * (dim.width / box.w), iy * (dim.height / box.h)];
 }
 function down(ev: PointerEvent, page: number) {
-  if (!props.annotate || rotation.value !== 0) return;
+  if (!props.annotate) return;      // rotation no longer blocks drawing (WP2)
   const pt = toUdr(ev, page);
   if (!pt) return;
   (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
@@ -361,48 +477,87 @@ const dragRect = computed<number[]>(() => {
   return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)];
 });
 
-// bring the highlighted page into view when the reviewer focuses a field
-watch(() => [props.activeBox, props.activePage] as const, async () => {
-  if (!props.activeBox || isImage.value) return;
-  await nextTick();
-  stageEl.value?.querySelector(`[data-page="${props.activePage}"]`)
-    ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-});
+// bring a page into view INSIDE the stage viewport only — scrollIntoView would
+// drag the whole outer page along (WP2)
+function scrollPageIntoView(no: number, block: "start" | "nearest") {
+  const vp = viewportEl.value;
+  const el = vp?.querySelector<HTMLElement>(`[data-page="${no}"]`);
+  if (!vp || !el) return;
+  const vr = vp.getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  const pad = 8;
+  if (block === "start") {
+    if (er.top < vr.top + pad || er.top > vr.bottom - pad) vp.scrollTop += er.top - vr.top - pad;
+  } else if (er.top < vr.top) {
+    vp.scrollTop += er.top - vr.top - pad;
+  } else if (er.bottom > vr.bottom) {
+    vp.scrollTop += er.bottom - vr.bottom + pad;
+  }
+}
+
+// gotoPage before the document finishes loading: stash the target, consume it
+// once pages exist (nextTick used to beat the pdf.js fetch and drop the jump)
+const pendingPage = ref<number | null>(null);
+function consumePendingPage() {
+  if (pendingPage.value == null) return;
+  const no = pendingPage.value;
+  pendingPage.value = null;
+  scrollPageIntoView(no, "start");
+}
 
 /** Jump the document to a page (page-number rail + part switch, 需求5). */
 function gotoPage(no: number) {
-  const el = stageEl.value?.querySelector(`[data-page="${no}"]`);
-  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const el = viewportEl.value?.querySelector(`[data-page="${no}"]`);
+  if (el) scrollPageIntoView(no, "start");
+  else pendingPage.value = no;
 }
 defineExpose({ gotoPage });
 
+// highlight the page of a selected field without scrolling the outer page
+watch(() => [props.activeBox, props.activePage] as const, async () => {
+  if (!props.activeBox || isImage.value) return;
+  await nextTick();
+  scrollPageIntoView(props.activePage, "nearest");
+});
+
 watch(() => [props.src, props.previewSrc] as const, () => {
   ready.value = false;
-  zoom.value = 1;
   rotation.value = 0;
+  fitMode.value = true;
+  zoom.value = 1;
+  pendingPage.value = null;
+  imgNatural.value = null;
   renderPdfSafe();
 }, { immediate: true });
+
 onBeforeUnmount(() => {
+  loadAbort?.abort();                    // an in-flight fetch must not settle late
   loadingTask?.destroy();
+  ro?.disconnect();
   if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
 });
 </script>
 
 <style scoped>
-.stage { display: flex; flex-direction: column; gap: 12px; }
-.stage-cols { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
-.page-rail { position: sticky; top: 46px; display: flex; flex-direction: column; gap: 3px;
-  max-height: calc(100vh - 180px); overflow-y: auto; padding-right: 2px; flex-shrink: 0; }
+.stage { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
+.tools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 2px 0; }
+.tools button { padding: 2px 10px; font-size: 13px; }
+.tools button.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.zoom-val { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; }
+.hint { font-size: 12px; color: var(--accent); }
+.hint.load { margin-left: auto; }
+/* the pane's own scroll container: zoomed content overflows here, so manual
+   zoom reaches every edge without ever scrolling the outer page (WP2) */
+.stage-viewport { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto;
+  display: flex; align-items: flex-start; gap: 10px; overscroll-behavior: contain; }
+/* sticky in both axes: the rail survives vertical AND horizontal scrolling */
+.page-rail { position: sticky; top: 0; left: 0; z-index: 4; display: flex;
+  flex-direction: column; gap: 3px; max-height: 100%; overflow-y: auto;
+  padding: 4px 2px 8px 4px; flex-shrink: 0; background: var(--bg); }
 .page-rail button { min-width: 30px; padding: 3px 8px; font-size: 12px;
   font-variant-numeric: tabular-nums; text-align: center; }
 .page-rail button.on { background: var(--accent); color: var(--accent-text);
   border-color: var(--accent); font-weight: 700; }
-.tools { display: flex; align-items: center; gap: 6px; position: sticky; top: 0;
-  z-index: 5; background: var(--bg); padding: 2px 0 6px; }
-.tools button { padding: 2px 10px; font-size: 13px; }
-.zoom-val { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; }
-.hint { font-size: 12px; color: var(--accent); }
-.hint.load { margin-left: auto; }
 .stage-error { border: 1px solid var(--red); border-radius: 8px; padding: 14px 16px;
   background: var(--bg-raised); display: flex; flex-direction: column; gap: 6px; }
 .stage-error.warn { border-color: var(--accent); }
@@ -410,12 +565,17 @@ onBeforeUnmount(() => {
 .err-msg { margin: 0; font-size: 12px; color: var(--text-dim); word-break: break-word; }
 .err-acts { display: flex; gap: 8px; margin-top: 6px; }
 .page-err { position: absolute; left: 6px; top: 6px; font-size: 11px; color: #fff;
-  background: var(--red); padding: 1px 7px; border-radius: 4px; }
-.scaler { align-self: flex-start; display: flex; flex-direction: column; gap: 12px;
-  min-width: 0; }
-.page-wrap { position: relative; display: inline-block; align-self: flex-start; }
+  background: var(--red); padding: 1px 7px; border-radius: 4px; z-index: 2; }
+/* margin auto centers the flow in the viewport; when it overflows, the margins
+   resolve to 0 and the overflow stays scrollable to every edge */
+.scaler { margin: auto; flex-shrink: 0; display: flex; flex-direction: column;
+  align-items: center; gap: 12px; padding: 14px; }
+.page-wrap { position: relative; }
 .page-wrap.annotating { cursor: crosshair; }
-.page-wrap img, .page-wrap canvas { max-width: 100%; display: block; background: #fff;
+/* the transformed content box: sized to the page at zoom 1, mapped into the
+   placeholder by translate→rotate→scale (documentGeometry.ts) */
+.page-inner { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.page-inner img, .page-inner canvas { display: block; background: #fff;
   user-select: none; -webkit-user-drag: none; }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 /* selected-field highlight: translucent amber, thin — must never hide the text
@@ -434,7 +594,8 @@ onBeforeUnmount(() => {
 .draw { fill: rgba(90, 170, 255, 0.15); stroke: var(--blue); stroke-width: 2;
   stroke-dasharray: 8 5; }
 .page-no { position: absolute; right: 6px; bottom: 6px; font-size: 11px;
-  background: rgba(0, 0, 0, 0.55); color: #ddd; padding: 1px 7px; border-radius: 4px; }
+  background: rgba(0, 0, 0, 0.55); color: #ddd; padding: 1px 7px; border-radius: 4px;
+  z-index: 2; }
 .no-preview { padding: 40px 20px; text-align: center; }
 .no-preview a { color: var(--blue); }
 .dim { color: var(--text-dim); }
