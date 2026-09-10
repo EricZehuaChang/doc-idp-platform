@@ -157,6 +157,14 @@
       </div>
 
       <div class="actions">
+        <!-- export is read-only and independent of the lock: an already-decided
+             document is exactly the one people want to hand downstream -->
+        <button class="ghost" :disabled="!activeItem"
+                title="导出当前单据识别结果（JSON：字段值与明细行，不含引擎元数据）"
+                @click="exportResult('json')">导出 JSON</button>
+        <button class="ghost" :disabled="!activeItem"
+                title="导出当前单据识别结果（Markdown 表格，便于阅读与转贴）"
+                @click="exportResult('md')">导出 MD</button>
         <button v-if="!locked && reviewable" class="primary big" @click="acquire">
           开始校验（锁定） L</button>
         <span v-else-if="!locked" class="dim decided-note">当前单据已处理，可只读查看</span>
@@ -200,6 +208,7 @@ import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
          type ReviewItem, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
+import { downloadResult, type ResultExportInput } from "../resultExport";
 import { toast } from "../toast";
 
 const props = defineProps<{ fileId: string }>();
@@ -645,6 +654,36 @@ async function saveEdits(): Promise<boolean> {
     await refetch();
     return true;
   } catch (e) { toast.error(e); return false; }
+}
+
+// —— result export (识别结果导出: JSON / Markdown) ——
+/** The document on screen as export input — what the reviewer is looking at
+ *  right now, unsaved edits included. A field the human touched counts as
+ *  confidence 3, the same rule the save path applies ($corrected). */
+function exportInput(): ResultExportInput | null {
+  const item = activeItem.value;
+  if (!item) return null;
+  return {
+    fileId: item.file_id,
+    fileName: item.file_name,
+    status: item.status,
+    statusLabel: stLabel(item.status),
+    pageCount: item.page_count,
+    verifiedBy: item.verified_by,
+    fields: scalarFields.value.map((f) => ({
+      name: f.name,
+      value: edits.value[f.name] ?? f.cell.$value ?? "",
+      confidence: edits.value[f.name] !== original.value[f.name] ? 3 : f.cell.$confidence,
+    })),
+    tables: tableNames.value.map((t) => ({ name: t, rows: tableEdits.value[t] ?? [] })),
+  };
+}
+
+function exportResult(format: "json" | "md") {
+  const input = exportInput();
+  if (!input) return;
+  downloadResult(input, format);
+  toast.ok(format === "json" ? "已导出 JSON" : "已导出 Markdown");
 }
 
 // —— exits (P03) ——
