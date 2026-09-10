@@ -97,6 +97,57 @@ async def test_adopt_pre_alembic_db_via_stamp(tmp_path):
     assert version == head, "stamp head must pin the current head"
 
 
+BASELINE = "c8c989251f69"
+
+
+async def _columns(url: str, table: str) -> list[str]:
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            rows = (await conn.exec_driver_sql(f"PRAGMA table_info({table})")).all()
+        return [r[1] for r in rows]
+    finally:
+        await engine.dispose()
+
+
+async def test_adopt_baseline_frozen_db_via_stamp(tmp_path):
+    """The real production shape (2026-09-10 deployment).
+
+    A create_all-era database is frozen at the **baseline** revision, not at
+    today's models — every revision added after the baseline never ran there.
+    Stamping `head` marks those later revisions as applied and silently skips
+    them: on production that left `users.session_epoch` missing, and since
+    `app/tenancy.py` reads it on every authenticated request, login answered
+    HTTP 500. Adoption must pin the baseline, then let the later revisions run.
+
+    `test_adopt_pre_alembic_db_via_stamp` above covers a different shape — a
+    database whose schema already equals today's models — which is why it did
+    not catch this.
+    """
+    url = f"sqlite+aiosqlite:///{tmp_path}/frozen.db"
+    await asyncio.to_thread(command.upgrade, alembic_config(url), BASELINE)
+
+    # the premise: this column only arrives in a post-baseline revision
+    assert "session_epoch" not in await _columns(url, "users"), \
+        "premise broken: baseline already has session_epoch"
+
+    await asyncio.to_thread(command.stamp, alembic_config(url), BASELINE)
+    await asyncio.to_thread(command.upgrade, alembic_config(url), "head")
+
+    assert "session_epoch" in await _columns(url, "users"), \
+        "adoption skipped a post-baseline revision"
+    await _assert_schema_matches(url)          # and lands on today's models
+
+    engine = create_async_engine(url)
+    async with engine.connect() as conn:
+        version = (await conn.exec_driver_sql(
+            "SELECT version_num FROM alembic_version")).scalar()
+    await engine.dispose()
+    from alembic.script import ScriptDirectory
+    head = ScriptDirectory.from_config(alembic_config(url)).get_current_head()
+    assert version == head, "adoption must end at head"
+
+
 async def test_storage_key_backfill_migration(tmp_path, monkeypatch):
     """0002: absolute data_dir paths (pre-WP2 rows) become relative keys."""
     import app.config as config

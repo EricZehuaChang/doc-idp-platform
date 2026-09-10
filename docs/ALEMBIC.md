@@ -24,17 +24,42 @@ IDP_DATABASE_URL=sqlite+aiosqlite:////tmp/idp_gen.db .venv/bin/alembic revision 
 ## 既有数据库（生产 SQLite）一次性采纳
 
 生产库（`/opt/doc-idp/shared/data/idp.db`）的表是 create_all 时代建的，没有
-`alembic_version`。**直接 `upgrade head` 会因表已存在而启动即崩**，必须先 stamp：
+`alembic_version`。**直接 `upgrade head` 会因表已存在而启动即崩**，必须先 stamp。
+
+### ⚠️ stamp 的目标是**基线** `c8c989251f69`，不是 `head`
+
+create_all 时代的库，其 schema 永远等于**基线 revision 的那一刻**——不管它是哪天建的。
+此后新增的每个迁移都**没有**在这个库上跑过。
+
+`stamp head` 会把**所有**迁移（含基线之后的）标记成「已应用」而跳过执行：库能起来，
+但后加的列/表永远不存在。2026-09-10 实测过这条路径的后果：
+
+| | `stamp head` | `stamp c8c989251f69` + `upgrade head` |
+|---|---|---|
+| `users.session_epoch` | 缺失 | 存在 |
+| `POST /auth/login` | **HTTP 500** | 401（凭据错误的正确响应） |
+
+`users.session_epoch` 被 `app/tenancy.py` 在**每个带鉴权请求**里读取，`IDP_AUTH_MODE=on`
+的生产上等于全员登录崩。**基线之后每加一个迁移，`stamp head` 就多漏一张表/一列。**
 
 ```bash
 # 1. 备份（既有发布流程已含 sqlite3 .backup 一致性备份，保留）
-# 2. 对备份副本演练：
+# 2. 对备份副本演练（务必用 CLI + 独立进程核验，见下）
 cp idp-pre-<release>.db /tmp/adopt.db
-IDP_DATABASE_URL="sqlite+aiosqlite:////tmp/adopt.db" .venv/bin/alembic stamp head
-IDP_DATABASE_URL="sqlite+aiosqlite:////tmp/adopt.db" .venv/bin/alembic upgrade head   # 必须 no-op
-sqlite3 /tmp/adopt.db "PRAGMA integrity_check;"   # ok
-# 3. 发布时对真库执行同样的 stamp（upgrade 不需要——基线即现状）
+IDP_DATABASE_URL="sqlite+aiosqlite:////tmp/adopt.db" .venv/bin/python -m alembic stamp c8c989251f69
+IDP_DATABASE_URL="sqlite+aiosqlite:////tmp/adopt.db" .venv/bin/python -m alembic upgrade head
+sqlite3 /tmp/adopt.db "SELECT version_num FROM alembic_version;"   # 应为 head
+sqlite3 /tmp/adopt.db "PRAGMA integrity_check;"                    # ok
+# 3. 对真库执行同样两条；upgrade 之后所有部署照常 upgrade head（app 启动时自动跑）
 ```
 
-`stamp head` 只是写入版本号，不改任何业务表；`tests/test_adopt_pre_alembic_db_via_stamp`
-验证的就是这条路径。采纳之后的所有部署照常 `upgrade head`（app 启动时自动跑）。
+两条注意事项：
+
+- **`IDP_DATA_DIR` 必须与生产一致**（`/opt/doc-idp/shared/data`）：`c7ae5ec98d9e` 按这个前缀
+  把绝对路径改写成 key，前缀不对则该迁移静默什么都不做。
+- **用 `venv/bin/python -m alembic`，不要用 `venv/bin/pip`/控制台脚本**：release 里的 venv 是
+  `cp -a` 传下来的，`bin/pip` 的 shebang 仍指向**最初创建它的那个 release**，装包会装进
+  别人的 venv。验收一律以「独立进程重新读库」为准，不要采信同进程内的读值。
+
+`tests/test_migrations.py::test_adopt_baseline_frozen_db_via_stamp` 钉的就是这条路径；
+`tests/test_adopt_pre_alembic_db_via_stamp` 覆盖的是「库 schema 已经等于今天模型」的另一种情形。
