@@ -14,7 +14,6 @@ import re
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.parsers.base import Block, Page, UDR
 
 
 # ---------------------------------------------------------------- #1 生成字段
@@ -85,7 +84,14 @@ async def test_generate_fields_route_uses_real_function(tmp_path, monkeypatch):
     app = create_app()
     async with app.router.lifespan_context(app):
         st = get_storage()
-        key = st.put_bytes("studio/default/s1/orig.pdf", b"%PDF-1.4 x")
+        from reportlab.pdfgen import canvas
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=(595, 842))
+        c.setFont("Helvetica", 12)
+        c.drawString(72, 800, "Invoice total 100.00 EUR")
+        c.showPage()
+        c.save()
+        key = st.put_bytes("studio/default/s1/orig.pdf", buf.getvalue())
         async with session_factory()() as s:
             s.add(Skill(code="fx1", tenant_id="default", name="fx1", kind="extract"))
             s.add(StudioSample(id="s1", tenant_id="default", skill_code="fx1",
@@ -98,15 +104,8 @@ async def test_generate_fields_route_uses_real_function(tmp_path, monkeypatch):
                                           "instruction": "合计金额",
                                           "example_value": "100.00"}]},
                              {"total_tokens": 5}, "qwen"))
-        # the sample parse is real (a tiny PDF), only the chat call is faked
-        import app.api.routes.studio as studio_route
-        monkeypatch.setattr(studio_route, "parse_document",
-                            lambda path, pinned=None: UDR(
-                                pages=[Page(page_no=1, width=595, height=842,
-                                            markdown="合计金额 100.00",
-                                            blocks=[Block(text="合计金额 100.00",
-                                                          bbox=[1, 2, 3, 4])])],
-                                full_markdown="合计金额 100.00", parser="test"))
+        # only the chat call is replaced — the sample goes through the REAL
+        # parser (a genuine PDF with a text layer)
         async with AsyncClient(transport=ASGITransport(app=app),
                                base_url="http://test") as c:
             r = await c.post("/api/v1/studio/generate-fields",
