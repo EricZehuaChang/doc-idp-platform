@@ -9,7 +9,6 @@ skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
 """
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
@@ -19,6 +18,7 @@ from app.api.task_groups import summary as task_summary
 from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
+from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant
 
 router = APIRouter(prefix="/api/v1/review", tags=["review"])
@@ -52,9 +52,13 @@ async def _get_file(s, file_id: str) -> FileRecord:
 
 
 def _pages(f: FileRecord) -> list[dict]:
-    if not f.udr_path or not Path(f.udr_path).exists():
+    # udr_path holds a storage key (udr/<id>.json) — or a legacy absolute path,
+    # which LocalStorage passes through. Read via the storage seam (D1), never
+    # via bare Path(): a relative key would resolve against the CWD.
+    st = get_storage()
+    if not f.udr_path or not st.exists(f.udr_path):
         return []
-    udr = json.loads(Path(f.udr_path).read_text(encoding="utf-8"))
+    udr = json.loads(st.read_bytes(f.udr_path))
     return [{"page_no": p["page_no"], "width": p.get("width", 0),
              "height": p.get("height", 0)} for p in udr.get("pages", [])]
 

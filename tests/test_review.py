@@ -3,6 +3,7 @@ field correction (Correction row + confidence 3) -> confirm -> passed +
 transaction completed + audit entries. All external calls mocked.
 """
 import asyncio
+import json
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -19,6 +20,44 @@ PKG = SkillPackage(
             FieldSpec(name="items", instruction="明细行", type="table")],
     review_policy=ReviewPolicy(mode="always"),   # force the human loop
 )
+
+
+async def test_review_pages_reads_udr_via_storage_layer(tmp_path, monkeypatch):
+    """D1 regression: since the WP2 storage seam + migration 0002 backfill,
+    FileRecord.udr_path holds a *storage key* (udr/<id>.json), not an absolute
+    path. _pages() must read through the storage layer — a bare Path() resolves
+    the key against CWD and returns [] for every key-shaped row (review detail
+    loses page sizes -> highlight boxes break). Legacy absolute-path rows must
+    keep working (LocalStorage passes them through)."""
+    monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    import app.config as config
+    config.get_settings.cache_clear()
+
+    from app.api.routes.review import _pages
+    from app.models import FileRecord
+    from app.storage import get_storage
+
+    udr_json = json.dumps({"pages": [{"page_no": 1, "width": 595, "height": 842},
+                                     {"page_no": 2, "width": 595, "height": 842}]}).encode()
+    # case 1: key form as written by the runner (udr/<id>.json)
+    get_storage().put_bytes("udr/keyed.json", udr_json)
+    keyed = FileRecord(file_name="k.pdf", storage_path="files/k.pdf", udr_path="udr/keyed.json")
+    assert _pages(keyed) == [{"page_no": 1, "width": 595, "height": 842},
+                             {"page_no": 2, "width": 595, "height": 842}]
+
+    # case 2: legacy absolute path from before WP2 (read compatibility)
+    legacy_file = tmp_path / "legacy.json"
+    legacy_file.write_bytes(udr_json)
+    legacy = FileRecord(file_name="l.pdf", storage_path=str(tmp_path / "l.pdf"),
+                        udr_path=str(legacy_file))
+    assert _pages(legacy) == [{"page_no": 1, "width": 595, "height": 842},
+                              {"page_no": 2, "width": 595, "height": 842}]
+
+    # case 3: missing / empty udr_path stays quiet
+    assert _pages(FileRecord(file_name="m.pdf", storage_path="files/m.pdf",
+                             udr_path="udr/absent.json")) == []
+    assert _pages(FileRecord(file_name="n.pdf", storage_path="files/n.pdf", udr_path=None)) == []
 
 
 async def test_review_loop(tmp_path, monkeypatch):
