@@ -13,6 +13,7 @@ Repositories must always filter by current_tenant().
 """
 from contextlib import contextmanager
 from contextvars import ContextVar
+import re as _re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -63,14 +64,61 @@ def has_role(min_role: str) -> bool:
     return _ROLE_RANK.get(current_actor()["role"], -1) >= _ROLE_RANK[min_role]
 
 
+def require_role(min_role: str):
+    """Dependency for NEW endpoints (9.15 §3.7 rule 1): server-side role gate.
+    Old endpoints stay as-is this cycle (D2 decision B1). Returns 403
+    role_required in the new structured shape."""
+    from fastapi import HTTPException
+
+    def _guard() -> None:
+        if not has_role(min_role):
+            raise HTTPException(403, detail={
+                "code": "role_required",
+                "message": f"当前角色权限不足，需要 {min_role} 及以上",
+            })
+    return _guard
+
+
 def _unauthorized(detail: str = "authentication required") -> JSONResponse:
     return JSONResponse(status_code=401, content={"detail": detail},
                         headers={"WWW-Authenticate": "Bearer"})
 
 
+def _forbidden(code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=403,
+                        content={"detail": {"code": code, "message": message}})
+
+
+# 9.15 §3.7: agent Keys may only touch these (method, path) shapes — default
+# DENY: anything else answers 403 key_scope_denied. Application Keys and JWT
+# sessions are unaffected. (R15/§3.7: the Windows Agent uploads, polls status,
+# reads its own documents and, later, downloads artifacts — nothing else.)
+_AGENT_ALLOWED = [
+    ("GET", _re.compile(r"^/api/v1/agent/ping$")),
+    ("GET", _re.compile(r"^/api/v1/agent/skills$")),
+    ("GET", _re.compile(r"^/api/v1/formats$")),
+    ("POST", _re.compile(r"^/api/v1/process$")),
+    ("GET", _re.compile(r"^/api/v1/status/[^/]+$")),
+    ("GET", _re.compile(r"^/api/v1/transactions/[^/]+/documents$")),
+    ("GET", _re.compile(r"^/api/v1/transactions/[^/]+/artifacts$")),
+    ("GET", _re.compile(r"^/api/v1/artifacts/[^/]+/download$")),
+]
+
+
+def _agent_allowed(method: str, path: str) -> bool:
+    return any(m == method and p.match(path) for m, p in _AGENT_ALLOWED)
+
+
+# last_used_at write throttle: at most one UPDATE per key per minute (§ WP2)
+_LAST_USED_THROTTLE = 60
+
+
 async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
     """Try session JWT first, then API key. Returns (tenant_id, actor) or None.
     Both hit the DB so disable/revoke takes effect on the next request."""
+    import datetime as _dt
+
+    from sqlalchemy import select
     from app.auth import security
     from app.db import session_factory
     from app.models import ApiKey, User
@@ -93,19 +141,47 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
                                 "unlimited": user.unlimited}  # Owner Root flag (§12.7)
 
     # API-key channel (API-first design §7): opaque key, sha256 lookup
-    from sqlalchemy import select
     key_hash = security.hash_api_key(token)
     async with sf() as s:
         row = (await s.execute(select(ApiKey).where(ApiKey.key_hash == key_hash,
                                                     ApiKey.active))).scalar_one_or_none()
     if row is None:
         return None
-    # API keys act as operator: they process documents, they don't manage users.
-    # Key identity rides along so the billing gate can charge an allocated
-    # key's own budget instead of the tenant pool (§12.7 quota modes).
+
+    if row.key_type == "agent":
+        # agent key = restricted credential. Its power is owner(role) ∩ scopes ∩
+        # allowed_skill_codes; a suspended/deleted owner kills it immediately
+        # (§3.7 rule 3) — the next request resolves to 401.
+        owner = None
+        if row.owner_user_id:
+            async with sf() as s:
+                owner = await s.get(User, row.owner_user_id)
+            if owner is None or not owner.active:
+                return None
+        if (row.last_used_at is None
+                or (_dt.datetime.now(_dt.timezone.utc)
+                    - (row.last_used_at if row.last_used_at.tzinfo
+                       else row.last_used_at.replace(tzinfo=_dt.timezone.utc))
+                    ).total_seconds() >= _LAST_USED_THROTTLE):
+            async with sf() as s:
+                stale = await s.get(ApiKey, row.id)
+                if stale is not None and stale.active:
+                    stale.last_used_at = _dt.datetime.now(_dt.timezone.utc)
+                    await s.commit()
+        return row.tenant_id, {
+            "name": f"apikey:{row.name or row.id}", "role": owner.role if owner else "operator",
+            "user_id": None, "api_key_id": row.id, "quota_mode": row.quota_mode,
+            "key_type": "agent", "owner_user_id": row.owner_user_id,
+            "owner_email": owner.email if owner else None,
+            "allowed_skill_codes": row.allowed_skill_codes,
+        }
+
+    # application keys act as operator: they process documents, they don't
+    # manage users. Key identity rides along so the billing gate can charge an
+    # allocated key's own budget instead of the tenant pool (§12.7 quota modes).
     return row.tenant_id, {"name": f"apikey:{row.name or row.id}", "role": "operator",
                            "user_id": None, "api_key_id": row.id,
-                           "quota_mode": row.quota_mode}
+                           "quota_mode": row.quota_mode, "key_type": "application"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -122,6 +198,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
             if resolved is None:
                 return _unauthorized("invalid or expired credential")
             tenant, actor = resolved
+            # 9.15 §3.7: agent keys are default-denied outside their whitelist
+            if actor.get("key_type") == "agent" \
+                    and not _agent_allowed(request.method, path):
+                return _forbidden("key_scope_denied",
+                                  "该 Key 为受限 Agent Key，不能调用此接口")
         else:
             # off mode / public path: M1 dev behavior, synthetic admin actor
             tenant = request.headers.get("X-Tenant-Id") or settings.default_tenant

@@ -86,7 +86,8 @@ async def list_files(status: str | None = None, q: str | None = None,
         # 9.15 R20: left-join the skill identity so the ledger can show its
         # display name (fallback = code when the skill row is gone). Scoped to
         # this tenant — Skill.code is a global PK, tenant_id is a plain column.
-        base = (select(FileRecord, Transaction.skill_code, Skill.name)
+        base = (select(FileRecord, Transaction.skill_code, Skill.name,
+                       Transaction.initiator_type, Transaction.initiator_label)
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
                 .outerjoin(Skill, and_(Skill.code == Transaction.skill_code,
                                        Skill.tenant_id == FileRecord.tenant_id))
@@ -117,7 +118,7 @@ async def list_files(status: str | None = None, q: str | None = None,
         for c in conds:
             base = base.where(c)
         rows = (await s.execute(base.order_by(FileRecord.created_at.desc()))).all()
-        root_ids = [f.id for f, _, _ in rows]
+        root_ids = [f.id for f, _, _, _, _ in rows]
         children_by_parent: dict[str, list[FileRecord]] = {}
         if root_ids:
             children = (await s.execute(
@@ -129,7 +130,7 @@ async def list_files(status: str | None = None, q: str | None = None,
                 children_by_parent.setdefault(child.parent_file_id, []).append(child)
 
         all_data = []
-        for f, sc, sname in rows:
+        for f, sc, sname, itype, ilabel in rows:
             children = children_by_parent.get(f.id, [])
             meta = task_summary(f, children)
             if status and meta["status"] != status:
@@ -162,6 +163,10 @@ async def list_files(status: str | None = None, q: str | None = None,
                 "file_id": f.id, "transaction_id": f.transaction_id,
                 "file_name": f.file_name, "skill_code": sc,
                 "skill_name": sname or sc,
+                "initiator_type": itype or "unknown",
+                # legacy rows (NULL/unknown after the WP2 migration backfill)
+                # carry no label: the UI renders "—" for them
+                "initiator_label": ilabel if itype and itype != "unknown" else None,
                 "type": Path(f.file_name).suffix.lstrip(".").upper(),
                 "size": size, "page_count": f.page_count, "status": meta["status"],
                 "created_at": f.created_at.isoformat(),

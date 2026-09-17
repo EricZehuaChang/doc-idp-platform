@@ -47,6 +47,11 @@
                 {{ r.skill_name || r.skill_code }}
                 <div class="code-sub">{{ r.skill_code }}</div>
               </td>
+              <!-- 9.15 R21: initiator snapshot; legacy rows render "—" -->
+              <td class="initiator-cell" :title="initiatorTitle(r)">
+                <template v-if="r.initiator_label">{{ r.initiator_label }}</template>
+                <span v-else class="dim">—</span>
+              </td>
               <td class="fname" :title="r.file_name">
                 {{ r.file_name }}
                 <span v-if="r.child_count" class="split-note">
@@ -188,6 +193,7 @@ const page = ref(Math.max(1, Number(route.query.page) || 1));
 const COLUMNS = [
   { key: "created", label: "时间", filter: true, keys: ["date_from", "date_to"] },
   { key: "skill", label: "技能", filter: true, keys: ["skill_code"] },
+  { key: "initiator", label: "发起人", filter: false, keys: [] },
   { key: "file_name", label: "文件名", filter: true, keys: ["file_name"] },
   { key: "file_type", label: "类型", filter: true, keys: ["file_type"] },
   { key: "size", label: "大小", filter: false, keys: [] },
@@ -395,6 +401,13 @@ function size(n: number | null): string {
 }
 const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 
+// 9.15 R21: legacy rows (predating the initiator snapshot) show "—" with a
+// hint instead of a fabricated name
+function initiatorTitle(r: FileRow): string {
+  if (r.initiator_label) return `发起人：${r.initiator_label}`;
+  return "该任务早于发起人记录功能";
+}
+
 // —— per-document processing speed (需求1) ——
 function fmtSeconds(sec: number): string {
   if (sec < 60) return `${sec.toFixed(1)}s`;
@@ -446,6 +459,9 @@ function speedTitle(r: FileRow): string {
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 9.15 R20/R19: skill name capped so long names cannot push the table wide */
 .skill-cell { max-width: 170px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+/* 9.15 R21: initiator column — clipped, hint on hover via title */
+.initiator-cell { max-width: 150px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .code-sub { font-size: 10.5px; color: var(--text-dim); font-family: Consolas, monospace; }
 .split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }

@@ -21,10 +21,19 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   }
   if (!resp.ok) {
     let detail = "";
-    try { detail = (await resp.json()).detail ?? ""; } catch { /* non-JSON body */ }
+    try { detail = _detailText((await resp.json()).detail); } catch { /* non-JSON body */ }
     throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
   }
   return resp.json() as Promise<T>;
+}
+
+/** 9.15 §3.6: new endpoints answer with detail={code,message}; old ones keep a
+ *  plain string — normalize both so the UI never shows "[object Object]". */
+function _detailText(d: unknown): string {
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && "message" in d)
+    return String((d as { message: unknown }).message);
+  return "";
 }
 
 /** multipart variant (file uploads); browser sets the boundary header itself */
@@ -42,7 +51,7 @@ async function reqForm<T>(url: string, form: FormData): Promise<T> {
   }
   if (!resp.ok) {
     let detail = "";
-    try { detail = (await resp.json()).detail ?? ""; } catch { /* non-JSON body */ }
+    try { detail = _detailText((await resp.json()).detail); } catch { /* non-JSON body */ }
     throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
   }
   return resp.json() as Promise<T>;
@@ -76,7 +85,7 @@ function reqUpload<T>(url: string, form: FormData,
         return;
       }
       let detail = "";
-      try { detail = JSON.parse(xhr.responseText).detail ?? ""; } catch { /* non-JSON */ }
+      try { detail = _detailText(JSON.parse(xhr.responseText).detail); } catch { /* non-JSON */ }
       // the reverse proxy rejects oversized bodies with an HTML page, not JSON
       if (!detail && xhr.status === 413) detail = "本批文件超过服务器允许的请求大小";
       reject(new Error(detail || `上传失败（HTTP ${xhr.status}）`));
@@ -195,6 +204,9 @@ export interface FileRow {
   file_id: string; transaction_id: string; file_name: string; skill_code: string;
   /** 9.15 R20: skill display name (falls back to the code server-side) */
   skill_name?: string | null;
+  /** 9.15 R21 initiator snapshot (fixed at submit time) */
+  initiator_type?: string | null;      // user | api_key | anonymous | unknown
+  initiator_label?: string | null;     // null on legacy rows → UI renders "—"
   type: string; size: number | null; page_count: number; status: string;
   created_at: string; updated_at: string | null; verified_by: string | null;
   error: string | null;
@@ -554,7 +566,12 @@ export const api = {
     "GET", "/api/v1/settings/providers"),
   listApiKeys: () => req<{ id: string; name: string; prefix: string; active: boolean;
                            quota_mode: string; allocated_balance: number;
-                           allocated_frozen: number; created_at: string | null }[]>(
+                           allocated_frozen: number; created_at: string | null;
+                           /** 9.15 WP2: kind/owner/scope/last-use */
+                           key_type: string;
+                           owner: { user_id: string; email: string | null } | null;
+                           allowed_skill_codes: string[] | null;
+                           last_used_at: string | null }[]>(
     "GET", "/api/v1/settings/api-keys"),
   keyQuotaMode: (id: string, mode: string) =>
     req("PUT", `/api/v1/settings/api-keys/${id}/quota`, { mode }),
@@ -582,10 +599,26 @@ export const api = {
       "GET", `/api/v1/billing/gift-requests${status ? `?status=${status}` : ""}`),
   billingGiftDecide: (id: string, decision: "approve" | "reject") =>
     req("POST", `/api/v1/billing/gift-requests/${id}/${decision}`),
-  createApiKey: (name: string) =>
-    req<{ id: string; name: string; prefix: string; api_key: string }>(
-      "POST", "/api/v1/settings/api-keys", { name }),
+  createApiKey: (name: string, keyType = "application",
+                 allowedSkillCodes: string[] | null = null) =>
+    req<{ id: string; name: string; prefix: string; key_type: string; api_key: string }>(
+      "POST", "/api/v1/settings/api-keys",
+      { name, key_type: keyType, allowed_skill_codes: allowedSkillCodes }),
   revokeApiKey: (id: string) => req("DELETE", `/api/v1/settings/api-keys/${id}`),
+  // —— 9.15 WP2: personal agent keys (any logged-in user) ——
+  myKeys: () => req<{ keys: { id: string; name: string; key_type: string;
+                              key_prefix: string; scopes: string[];
+                              allowed_skill_codes: string[] | null;
+                              created_at: string | null;
+                              last_used_at: string | null }[] }>(
+    "GET", "/api/v1/me/api-keys"),
+  createMyKey: (name: string, allowedSkillCodes: string[] | null = null) =>
+    req<{ id: string; name: string; key_prefix: string; scopes: string[];
+          allowed_skill_codes: string[] | null; created_at: string | null;
+          key: string }>(
+      "POST", "/api/v1/me/api-keys",
+      { name, allowed_skill_codes: allowedSkillCodes }),
+  revokeMyKey: (id: string) => req("DELETE", `/api/v1/me/api-keys/${id}`),
   oidcEnabled: () => req<{ enabled: boolean }>("GET", "/api/v1/auth/oidc/enabled"),
   getOidc: () => req<{ enabled: boolean; issuer?: string; client_id?: string;
                        has_secret?: boolean }>("GET", "/api/v1/settings/oidc"),

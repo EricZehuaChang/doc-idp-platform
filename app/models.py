@@ -7,7 +7,8 @@ query later); credit ledger runs in shadow-billing mode (§12.6).
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index,
+                        Integer, String, Text, text)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -69,6 +70,15 @@ class ApiKey(Base):
     allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
     allocated_frozen: Mapped[float] = mapped_column(Float, default=0.0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # —— 9.15 WP2 key kinds: "application" = the legacy integration key (wide
+    # powers, mask-guard depends on it — unchanged); "agent" = restricted key
+    # for the Windows Agent: route whitelist + skill scope. owner_user_id set
+    # = a person's personal agent key; NULL = admin-issued for an accountless
+    # terminal. allowed_skill_codes: NULL = every published skill, [] = none.
+    key_type: Mapped[str] = mapped_column(String(16), default="application")
+    owner_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    allowed_skill_codes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuthToken(Base):
@@ -125,6 +135,27 @@ class Transaction(Base):
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    # —— 9.15 R21 initiator snapshot: written once at submit time, never
+    # re-derived (renames/revocations must not rewrite history). Legacy rows
+    # stay unknown/历史任务 — verified_by is deliberately NOT a backfill source.
+    initiator_type: Mapped[str | None] = mapped_column(String(16), nullable=True)   # user|api_key|anonymous|unknown
+    initiator_id: Mapped[str | None] = mapped_column(String(128), nullable=True)    # raw principal (email or key name)
+    initiator_label: Mapped[str | None] = mapped_column(String(320), nullable=True) # display string fixed at submit
+    initiator_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    api_key_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # —— 9.15 WP2 submit idempotency: principal is "user:<id>" or "key:<id>";
+    # unique (tenant, principal, idempotency_key) enforced by partial index
+    # (NULL key rows never conflict) — see migration
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idem_principal: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index('ux_transactions_idem', 'tenant_id', 'idem_principal',
+              'idempotency_key', unique=True,
+              sqlite_where=text('idempotency_key IS NOT NULL'),
+              postgresql_where=text('idempotency_key IS NOT NULL')),
+    )
 
 
 class FileRecord(Base):

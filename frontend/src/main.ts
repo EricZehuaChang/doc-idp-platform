@@ -12,6 +12,7 @@ import TokenPasswordView from "./views/auth/TokenPasswordView.vue";
 import CabinetView from "./views/CabinetView.vue";
 import DashboardView from "./views/DashboardView.vue";
 import HomeView from "./views/HomeView.vue";
+import MyApiKeysView from "./views/MyApiKeysView.vue";
 import ReviewView from "./views/ReviewView.vue";
 import TasksView from "./views/TasksView.vue";
 import SettingsView from "./views/SettingsView.vue";
@@ -43,6 +44,7 @@ const router = createRouter({
     { path: "/dashboard", component: DashboardView },
     { path: "/stats", redirect: "/dashboard" },
     { path: "/settings", component: SettingsView },
+    { path: "/api-keys", component: MyApiKeysView },
   ],
 });
 

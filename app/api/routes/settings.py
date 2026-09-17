@@ -68,7 +68,7 @@ async def put_smtp(body: SmtpBody):
 async def list_api_keys():
     from sqlalchemy import select
 
-    from app.models import ApiKey
+    from app.models import ApiKey, User
 
     _require_admin()
     sf = session_factory()
@@ -76,16 +76,33 @@ async def list_api_keys():
         rows = (await s.execute(
             select(ApiKey).where(ApiKey.tenant_id == current_tenant())
             .order_by(ApiKey.created_at))).scalars().all()
+        owner_ids = {k.owner_user_id for k in rows if k.owner_user_id}
+        owners = {}
+        if owner_ids:
+            for u in (await s.execute(
+                    select(User).where(User.id.in_(owner_ids)))).scalars().all():
+                owners[u.id] = u.email
         return [{"id": k.id, "name": k.name, "prefix": k.prefix, "active": k.active,
                  "scopes": k.scopes, "quota_mode": k.quota_mode,
                  "allocated_balance": round(k.allocated_balance or 0.0, 4),
                  "allocated_frozen": round(k.allocated_frozen or 0.0, 4),
+                 # 9.15 WP2: kind + owner + skill scope + last use
+                 "key_type": k.key_type or "application",
+                 "owner": ({"user_id": k.owner_user_id,
+                            "email": owners.get(k.owner_user_id)}
+                           if k.owner_user_id else None),
+                 "allowed_skill_codes": k.allowed_skill_codes,
+                 "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
                  "created_at": k.created_at.isoformat() if k.created_at else None}
                 for k in rows]
 
 
 class ApiKeyCreate(BaseModel):
     name: str = ""
+    # 9.15 WP2: admin can additionally mint an ownerless agent key for an
+    # accountless terminal (a kiosk PC, a plant workstation)
+    key_type: str = "application"          # application | agent
+    allowed_skill_codes: list[str] | None = None
 
 
 @router.post("/api-keys", status_code=201)
@@ -96,19 +113,28 @@ async def create_api_key(body: ApiKeyCreate):
     from app.models import ApiKey
 
     _require_admin()
+    if body.key_type not in ("application", "agent"):
+        raise HTTPException(400, "key_type must be application|agent")
     full_key, prefix, key_hash = security.generate_api_key()
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
         row = ApiKey(tenant_id=tenant, key_hash=key_hash, prefix=prefix,
-                     name=body.name.strip() or "unnamed")
+                     name=body.name.strip() or "unnamed", key_type=body.key_type,
+                     # an ownerless agent key gets the same operator-grade role
+                     # treatment as an application key; its restriction is the
+                     # ROUTE whitelist + skill scope, not the owner's role
+                     owner_user_id=None,
+                     allowed_skill_codes=(body.allowed_skill_codes
+                                          if body.key_type == "agent" else None))
         s.add(row)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="settings.api_key_created",
-                       detail={"name": row.name, "prefix": prefix}))
+                       detail={"name": row.name, "prefix": prefix,
+                               "key_type": body.key_type}))
         await s.commit()
         return {"id": row.id, "name": row.name, "prefix": prefix,
-                "api_key": full_key}
+                "key_type": body.key_type, "api_key": full_key}
 
 
 @router.delete("/api-keys/{key_id}")

@@ -148,6 +148,43 @@ async def test_adopt_baseline_frozen_db_via_stamp(tmp_path):
     assert version == head, "adoption must end at head"
 
 
+async def test_initiator_and_keytype_backfill_migration(tmp_path):
+    """c9d2e4f6a8b0 (9.15 WP2): pre-WP2 rows backfill honestly —
+    transactions get initiator_type=unknown / label=历史任务 (never derived
+    from verified_by), api_keys become key_type=application (behaviour
+    unchanged)."""
+    url = f"sqlite+aiosqlite:///{tmp_path}/initiator.db"
+    await asyncio.to_thread(command.upgrade, alembic_config(url), "b3d1f8a2c4e5")
+    engine = create_async_engine(url)
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(
+            "INSERT INTO transactions (id, tenant_id, skill_code, skill_version,"
+            " status, created_at, updated_at) VALUES"
+            " ('x1','t1','inv',1,'completed','2026-01-01 00:00:00','2026-01-01 00:00:00')")
+        await conn.exec_driver_sql(
+            "INSERT INTO api_keys (id, tenant_id, key_hash, prefix, name, scopes,"
+            " created_at, quota_mode, allocated_balance, allocated_frozen, active)"
+            " VALUES ('k1','t1','h','pre','erp','skills:write,skills:read',"
+            " '2026-01-01 00:00:00','pool',0,0,1)")
+    await engine.dispose()
+
+    await asyncio.to_thread(command.upgrade, alembic_config(url), "head")
+
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            itype, ilabel = (await conn.exec_driver_sql(
+                "SELECT initiator_type, initiator_label FROM transactions"
+                " WHERE id='x1'")).one()
+            ktype = (await conn.exec_driver_sql(
+                "SELECT key_type FROM api_keys WHERE id='k1'")).scalar()
+        assert (itype, ilabel) == ("unknown", "历史任务")
+        assert ktype == "application"
+        await _assert_schema_matches(url)
+    finally:
+        await engine.dispose()
+
+
 async def test_storage_key_backfill_migration(tmp_path, monkeypatch):
     """0002: absolute data_dir paths (pre-WP2 rows) become relative keys."""
     import app.config as config

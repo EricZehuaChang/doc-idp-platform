@@ -23,6 +23,8 @@
         <span class="uname">{{ displayName }}</span>
         <div v-if="menuOpen" class="dropdown" @click.stop>
           <router-link v-if="isAdmin" to="/settings" @click="menuOpen = false">平台设置</router-link>
+          <!-- 9.15 WP2: personal agent keys — every logged-in user, not just admins -->
+          <router-link v-if="session.authRequired" to="/api-keys" @click="menuOpen = false">我的 API Key</router-link>
           <a href="#" @click.prevent="helpOpen = true; menuOpen = false">帮助</a>
           <template v-if="session.authRequired">
             <router-link to="/change-password" @click="menuOpen = false">修改密码</router-link>

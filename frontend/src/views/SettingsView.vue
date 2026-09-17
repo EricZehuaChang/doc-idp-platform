@@ -355,8 +355,17 @@
         接口文档与示例见 技能编辑器 →「🔌 API 接入」。</p>
       <div class="row">
         <input v-model="keyName" placeholder="密钥名称，如：ERP 集成" class="test-to" />
+        <select v-model="keyType" class="test-to">
+          <option value="application">集成 Key（权限较宽）</option>
+          <option value="agent">Agent Key（受限，推荐终端分发）</option>
+        </select>
+        <input v-if="keyType === 'agent'" v-model="keySkills"
+               placeholder="可用技能代码，逗号分隔；留空 = 全部" class="test-to wide-in" />
         <button class="primary" @click="createKey">＋ 创建密钥</button>
       </div>
+      <p v-if="keyType === 'agent'" class="dim">
+        Agent Key 只能调用白名单接口（提交任务/查状态/读自身文档等），
+        且只能提交范围内技能；集成 Key 权限较宽，建议仅服务端集成使用。</p>
 
       <!-- show-once panel: the only time the full key is visible -->
       <div v-if="freshKey" class="fresh-key">
@@ -368,14 +377,23 @@
       </div>
 
       <table v-if="apiKeys.length">
-        <thead><tr><th>名称</th><th>前缀</th><th>状态</th><th>额度模式</th>
-          <th>独立额度</th><th>创建时间</th><th></th></tr></thead>
+        <thead><tr><th>名称</th><th>类型</th><th>前缀</th><th>状态</th><th>归属 / 技能范围</th>
+          <th>额度模式</th><th>独立额度</th><th>最近使用</th><th>创建时间</th><th></th></tr></thead>
         <tbody>
           <tr v-for="k in apiKeys" :key="k.id">
             <td>{{ k.name }}</td>
+            <td><span class="state" :class="k.key_type === 'agent' ? 'off' : ''">
+              {{ k.key_type === "agent" ? "Agent" : "集成" }}</span></td>
             <td class="code">idp_ak_{{ k.prefix }}…</td>
             <td><span class="state" :class="k.active ? 'ok' : 'off'">
               {{ k.active ? "启用" : "已吊销" }}</span></td>
+            <td class="own-cell">
+              <template v-if="k.owner">{{ k.owner.email || k.owner.user_id }}</template>
+              <span v-else-if="k.key_type === 'agent'" class="dim">管理员直发</span>
+              <span v-else class="dim">服务集成</span>
+              <span v-if="k.allowed_skill_codes" class="dim scope-line">
+                限定：{{ k.allowed_skill_codes.join("、") }}</span>
+            </td>
             <td>
               <select :value="k.quota_mode"
                       @change="setQuotaMode(k, ($event.target as HTMLSelectElement).value)">
@@ -390,6 +408,7 @@
               </template>
               <span v-else class="dim">—</span>
             </td>
+            <td class="dim">{{ k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "—" }}</td>
             <td class="dim">{{ k.created_at ? new Date(k.created_at).toLocaleString() : "-" }}</td>
             <td class="row-ops">
               <template v-if="k.quota_mode === 'allocated' || k.allocated_balance > 0">
@@ -738,7 +757,11 @@ async function saveOidc() {
 // —— API keys ——
 interface KeyRow { id: string; name: string; prefix: string; active: boolean;
                    quota_mode: string; allocated_balance: number;
-                   allocated_frozen: number; created_at: string | null }
+                   allocated_frozen: number; created_at: string | null;
+                   key_type: string;
+                   owner: { user_id: string; email: string | null } | null;
+                   allowed_skill_codes: string[] | null;
+                   last_used_at: string | null }
 const allocDrafts = reactive<Record<string, number | null>>({});
 
 async function setQuotaMode(k: KeyRow, mode: string) {
@@ -763,6 +786,8 @@ async function allocate(k: KeyRow) {
 }
 const apiKeys = ref<KeyRow[]>([]);
 const keyName = ref("");
+const keyType = ref("application");
+const keySkills = ref("");
 const freshKey = ref("");
 const copied = ref(false);
 
@@ -770,11 +795,14 @@ async function loadKeys() {
   try { apiKeys.value = await api.listApiKeys(); } catch (e) { toast.error(e); }
 }
 async function createKey() {
+  const codes = keySkills.value.split(/[，,]/).map(s => s.trim()).filter(Boolean);
   try {
-    const r = await api.createApiKey(keyName.value);
+    const r = await api.createApiKey(keyName.value, keyType.value,
+                                     keyType.value === "agent" && codes.length ? codes : null);
     freshKey.value = r.api_key;
     copied.value = false;
     keyName.value = "";
+    keySkills.value = "";
     toast.ok("密钥已创建——完整密钥仅显示这一次");
     await loadKeys();
   } catch (e) { toast.error(e); }
@@ -830,6 +858,11 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
   color: var(--text-dim); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .test-to { max-width: 220px; }
+/* 9.15 WP2: agent key issuance + roster columns */
+.wide-in { max-width: 320px; }
+.own-cell { max-width: 220px; }
+.scope-line { display: block; font-size: 12px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-sel { width: 150px; }
 .grow { flex: 1; }
 .log-count { font-size: 12px; }

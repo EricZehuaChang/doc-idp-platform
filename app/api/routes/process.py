@@ -10,9 +10,10 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
@@ -126,7 +127,8 @@ async def formats():
 
 
 @router.post("/process", response_model=SubmitResponse, status_code=202)
-async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...)):
+async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...),
+                 idem_header: str | None = Header(default=None, alias="Idempotency-Key")):
     if len(files) > _MAX_FILES:
         raise HTTPException(400, f"max {_MAX_FILES} files per request")
     tenant = current_tenant()
@@ -137,7 +139,68 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         if len(blob) > _MAX_SIZE:
             raise HTTPException(413, f"file too large: {up.filename}")
         blobs.append((up.filename or "", blob))
+
+    # —— 9.15 R21 initiator snapshot: fixed at submit time, never re-derived ——
+    actor = current_actor()
+    if actor.get("user_id"):
+        initiator = {"type": "user", "id": actor["name"], "label": actor["name"],
+                     "user_id": actor["user_id"], "api_key_id": None}
+    elif actor.get("api_key_id"):
+        key_name = actor["name"].split(":", 1)[-1]
+        if actor.get("key_type") == "agent":
+            # personal agent key: "owner email (key name)"; accountless: key name
+            label = (f"{actor['owner_email']}（{key_name}）"
+                     if actor.get("owner_email") else key_name)
+        else:
+            label = f"应用：{key_name}"
+        initiator = {"type": "api_key", "id": actor["name"], "label": label,
+                     "user_id": None, "api_key_id": actor["api_key_id"]}
+    else:
+        initiator = {"type": "anonymous", "id": "anonymous", "label": "anonymous",
+                     "user_id": None, "api_key_id": None}
+
+    # —— 9.15 §3.7: agent keys may only submit within their skill scope; the
+    # owner's role gates the act of submitting (viewer-owned key = read-only) ——
+    if actor.get("key_type") == "agent":
+        from app.tenancy import _ROLE_RANK
+        if _ROLE_RANK.get(actor.get("role", ""), -1) < _ROLE_RANK["operator"]:
+            raise HTTPException(403, detail={
+                "code": "role_required",
+                "message": "该 Key 的所有者为只读角色（viewer），不能提交任务"})
+        allowed = actor.get("allowed_skill_codes")
+        if allowed is not None and skill_code not in allowed:
+            raise HTTPException(403, detail={
+                "code": "skill_not_allowed_for_key",
+                "message": f"技能 {skill_code} 不在该 Key 的可用技能范围内"})
+
+    # —— 9.15 WP2 submit idempotency: same key+payload replay returns the
+    # original transaction; different payload under the same key is a 409 ——
+    idem_key = (idem_header or "").strip() or None
+    if idem_key and len(idem_key) > 128:
+        raise HTTPException(400, "Idempotency-Key must be ≤128 characters")
+    principal = (f"key:{initiator['api_key_id']}" if initiator["api_key_id"]
+                 else f"user:{initiator['user_id']}" if initiator["user_id"]
+                 else "anonymous")
+    fingerprint = None
+    if idem_key:
+        digest = hashlib.sha256()
+        digest.update(skill_code.encode())
+        for _, blob in sorted(blobs, key=lambda x: hashlib.sha256(x[1]).hexdigest()):
+            digest.update(hashlib.sha256(blob).digest())
+        fingerprint = digest.hexdigest()
+
     sf = session_factory()
+
+    async def _replay(sess, prior) -> SubmitResponse:
+        """Hand back the original submission: same transaction, no re-freeze."""
+        rows = (await sess.execute(
+            select(FileRecord).where(
+                FileRecord.transaction_id == prior.id,
+                FileRecord.parent_file_id.is_(None)))).scalars().all()
+        return SubmitResponse(
+            transaction_id=prior.id,
+            files=[{"file_id": f.id, "original_filename": f.file_name} for f in rows])
+
     async with sf() as s:
         skill = await s.get(Skill, skill_code)
         if skill is None or skill.tenant_id != tenant or skill.state != "active":
@@ -150,9 +213,59 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         if ver is None:
             raise HTTPException(400, f"skill has no published version: {skill_code}")
 
-        txn = Transaction(tenant_id=tenant, skill_code=skill_code, skill_version=ver.version)
+        if idem_key:
+            from datetime import datetime, timedelta, timezone as _tz
+            prior = (await s.execute(
+                select(Transaction)
+                .where(Transaction.tenant_id == tenant,
+                       Transaction.idem_principal == principal,
+                       Transaction.idempotency_key == idem_key)
+                .order_by(Transaction.created_at.desc()))).scalars().first()
+            if prior is not None:
+                age = (datetime.now(_tz.utc)
+                       - (prior.created_at if prior.created_at.tzinfo
+                          else prior.created_at.replace(tzinfo=_tz.utc)))
+                if age <= timedelta(hours=24):
+                    if prior.request_fingerprint == fingerprint:
+                        return await _replay(s, prior)
+                    raise HTTPException(409, detail={
+                        "code": "idempotency_conflict",
+                        "message": "同一 Idempotency-Key 已用于不同内容的请求，"
+                                   "请更换 Key 或去掉该请求头"})
+                # expired: release the slot for the new submission
+                prior.idempotency_key = None
+                prior.idem_principal = None
+
+        txn = Transaction(
+            tenant_id=tenant, skill_code=skill_code, skill_version=ver.version,
+            initiator_type=initiator["type"], initiator_id=initiator["id"],
+            initiator_label=initiator["label"], initiator_user_id=initiator["user_id"],
+            api_key_id=initiator["api_key_id"],
+            idempotency_key=idem_key, idem_principal=principal if idem_key else None,
+            request_fingerprint=fingerprint)
         s.add(txn)
-        await s.flush()
+        try:
+            await s.flush()
+        except IntegrityError:
+            # racing duplicate lost the unique-index race: roll back and hand
+            # back the winner's transaction (or 409 if payloads differ) —
+            # never a 500 and never a double billing freeze (§ WP2 idempotency)
+            await s.rollback()
+            async with sf() as s2:
+                prior = (await s2.execute(
+                    select(Transaction)
+                    .where(Transaction.tenant_id == tenant,
+                           Transaction.idem_principal == principal,
+                           Transaction.idempotency_key == idem_key)
+                    .order_by(Transaction.created_at.desc()))).scalars().first()
+            if prior is None:
+                raise
+            if prior.request_fingerprint == fingerprint:
+                return await _replay(s2, prior)
+            raise HTTPException(409, detail={
+                "code": "idempotency_conflict",
+                "message": "同一 Idempotency-Key 已用于不同内容的请求，"
+                           "请更换 Key 或去掉该请求头"})
 
         # billing gate (§12.2): live mode freezes estimated pages x rate inside
         # this same DB transaction — a 402 rolls everything back. Owner Root
