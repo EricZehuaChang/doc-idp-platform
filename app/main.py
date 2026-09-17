@@ -69,8 +69,9 @@ def create_app() -> FastAPI:
     app.include_router(studio.router)
     app.include_router(hooks.router)
     app.include_router(billing.router)
-    from app.api.routes import artifacts
+    from app.api.routes import artifacts, packages
     app.include_router(artifacts.router)
+    app.include_router(packages.router)
 
     @app.get("/healthz", tags=["system"])
     async def healthz():

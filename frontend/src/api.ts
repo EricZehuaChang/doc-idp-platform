@@ -498,6 +498,34 @@ export const api = {
   skillOptions: () => req<SkillOptions>("GET", "/api/v1/skills/model-options"),
   skillPublish: (code: string, version: number) =>
     req("POST", `/api/v1/skills/${code}/versions/${version}/publish`),
+  skillPackageExport: (code: string, version: number) =>
+    req<{ file_name: string; content_base64: string; passphrase: string;
+          sha256: string; size: number }>(
+      "POST", "/api/v1/skill-packages/export", { skill_code: code, version }),
+  skillPackageImportPreview: (file: File, passphrase: string) => {
+    const fd = new FormData();
+    fd.append("zip_file", file);
+    fd.append("passphrase", passphrase);
+    return reqForm<{
+      import_token: string; sha256: string;
+      skill: { code: string; name: string; kind: string; version: number;
+               status: string; mode: string; processing_mode: string;
+               field_count: number; category_count: number };
+      conflicts: { code: string; name: string; state: string;
+                   recoverable: boolean }[];
+      missing_channels: string[]; available_channels: string[];
+      references: { category_id: string; doc_type: string;
+                    skill_code: string; version: number | null }[];
+    }>("/api/v1/skill-packages/import/preview", fd);
+  },
+  skillPackageImportCommit: (payload: {
+    import_token: string; sha256: string;
+    channel_map?: Record<string, string>;
+    ref_map?: Record<string, string>;
+    conflict: "rename" | "overwrite";
+    new_code?: string; new_name?: string; overwrite_target?: string; }) =>
+    req<{ skill_code: string; version: number; status: string }>(
+      "POST", "/api/v1/skill-packages/import/commit", payload),
   skillExportUrl: (code: string, version?: number) =>
     `/api/v1/skills/${code}/export${version ? `?version=${version}` : ""}`,
   /** built-in starter templates: the gallery that replaces a blank editor */

@@ -9,8 +9,122 @@
            text on ghost's transparent background, i.e. an invisible button -->
       <button :class="showGallery ? 'primary' : 'ghost'"
               @click="showGallery = !showGallery">从模板新建</button>
+      <button class="ghost" data-testid="import-package" @click="importOpen = true">
+        导入加密包</button>
       <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
     </PageHeader>
+
+    <!-- —— 9.15 WP7: import dialog (two-step, DropZone + passphrase) —— -->
+    <div v-if="importOpen" class="modal-mask" @click.self="importOpen = false">
+      <div class="modal pkg-modal" data-testid="import-modal">
+        <template v-if="!importPreview">
+          <h4>导入加密技能包</h4>
+          <DropZone accept=".zip" @add="onImportFiles" />
+          <label class="lbl">口令</label>
+          <input v-model="importPass" class="txt" type="password"
+                 placeholder="导出时生成的一次性口令" />
+          <div class="modal-actions">
+            <button class="ghost" @click="importOpen = false">取消</button>
+            <button class="primary" data-testid="import-parse"
+                    :disabled="!importFile || !importPass" @click="parsePackage">
+              解析</button>
+          </div>
+        </template>
+        <template v-else>
+          <h4>确认导入</h4>
+          <p class="dim">
+            {{ importPreview.skill.name }} ·
+            {{ importPreview.skill.mode === "advanced" ? "高级" : "标准" }} ·
+            {{ importPreview.skill.field_count }} 字段 ·
+            {{ importPreview.skill.category_count }} 类别 ·
+            来源 v{{ importPreview.skill.version }}（{{ importPreview.skill.status }}）</p>
+          <div v-if="importPreview.missing_channels.length" class="pkg-sec">
+            <b>缺失的模型通道</b>
+            <div v-for="ch in importPreview.missing_channels" :key="ch" class="pkg-row">
+              <span>{{ ch }}</span>
+              <select v-model="channelMap[ch]">
+                <option value="">使用平台默认</option>
+                <option v-for="a in importPreview.available_channels" :key="a"
+                        :value="a">{{ a }}</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="importPreview.references.length" class="pkg-sec">
+            <b>引用依赖</b>
+            <div v-for="rf in importPreview.references" :key="rf.category_id"
+                 class="pkg-row">
+              <span>{{ rf.doc_type }} ← {{ rf.skill_code }}</span>
+              <select v-model="refMap[rf.category_id]">
+                <option value="inline">转为本技能内联字段</option>
+                <option v-for="a in refOptions" :key="a" :value="'skill:' + a">
+                  映射到 {{ a }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="pkg-sec">
+            <b>同名冲突</b>
+            <p v-if="!importPreview.conflicts.length" class="dim">无同名技能，将新建。</p>
+            <template v-else>
+              <label class="chk"><input v-model="conflict" type="radio"
+                                        value="rename" /> 重命名后导入</label>
+              <label class="chk"><input v-model="conflict" type="radio"
+                                        value="overwrite" /> 覆盖现有技能（新建草稿）</label>
+              <div v-if="conflict === 'overwrite'" class="pkg-row">
+                <span>覆盖目标</span>
+                <select v-model="overwriteTarget">
+                  <option v-for="cf in importPreview.conflicts" :key="cf.code"
+                          :value="cf.code" :disabled="cf.recoverable">
+                    {{ cf.name }}{{ cf.recoverable ? "（需先恢复）" : "" }}</option>
+                </select>
+              </div>
+            </template>
+          </div>
+          <template v-if="conflict === 'rename'">
+            <label class="lbl">新技能代码（可修改，需全局唯一）</label>
+            <input v-model="newCode" class="txt" data-testid="import-new-code" />
+          </template>
+          <div class="modal-actions">
+            <button class="ghost" @click="importOpen = false">取消</button>
+            <button class="primary" data-testid="import-commit"
+                    :disabled="conflict === 'overwrite' && !overwriteTarget"
+                    @click="commitImport">确认导入</button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- —— 9.15 WP7: export dialog (version pick + one-time passphrase) —— -->
+    <div v-if="exportOpen" class="modal-mask" @click.self="exportOpen = false">
+      <div class="modal pkg-modal" data-testid="export-modal">
+        <template v-if="!exportResult">
+          <h4>导出加密技能包</h4>
+          <p class="dim">包含与不包含：技能定义与被引用包会打包；金样本、样本原件、
+            运行结果、任何密钥一律不包含。</p>
+          <label class="lbl">版本</label>
+          <select v-model="exportVersion" class="txt">
+            <option v-for="v in exportVersions" :key="v.key" :value="v.version">
+              {{ v.label }}</option>
+          </select>
+          <div class="modal-actions">
+            <button class="ghost" @click="exportOpen = false">取消</button>
+            <button class="primary" data-testid="export-generate"
+                    @click="doExport">生成加密包</button>
+          </div>
+        </template>
+        <template v-else>
+          <h4>包已生成</h4>
+          <p class="dim">{{ exportResult.file_name }}（{{ exportResult.size }} 字节）</p>
+          <p>口令：<code class="pkg-pass" data-testid="export-passphrase">{{
+            exportResult.passphrase }}</code></p>
+          <p class="dim">口令只显示这一次，请与文件分开发送。</p>
+          <div class="modal-actions">
+            <button class="ghost" @click="copyPass">复制口令</button>
+            <button class="primary" data-testid="export-download"
+                    @click="downloadExport">下载 .zip</button>
+          </div>
+        </template>
+      </div>
+    </div>
 
     <!-- gallery on demand; the empty state opens it by itself below -->
     <section v-if="showGallery && items.length" class="card-panel pad">
@@ -101,6 +215,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, downloadFile, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
+import DropZone from "../components/DropZone.vue";
 import RowActionMenu, { type RowMenuItem } from "../components/RowActionMenu.vue";
 import Skeleton from "../components/Skeleton.vue";
 import SkillTemplateGallery from "../components/SkillTemplateGallery.vue";
@@ -216,9 +331,122 @@ function menuItems(s: SkillInfo): RowMenuItem[] {
   }
   return [{ key: "restore", label: "恢复" }, { key: "edit", label: "编辑（查看）" }];
 }
+// —— 9.15 WP7: encrypted package export / two-step import ——
+const exportOpen = ref(false);
+const exportVersions = ref<{ key: string; version: number; label: string }[]>([]);
+const exportVersion = ref<number | null>(null);
+const exportResult = ref<{ file_name: string; content_base64: string;
+                           passphrase: string; sha256: string; size: number }
+  | null>(null);
+let exportCode = "";
+
+async function openExport(s: SkillInfo) {
+  exportCode = s.skill_code;
+  exportResult.value = null;
+  try {
+    const d = await api.skillDetail(s.skill_code);
+    exportVersions.value = d.versions.map((v) => ({
+      key: `${v.version}-${v.status}`, version: v.version,
+      label: `v${v.version}${v.status === "published" ? "" : "（草稿）"}` }));
+    exportVersion.value = d.selected_version ?? d.versions[0]?.version ?? null;
+    exportOpen.value = true;
+  } catch (e) { toast.error(e); }
+}
+
+async function doExport() {
+  if (!exportVersion.value) return;
+  try {
+    exportResult.value = await api.skillPackageExport(exportCode,
+                                                      exportVersion.value);
+  } catch (e) { toast.error(e); }
+}
+
+function downloadExport() {
+  const r = exportResult.value;
+  if (!r) return;
+  const bytes = Uint8Array.from(atob(r.content_base64), (ch) => ch.charCodeAt(0));
+  const blob = new Blob([bytes], { type: "application/zip" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = r.file_name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function copyPass() {
+  const r = exportResult.value;
+  if (!r) return;
+  try { await navigator.clipboard.writeText(r.passphrase); toast.ok("口令已复制"); }
+  catch { toast.error("复制失败，请手动选择口令"); }
+}
+
+const importOpen = ref(false);
+const importFile = ref<File | null>(null);
+const importPass = ref("");
+const importPreview = ref<Awaited<ReturnType<typeof api.skillPackageImportPreview>>
+  | null>(null);
+const channelMap = ref<Record<string, string>>({});
+const refMap = ref<Record<string, string>>({});
+const conflict = ref<"rename" | "overwrite">("rename");
+const overwriteTarget = ref("");
+const newCode = ref("");
+const refOptions = ref<string[]>([]);
+
+function onImportFiles(files: File[]) {
+  const f = files[0];
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith(".zip")) {
+    toast.error("请选择 .zip 加密技能包（.yaml 仍走旧版导入）");
+    return;
+  }
+  importFile.value = f;
+}
+
+async function parsePackage() {
+  if (!importFile.value) return;
+  try {
+    const prev = await api.skillPackageImportPreview(importFile.value,
+                                                     importPass.value);
+    importPreview.value = prev;
+    conflict.value = prev.conflicts.length ? "rename" : "rename";
+    overwriteTarget.value = prev.conflicts.find((x) => !x.recoverable)?.code ?? "";
+    const suggested = (prev.skill.code || "imported").toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_").slice(0, 24);
+    newCode.value = `${suggested}_${Math.random().toString(16).slice(2, 8)}`;
+    channelMap.value = Object.fromEntries(
+      prev.missing_channels.map((c) => [c, ""]));
+    refMap.value = Object.fromEntries(
+      prev.references.map((r) => [r.category_id, "inline"]));
+    try {
+      refOptions.value = (await api.referenceSkills()).skills
+        .map((x) => x.skill_code);
+    } catch { refOptions.value = []; }
+  } catch (e) { toast.error(e); }
+}
+
+async function commitImport() {
+  const prev = importPreview.value;
+  if (!prev) return;
+  try {
+    const r = await api.skillPackageImportCommit({
+      import_token: prev.import_token, sha256: prev.sha256,
+      channel_map: channelMap.value, ref_map: refMap.value,
+      conflict: conflict.value,
+      new_code: conflict.value === "rename" ? newCode.value : undefined,
+      new_name: conflict.value === "rename" ? undefined : undefined,
+      overwrite_target: conflict.value === "overwrite"
+        ? overwriteTarget.value : undefined });
+    importOpen.value = false;
+    importPreview.value = null;
+    toast.ok(`已导入为 v${r.version} 草稿`);
+    router.push(`/skills/${r.skill_code}`);
+    qc.invalidateQueries({ queryKey: ["skills"] });
+  } catch (e) { toast.error(e); }
+}
+
 function onMenu(s: SkillInfo, key: string) {
   if (key === "edit") router.push(`/skills/${s.skill_code}`);
-  else if (key === "export") downloadFile(api.skillExportUrl(s.skill_code), `${s.skill_code}.yaml`);
+  else if (key === "export") openExport(s);
   else if (key === "disable") toggle(s, "disable");
   else if (key === "enable") toggle(s, "enable");
   else if (key === "delete") del(s);
@@ -289,4 +517,16 @@ async function importYaml(ev: Event) {
 .row-link { cursor: pointer; }
 .row-act, .th-act { text-align: right; white-space: nowrap; }
 .slim { padding: 2px 12px; font-size: 12px; }
+
+/* —— 9.15 WP7 package dialogs —— */
+.pkg-modal { width: 560px; max-width: 92vw; max-height: 84vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 10px; }
+.pkg-sec { display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--line); padding-top: 8px; }
+.pkg-row { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 13px; }
+.pkg-row select { max-width: 260px; }
+.chk { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.pkg-pass { user-select: all; font-size: 15px; letter-spacing: 1px; }
+.lbl { font-size: 13px; }
 </style>
