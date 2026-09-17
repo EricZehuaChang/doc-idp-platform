@@ -39,8 +39,11 @@ def upgrade() -> None:
         sa.Column("size", sa.Integer(), nullable=True),
         sa.Column("sha256", sa.String(length=64), nullable=False,
                   server_default=""),
+        # sa.false() renders per dialect (SQLite "0", PostgreSQL "false"):
+        # a literal 0 is an integer expression and PostgreSQL rejects it for a
+        # boolean column (found by CI's PG matrix, 2026-09-18)
         sa.Column("searchable", sa.Boolean(), nullable=False,
-                  server_default=sa.text("0")),
+                  server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["file_id"], ["files.id"]),
     )
