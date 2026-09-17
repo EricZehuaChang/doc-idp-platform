@@ -23,6 +23,8 @@ PURE_FILES = (
     "app/extraction/confidence.py",
     "app/extraction/validators.py",
     "app/extraction/splitter.py",
+    "app/extraction/classifier.py",
+    "app/extraction/formatting.py",
     "app/extraction/provider_client.py",
 )
 

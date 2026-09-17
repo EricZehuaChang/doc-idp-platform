@@ -109,12 +109,22 @@ export interface FieldCell {
   $rule_failures?: string[];
 }
 
+export interface DocumentView {
+  doc_index: number; doc_type: string | null; category_id: string | null;
+  handler: string | null;
+  /** original-file pages (fact source); page_range is display-only */
+  source_pages: number[]; page_range: string;
+  extraction_status: string;
+  effective_fields: string[];
+}
 export interface ReviewItem {
   file_id: string; file_name: string; status: string;
   result: Record<string, FieldCell | Record<string, string>[]>;
   pages: { page_no: number; width: number; height: number }[];
   locked_by: string | null; verified_by: string | null;
   parent_file_id: string | null; page_count: number; page_offset?: number;
+  /** 9.15 WP4: present only on advanced-mode child documents */
+  document?: DocumentView | null;
 }
 export interface ReviewDetail extends ReviewItem {
   children: ReviewItem[]; child_count: number; pending_children: number;
@@ -560,6 +570,12 @@ export const api = {
                      created_at: string }[] }>(
       "GET", `/api/v1/studio/samples${skillCode ? `?skill_code=${skillCode}` : ""}`),
   studioDeleteSample: (id: string) => req("DELETE", `/api/v1/studio/samples/${id}`),
+  referenceSkills: (exclude?: string) =>
+    req<{ skills: { skill_code: string; name: string; published_version: number;
+                     field_count: number;
+                     fields: { name: string; type: string; instruction: string }[];
+                     updated_at?: string }[] }>(
+      "GET", `/api/v1/studio/reference-skills${exclude ? `?exclude=${exclude}` : ""}`),
   studioSampleFileUrl: (id: string) => `/api/v1/studio/samples/${id}/file`,
   generateFields: (body: { sample_id?: string; description?: string;
                            provider?: string }) =>

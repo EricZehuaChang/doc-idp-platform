@@ -74,7 +74,10 @@ def test_category_subpackage_inline_and_classify_only():
     other = category_subpackage(pkg, "other")
     assert other is not None and other.fields == []
 
-    assert category_subpackage(pkg, "nope") is None
+    # WP4: an unknown id degrades to the Other category (defensive parity with
+    # the classifier's mapping) instead of returning None / raising
+    fallback = category_subpackage(pkg, "nope")
+    assert fallback is not None and fallback.fields == []
 
 
 def test_category_subpackage_reference_uses_pinned_package():

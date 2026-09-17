@@ -157,11 +157,16 @@ async def detail(file_id: str):
         if not children:
             return payload
 
+        from app.api.routes.docmeta import document_view
         offset = 0
         child_payloads = []
         for child in children:
             item = _detail_payload(child)
             item["page_offset"] = offset
+            # 9.15 WP4 (§3.6): classification metadata for advanced children —
+            # page mapping prefers source_pages; legacy children keep the
+            # cumulative page_offset behaviour
+            item["document"] = document_view(child)
             child_payloads.append(item)
             offset += child.page_count
         meta = task_summary(root, children)

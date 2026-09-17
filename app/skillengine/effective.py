@@ -50,7 +50,11 @@ def category_subpackage(pkg: SkillPackage, category_id: str,
     (resolved by the caller); inline categories derive from this package."""
     cat = next((c for c in pkg.categories if c.id == category_id), None)
     if cat is None:
-        return None
+        # defensive: the classifier already maps unknown ids to Other, but a
+        # hand-edited snapshot must not blow up the fan-out — degrade to Other
+        cat = next((c for c in pkg.categories if c.is_other), None)
+    if cat is None:
+        raise ValueError(f"unknown category: {category_id}")
     if cat.handler == "existing_skill" and cat.skill_ref:
         ref = (pinned_packages or {}).get(cat.skill_ref.skill_code)
         if ref is None:

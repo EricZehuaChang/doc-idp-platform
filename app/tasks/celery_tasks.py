@@ -40,13 +40,14 @@ def run_transaction(transaction_id: str, tenant: str) -> None:
     plan = _run(tenant, runner.plan_transaction(transaction_id))
     if plan is None:
         return
-    pkg, file_ids = plan
+    pkg, deps, file_ids = plan
     pkg_dict = pkg.model_dump()
+    deps_dict = {k: v for k, v in deps.items()}
     q = parse_queue_for(pkg.parser)
-    expects_tables = runner.skill_expects_tables(pkg)
+    expects_tables = runner.skill_expects_tables(pkg, deps)
     header = [
         chain(parse_file.si(fid, pkg.parser, tenant, expects_tables).set(queue=q),
-              extract_file.si(fid, pkg_dict, tenant))
+              extract_file.si(fid, pkg_dict, tenant, deps_dict))
         for fid in file_ids
     ]
     chord(header)(finalize_transaction.si(transaction_id, tenant))
@@ -66,10 +67,12 @@ def parse_file(file_id: str, parser_pin: str | None, tenant: str,
 
 
 @celery_app.task(name="idp.extract_file")
-def extract_file(file_id: str, pkg_dict: dict, tenant: str) -> str:
+def extract_file(file_id: str, pkg_dict: dict, tenant: str,
+                 deps: dict | None = None) -> str:
+    # deps defaults None so messages queued by an older publisher still run
     from app.skillengine.schema import SkillPackage
     try:
-        _run(tenant, runner.extract_stage(file_id, SkillPackage(**pkg_dict)))
+        _run(tenant, runner.extract_stage(file_id, SkillPackage(**pkg_dict), deps))
     except Exception as e:
         log.exception("extract failed for %s", file_id)
         _run(tenant, runner.mark_error(file_id, str(e)[:500]))

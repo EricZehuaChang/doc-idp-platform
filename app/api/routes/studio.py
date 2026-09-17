@@ -14,7 +14,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.db import session_factory
-from app.models import StudioSample
+from app.skillengine.schema import SkillPackageLoose
+from app.models import Skill, SkillVersion, StudioSample
 from app.parsers.router import UPLOAD_SUFFIXES, parse_document
 from app.storage import get_storage
 from app.skillengine import studio
@@ -198,3 +199,37 @@ async def _warm() -> None:
     async with sf() as s:
         await byok.warm(s, current_tenant())
         await custom_providers.warm(s, current_tenant())
+
+
+@router.get("/reference-skills")
+async def reference_skills(exclude: str | None = None):
+    """9.15 WP4 (R10): skills eligible for 「使用已有技能」 references —
+    same tenant, enabled, with a published version that is standard-mode and
+    not the skill being edited. Only standard-mode skills can be referenced,
+    so references can never nest or cycle."""
+    sf = session_factory()
+    tenant = current_tenant()
+    async with sf() as s:
+        q = (select(Skill, SkillVersion)
+             .join(SkillVersion, (SkillVersion.skill_code == Skill.code)
+                   & (SkillVersion.tenant_id == Skill.tenant_id))
+             .where(Skill.tenant_id == tenant, Skill.state == "active",
+                    SkillVersion.status == "published")
+             .order_by(Skill.code, SkillVersion.version.desc()))
+        out, seen = [], set()
+        for skill, ver in (await s.execute(q)).all():
+            if skill.code in seen or skill.code == exclude:
+                continue
+            if (ver.package or {}).get("skill_mode") == "advanced":
+                continue        # only standard-mode skills are referenceable
+            seen.add(skill.code)
+            pkg = SkillPackageLoose(**(ver.package or {}))
+            out.append({"skill_code": skill.code, "name": skill.name,
+                        "published_version": ver.version,
+                        "field_count": len(pkg.fields),
+                        # read-only field digest for the reference banner (图16)
+                        "fields": [{"name": f.name, "type": f.type,
+                                    "instruction": f.instruction}
+                                   for f in pkg.fields],
+                        "updated_at": skill.updated_at})
+    return {"skills": out}

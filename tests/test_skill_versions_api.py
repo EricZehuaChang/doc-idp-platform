@@ -456,18 +456,29 @@ async def test_file_list_shows_skill_name_and_searches_it(tmp_path, monkeypatch)
             assert body["data"][0]["skill_name"] == "ghost"
 
 
-async def test_advanced_publish_gated_until_wp4(tmp_path, monkeypatch):
-    """9.15 WP3: advanced-mode skills save fine but cannot be published until
-    the分类 runtime ships (route-level gate, removed in WP4)."""
+async def test_advanced_publishes_once_wp4_runtime_lands(tmp_path, monkeypatch):
+    """9.15 WP4: the WP3-era 422 gate is gone — an advanced-mode skill with a
+    complete category set publishes normally."""
     app = await _client(tmp_path, monkeypatch)
     async with app.router.lifespan_context(app):
       async with AsyncClient(transport=ASGITransport(app=app),
                              base_url="http://test") as c:
-        pkg = SkillPackage(skill_code="gate_adv", name="高级门禁",
-                           fields=[FieldSpec(name="invoice_no")],
-                           skill_mode="advanced").model_dump()
+        pkg = SkillPackage(
+            skill_code="gate_adv", name="高级可发布", skill_mode="advanced",
+            categories=[
+                {"id": "invoice", "doc_type": "发票",
+                 "recognition_instruction": "有发票号", "is_other": False,
+                 "handler": "inline",
+                 "fields": [FieldSpec(name="invoice_no")],
+                 "validators": [], "additional_rules": "",
+                 "output_shape": "object", "skill_ref": None},
+                {"id": "Other", "doc_type": "Other",
+                 "recognition_instruction": "", "is_other": True,
+                 "handler": "classify_only", "fields": [], "validators": [],
+                 "additional_rules": "", "output_shape": "object",
+                 "skill_ref": None},
+            ]).model_dump()
         r = await c.post("/api/v1/skills", json={"package": pkg})
         assert r.status_code == 201, r.text
         r = await c.post("/api/v1/skills/gate_adv/versions/1/publish")
-        assert r.status_code == 422
-        assert "高级提取运行时尚未上线" in r.json()["detail"]
+        assert r.status_code == 200, r.text

@@ -85,11 +85,7 @@
           <!-- flow rail: 基础 → (文档分类) → 字段提取 → 文件产出 -->
           <nav class="flow-rail" aria-label="设计步骤">
             <button v-for="n in flowNodes" :key="n.key" class="node"
-                    :class="{ on: step === n.key, bad: n.bad,
-                              pending: n.key === 'classify' }"
-                    :disabled="n.key === 'classify'"
-                    :title="n.key === 'classify'
-                            ? '分类配置界面随高级提取批次开放' : ''"
+                    :class="{ on: step === n.key, bad: n.bad }"
                     @click="goto(n.key)">
               <span class="dot"></span>
               <span class="lbl">{{ n.label }}</span>
@@ -183,6 +179,115 @@
                          @focus="comboOpen" @blur="comboClose"
                          @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
               </div>
+            </details>
+          </section>
+
+          <!-- —— 文档分类（高级模式，图06–11） —— -->
+          <section v-show="step === 'classify'" class="card-panel block step-panel">
+            <h3 class="block-title">文档分类</h3>
+            <p class="dim cat-intro">
+              一份文件包含多种/多份单据时，先分类再提取。每个类别选择提取方式：
+              在本技能内配置字段、复用已有技能、或只分类不提取。</p>
+
+            <div class="cat-list">
+              <div v-for="(c, ci) in editableCats" :key="c.id" class="cat-card"
+                   :class="{ other: c.is_other }">
+                <div class="cat-head">
+                  <template v-if="c.is_other">
+                    <span class="cat-name">Other（兜底类别）</span>
+                  </template>
+                  <template v-else>
+                    <label class="cat-name-in">
+                      类别名（doc_type）
+                      <input v-model="c.doc_type" maxlength="64"
+                             placeholder="例如：发票" /></label>
+                  </template>
+                  <button v-if="!c.is_other" class="mini danger"
+                          title="删除该类别"
+                          @click="removeCategory(ci)">删除</button>
+                </div>
+                <label class="cat-rec">识别说明（模型按这段话判断页面归属）
+                  <textarea v-model="c.recognition_instruction" rows="2"
+                            placeholder="例如：有「发票号码」「开票日期」和价税合计"></textarea></label>
+                <div class="cat-handler">
+                  <span class="dim">提取方式</span>
+                  <button class="hseg" :class="{ on: c.handler === 'inline' }"
+                          @click="setHandler(c, 'inline')">本技能内配置字段</button>
+                  <button class="hseg" :class="{ on: c.handler === 'existing_skill' }"
+                          @click="setHandler(c, 'existing_skill')">使用已有技能</button>
+                  <button class="hseg" :class="{ on: c.handler === 'classify_only' }"
+                          @click="setHandler(c, 'classify_only')">仅分类，不提取</button>
+                </div>
+
+                <!-- inline: fields edited with the same machinery as the top level -->
+                <div v-if="c.handler === 'inline'" class="cat-fields">
+                  <div class="seg-row">
+                    <span class="dim">输出结构</span>
+                    <button class="hseg" :class="{ on: c.output_shape !== 'list' }"
+                            @click="c.output_shape = 'object'">Object</button>
+                    <button class="hseg" :class="{ on: c.output_shape === 'list' }"
+                            @click="c.output_shape = 'list'">List</button>
+                  </div>
+                  <p v-if="!c.fields.length" class="dim">该类别还没有字段。</p>
+                  <div class="field-tree">
+                    <FieldCard v-for="(f, fi) in c.fields" :key="f.name || fi"
+                               :field="f" :index="fi"
+                               :drag-from="reorder.from.value ?? -1"
+                               :drag-over="reorder.over.value ?? -1"
+                               @edit="openEdit(c.fields, fi)"
+                               @remove="c.fields.splice(fi, 1)"
+                               @edit-column="(x) => openEdit(f.columns, x, true)"
+                               @add-column="openAdd(f.columns, true)"
+                               @grip-down="startFieldDrag" />
+                    <button class="add-field" @click="openAdd(c.fields)">＋ 添加字段</button>
+                  </div>
+                </div>
+
+                <!-- existing_skill: R10 reference (图16) -->
+                <div v-else-if="c.handler === 'existing_skill'" class="cat-ref">
+                  <div class="ref-row">
+                    <select :value="c.skill_ref?.skill_code ?? ''"
+                            @change="setRefSkill(c, ($event.target as HTMLSelectElement).value)">
+                      <option value="">选择要复用的技能…</option>
+                      <option v-for="r in refSkills" :key="r.skill_code"
+                              :value="r.skill_code">{{ r.name }}（{{ r.skill_code }}）</option>
+                    </select>
+                    <select v-if="c.skill_ref?.skill_code"
+                            :value="c.skill_ref?.version ?? ''"
+                            @change="setRefVersion(c, ($event.target as HTMLSelectElement).value)">
+                      <option value="">跟随最新发布版{{ refVersionHint(c) }}</option>
+                      <option v-for="v in refVersions(c)" :key="v" :value="v">v{{ v }}</option>
+                    </select>
+                  </div>
+                  <div v-if="c.skill_ref?.skill_code" class="ref-banner">
+                    <span class="dim">
+                      已关联技能：{{ refName(c) }}（{{ c.skill_ref.skill_code }}）。本类别复用已有技能，
+                      字段在此只读；如需修改，请打开原技能编辑器。</span>
+                    <a class="btn-like" :href="`/#/skills/${c.skill_ref.skill_code}`"
+                       target="_blank">打开技能编辑器</a>
+                  </div>
+                  <ul v-if="refFields(c).length" class="ref-fields">
+                    <li v-for="f in refFields(c)" :key="f.name">
+                      <code>{{ f.name }}</code><span class="dim">{{ f.type }}</span>
+                      <span class="ex dim" :title="f.instruction">{{ f.instruction }}</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <p v-else-if="c.handler === 'classify_only'" class="dim">
+                  该类别只输出所属文档类型（doc_type），不抽取字段；审单时可直接通过。</p>
+
+                <label v-if="!c.is_other" class="cat-rules">类别附加规则（可选）
+                  <textarea v-model="c.additional_rules" rows="1"
+                            placeholder="只作用于该类别的补充说明"></textarea></label>
+              </div>
+            </div>
+            <button class="add-cat" @click="addCategory">＋ 添加类别</button>
+
+            <details class="rules-fold">
+              <summary>分类附加规则（可选，作用于整个分类步骤）</summary>
+              <textarea v-model="pkg.classification_rules" rows="2"
+                        placeholder="如：第 1 页通常是发票；连续的行程单算一份文档"></textarea>
             </details>
           </section>
 
@@ -349,8 +454,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
-import { api, downloadFile, type DryRunEntry, type FieldCell, type FieldSpec,
-         type SkillPackage } from "../api";
+import { api, downloadFile, type CategorySpec, type DryRunEntry, type FieldCell,
+         type FieldSpec, type SkillPackage } from "../api";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
 import GenerateFieldsModal from "../components/GenerateFieldsModal.vue";
@@ -385,7 +490,7 @@ const selectedStatus = computed(() =>
 
 // —— WP3 editor state ——
 const tab = ref<"design" | "test">("design");
-const step = ref<"basic" | "fields" | "output">("basic");
+const step = ref<"basic" | "classify" | "fields" | "output">("basic");
 const genModal = ref(false);
 const undoStack = ref<FieldSpec[][]>([]);   // one-shot undo for generation merges
 
@@ -430,20 +535,83 @@ watch(() => props.code, () => load(), { immediate: true });
 function selectVersion(v: number) { load(v); }
 
 function goto(k: string) {
-  // classify node is a WP4 placeholder: visible, labelled, not clickable
-  if (k !== "classify") step.value = k as typeof step.value;
+  step.value = k as typeof step.value;
+}
+
+// —— 文档分类 (R08, 图06–11): categories live on the package; Other is a fixed
+// sentinel at the bottom (doc_type stays "Other") ——
+const refSkills = ref<{ skill_code: string; name: string; published_version: number;
+                        fields: { name: string; type: string; instruction: string }[] }[]>([]);
+watch([tab, pkg], async ([t]) => {
+  if (t !== "design" || refSkills.value.length) return;
+  try {
+    refSkills.value = (await api.referenceSkills(props.code)).skills;
+  } catch { /* picker degrades to empty; existing refs still render */ }
+}, { immediate: true });
+
+function blankCategory(): CategorySpec {
+  return { id: `cat_${Math.random().toString(36).slice(2, 8)}`, doc_type: "",
+           recognition_instruction: "", is_other: false, handler: "inline",
+           fields: [], validators: [], additional_rules: "",
+           output_shape: "object", skill_ref: null };
+}
+const editableCats = computed(() => {
+  const cats = pkg.value?.categories ?? (pkg.value!.categories = []);
+  if (!cats.some((c) => c.is_other)) cats.push({ ...blankCategory(), id: "Other",
+    doc_type: "Other", is_other: true, handler: "classify_only" });
+  return cats;
+});
+function addCategory() {
+  pkg.value!.categories!.push(blankCategory());
+}
+function removeCategory(ci: number) {
+  const cats = pkg.value!.categories!;
+  if (cats[ci]?.is_other) return;
+  cats.splice(ci, 1);
+}
+function setHandler(c: CategorySpec, h: CategorySpec["handler"]) {
+  c.handler = h;
+  if (h === "existing_skill" && !c.skill_ref) c.skill_ref = { skill_code: "", version: null };
+}
+function setRefSkill(c: CategorySpec, code: string) {
+  c.skill_ref = code ? { skill_code: code, version: null } : null;
+}
+function setRefVersion(c: CategorySpec, v: string) {
+  if (!c.skill_ref) return;
+  const n = Number(v);
+  c.skill_ref.version = v === "" || Number.isNaN(n) ? null : n;
+}
+function refMeta(c: CategorySpec) {
+  return refSkills.value.find((r) => r.skill_code === c.skill_ref?.skill_code);
+}
+function refName(c: CategorySpec) {
+  return refMeta(c)?.name ?? c.skill_ref?.skill_code;
+}
+function refVersionHint(c: CategorySpec) {
+  const m = refMeta(c);
+  return m ? `（当前 v${m.published_version}）` : "";
+}
+function refVersions(c: CategorySpec): number[] {
+  const m = refMeta(c);
+  return m ? [m.published_version] : [];
+}
+function refFields(c: CategorySpec) {
+  return refMeta(c)?.fields ?? [];
 }
 
 // —— flow rail: nodes with live subtitles; bad dots from light client checks ——
 const flowNodes = computed(() => {
   const p = pkg.value!;
   const badFields = p.fields.some((f) => !f.name.trim());
+  const badCats = p.skill_mode === "advanced"
+    && !(p.categories ?? []).some((c) => c.is_other);
   return [
     { key: "basic" as const, label: "基础",
       sub: p.review_policy.mode === "never" ? "无需复核" : "复核模式已配置",
       bad: false },
     ...(p.skill_mode === "advanced"
-      ? [{ key: "classify" as const, label: "文档分类", sub: "随高级提取批次开放", bad: false }]
+      ? [{ key: "classify" as const, label: "文档分类",
+           sub: `${(p.categories ?? []).length} 个类别`, bad: badCats }]
       : []),
     { key: "fields" as const, label: "字段提取",
       sub: `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
@@ -813,7 +981,6 @@ async function goldenCheck() {
 .node.on .lbl { color: var(--accent); }
 .node .sub { font-size: 11.5px; }
 .node.bad .lbl::after { content: "●"; color: var(--red); font-size: 10px; }
-.node.pending { opacity: .6; cursor: default; }
 .step-panel { padding: 14px 16px; }
 .block-title { margin: 0 0 10px; font-size: 14px; color: var(--accent); }
 .block-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
@@ -905,6 +1072,47 @@ async function goldenCheck() {
 .warn { color: var(--red); }
 .rep { margin-top: 6px; }
 .dim { color: var(--text-dim); }
+
+/* classify step */
+.cat-intro { font-size: 12.5px; margin: 0 0 10px; }
+.cat-list { display: flex; flex-direction: column; gap: 12px; }
+.cat-card { border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg); }
+.cat-card.other { background: var(--bg-raised); border-style: dashed; }
+.cat-head { display: flex; gap: 10px; align-items: end; }
+.cat-name { font-weight: 700; }
+.cat-name-in { display: flex; flex-direction: column; gap: 3px;
+  font-size: 12px; color: var(--text-dim); flex: 1; max-width: 260px; }
+.cat-head .mini { margin-left: auto; }
+.cat-rec { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
+  color: var(--text-dim); }
+.cat-handler { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  font-size: 12px; }
+.hseg { border: 1px solid var(--border); background: var(--bg-raised);
+  border-radius: 999px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+.hseg.on { background: var(--accent); color: var(--accent-text);
+  border-color: var(--accent); font-weight: 700; }
+.seg-row { display: flex; gap: 6px; align-items: center; font-size: 12px;
+  margin-bottom: 6px; }
+.cat-fields { display: flex; flex-direction: column; gap: 4px; }
+.cat-ref { display: flex; flex-direction: column; gap: 8px; }
+.ref-row { display: flex; gap: 8px; }
+.ref-row select { flex: 1; max-width: 280px; }
+.ref-banner { border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--bg-raised); padding: 8px 10px;
+  font-size: 12.5px; display: flex; gap: 10px; align-items: center; }
+.ref-banner a { text-decoration: none; white-space: nowrap; }
+.ref-fields { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border);
+  border-radius: 8px; max-height: 170px; overflow: auto; }
+.ref-fields li { display: flex; gap: 8px; padding: 5px 10px; font-size: 12.5px;
+  border-bottom: 1px solid var(--border); align-items: baseline; }
+.ref-fields li:last-child { border-bottom: 0; }
+.ref-fields .ex { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; }
+.cat-rules { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
+  color: var(--text-dim); }
+.add-cat { border-style: dashed; }
 
 @media (max-width: 1100px) {
   .design-body { grid-template-columns: 1fr; }

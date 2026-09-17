@@ -120,6 +120,12 @@ class SkillVersion(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     skill_code: Mapped[str] = mapped_column(ForeignKey("skills.code"), index=True)
     version: Mapped[int] = mapped_column(Integer)
+    # 9.15 WP4 (§3.4): one row per (tenant, skill, version) — duplicate version
+    # numbers would make snapshots and the version rail resolve arbitrarily
+    __table_args__ = (
+        Index("ux_skill_versions_code_version", "tenant_id", "skill_code",
+              "version", unique=True),
+    )
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|published|archived
     package: Mapped[dict] = mapped_column(JSON)          # compiled SkillPackage (§5.1)
     changelog: Mapped[str] = mapped_column(Text, default="")
@@ -147,6 +153,10 @@ class Transaction(Base):
     # unique (tenant, principal, idempotency_key) enforced by partial index
     # (NULL key rows never conflict) — see migration
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 9.15 WP4 (§3.4): immutable execution config captured at submit time —
+    # package, resolved dependency packages (R10 pinned refs), effective mode.
+    # NULL = legacy task, runner falls back to reading the version row.
+    execution_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     idem_principal: Mapped[str | None] = mapped_column(String(160), nullable=True)
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -178,6 +188,12 @@ class FileRecord(Base):
     # result: {field: {"$value","$confidence"(0-3),"$bbox","$pages","inferred"?,"$reasoning"?}}
     # tables are lists of row objects — same container, live-verified schema (sources/2026-07-14)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 9.15 WP4 (§3.4): classification/execution metadata beside the user-facing
+    # result — source_pages, doc_index, doc_type, category_id, handler,
+    # effective_schema, run metrics. NULL = plain v1/standard file.
+    document_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # bumped on every accepted review change of result (artifact provenance)
+    result_revision: Mapped[int] = mapped_column(Integer, default=0)
     udr_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # UDR json storage key (or legacy absolute path)
     # when the processing pipeline finished with this file (result written or
     # failed): the per-document processing-speed figure on the task ledger.

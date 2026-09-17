@@ -2,6 +2,7 @@
 (probe pre-annotation / dry-run side-by-side / YAML import-export / golden
 check). All studio interactions are API-first — the M2 UI sits on these.
 """
+import json
 import asyncio
 import hashlib
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from app.db import session_factory
 from app.models import AuditLog, GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
+from app import references
 from app.skillengine import catalog, studio
 from app.skillengine.schema import SkillPackage, SkillPackageLoose
 from app.storage import get_storage
@@ -437,6 +439,20 @@ async def delete_version(skill_code: str, version: int):
         if remaining <= 1:
             raise HTTPException(409, "每个技能至少保留一个版本；要移除整个技能，"
                                      "请到技能列表的「⋯」菜单删除技能")
+        # 9.15 WP4 (R10): a version referenced by another skill's draft or
+        # published version cannot be deleted — the referencers would break.
+        # Unpinned refs (跟随最新发布版) also count when this is the only
+        # published version: deletion would leave nothing to follow.
+        refs = await references.referencing_versions(s, tenant, skill_code, version)
+        if not refs and row.status == "published":
+            refs = await references.referencing_versions(s, tenant, skill_code, None)
+        if refs:
+            who = "、".join(f"{c} v{v}" for c, v, _ in refs[:5])
+            raise HTTPException(409, detail={
+                "code": "version_referenced",
+                "message": f"该版本正被其它技能引用（{who}），解除引用后才能删除",
+                "referencers": [{"skill_code": c, "version": v,
+                                 "pinned": rv} for c, v, rv in refs]})
         live = (await s.execute(
             select(func.count(Transaction.id))
             .where(Transaction.tenant_id == tenant,
@@ -583,6 +599,19 @@ async def dry_run(file: UploadFile = File(...), package: str = Form(...),
         pkg = SkillPackageLoose.model_validate_json(package)
     except Exception as e:
         raise HTTPException(400, f"invalid package json: {e}") from e
+    # 9.15 WP4 (R10): for advanced packages every existing_skill reference is
+    # validated SERVER-SIDE by tenant before running — the client never ships
+    # referenced content, and a dead reference fails loudly (422)
+    if getattr(pkg, "skill_mode", "standard") == "advanced":
+        sf = session_factory()
+        async with sf() as s:
+            try:
+                await references.resolve_dependencies(
+                    s, current_tenant(), json.loads(package), pkg.skill_code)
+            except references.ReferenceUnavailable as e:
+                raise HTTPException(422, detail={
+                    "code": "reference_unavailable",
+                    "message": f"引用的技能不可用：{e.skill_code}"})
     plist = [p.strip() for p in providers.split(",") if p.strip()]
     sample_path, udr = await _parse_upload_kept(file, current_tenant(), pkg.parser)
     await _warm_byok()
@@ -714,12 +743,25 @@ async def publish(skill_code: str, version: int):
             raise HTTPException(404, "version not found")
         if target.status == "published":
             return {"skill_code": skill_code, "version": version, "status": "published"}
-        # 9.15 WP3 gate (§0 default, remove in WP4): advanced-mode packages pass
-        # validation, but the分类执行 runtime is not live yet — publishing one
-        # would run it as a standard single-pass skill and produce wrong output.
-        if (target.package or {}).get("skill_mode") == "advanced":
-            raise HTTPException(422, "高级提取运行时尚未上线，当前无法发布高级模式技能；"
-                                     "请改用标准模式或等待高级提取批次开放")
+        # 9.15 WP3 gate: removed in WP4 — the advanced runtime is now live.
+        # 9.15 WP4 (R10): resolve and pin references at publish time; the
+        # draft keeps version=null (跟随最新发布版), the published row is pinned.
+        pkg_dump = dict(target.package or {})
+        try:
+            deps = await references.resolve_dependencies(
+                s, tenant, pkg_dump, skill_code, pin=True)
+        except references.ReferenceUnavailable as e:
+            raise HTTPException(422, detail={
+                "code": "validation_failed",
+                "message": f"引用的技能不可用：{e.skill_code}"
+                           + (f" v{e.version}" if e.version else "")
+                           + "（需为同租户已发布技能）"})
+        if deps:
+            target.package = references.pin_references(pkg_dump, deps)
+            s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                           action="skills.references_pinned",
+                           detail={"skill_code": skill_code, "version": version,
+                                   "pinned": {k: v["version"] for k, v in deps.items()}}))
         current = (await s.execute(
             select(SkillVersion).where(SkillVersion.skill_code == skill_code,
                                        SkillVersion.status == "published"))).scalars().all()

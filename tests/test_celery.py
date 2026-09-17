@@ -128,3 +128,83 @@ def test_real_worker_threads_pool_ping():
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def test_eager_advanced_mode_fans_out_children(tmp_path, monkeypatch):
+    """9.15 WP4: Celery path runs an advanced skill end to end — classifier
+    plan (mocked) fans the file into children, all settle completed."""
+    monkeypatch.setenv("IDP_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    monkeypatch.setenv("IDP_DATA_DIR", str(tmp_path))
+    import app.config as config
+    import app.db as db
+    config.get_settings.cache_clear()
+    db._engine = None
+    db._session_factory = None
+
+    import app.tasks.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
+    monkeypatch.setattr(runner_mod, "extract",
+                        lambda udr, pkg: ({"invoice_no": {"$value": "INV-1", "$confidence": 3,
+                                                          "$bbox": [1, 2, 3, 4], "$pages": [1]}},
+                                          {"prompt_tokens": 10, "completion_tokens": 5}, False))
+
+    def fake_plan(udr, cats, layout, rules, provider=None, transport=None):
+        return [{"pages": [1], "category_id": "invoice"},
+                {"pages": [2], "category_id": "invoice"}], {"prompt_tokens": 7,
+                                                            "completion_tokens": 3}
+    monkeypatch.setattr(runner_mod, "plan_documents", fake_plan)
+
+    async def _seed() -> str:
+        from app.db import init_db, session_factory
+        from app.models import FileRecord, SkillVersion, Transaction
+        await init_db()
+        pkg = SkillPackage(
+            skill_code="celery_adv", name="高级", skill_mode="advanced",
+            document_layout="mixed", classification_rules="",
+            categories=[
+                {"id": "invoice", "doc_type": "发票", "recognition_instruction": "",
+                 "is_other": False, "handler": "inline",
+                 "fields": [FieldSpec(name="invoice_no")], "validators": [],
+                 "additional_rules": "", "output_shape": "object", "skill_ref": None},
+                {"id": "Other", "doc_type": "Other", "recognition_instruction": "",
+                 "is_other": True, "handler": "classify_only", "fields": [],
+                 "validators": [], "additional_rules": "", "output_shape": "object",
+                 "skill_ref": None},
+            ])
+        async with session_factory()() as s:
+            s.add(SkillVersion(tenant_id="default", skill_code="celery_adv",
+                               version=1, status="published",
+                               package=pkg.model_dump()))
+            txn = Transaction(tenant_id="default", skill_code="celery_adv",
+                              skill_version=1)
+            s.add(txn)
+            await s.flush()
+            s.add(FileRecord(tenant_id="default", transaction_id=txn.id,
+                             file_name="adv.pdf",
+                             storage_path=str(tmp_path / "adv.pdf")))
+            await s.commit()
+            return txn.id
+
+    txn_id = asyncio.run(_seed())
+
+    monkeypatch.setitem(celery_app.conf, "task_always_eager", True)
+    from app.tasks.celery_tasks import run_transaction
+    run_transaction.delay(txn_id, "default")
+
+    async def _check():
+        from sqlalchemy import select
+
+        from app.db import session_factory
+        from app.models import FileRecord, Transaction
+        async with session_factory()() as s:
+            files = (await s.execute(select(FileRecord).where(
+                FileRecord.transaction_id == txn_id))).scalars().all()
+            txn = await s.get(Transaction, txn_id)
+            return files, txn.status
+
+    files, t_status = asyncio.run(_check())
+    children = [f for f in files if f.parent_file_id]
+    assert len(children) == 2
+    assert all(c.status == "completed" for c in children)
+    assert [c.document_meta["doc_index"] for c in children] == [1, 2]
+    assert t_status == "completed"

@@ -48,7 +48,7 @@
           <button v-for="(part, i) in detail.children" :key="part.file_id"
                   :class="['part', { active: activeFileId === part.file_id }]"
                   @click="switchPart(part.file_id)">
-            <span>单据 {{ i + 1 }}</span>
+            <span>单据 {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
             <small>第 {{ partRange(part) }} 页</small>
             <span class="chip" :class="`chip-${part.status}`">{{ stLabel(part.status) }}</span>
           </button>
@@ -95,6 +95,8 @@
         </p>
       </div>
 
+      <p v-if="classifyOnly && tab !== 'seal'" class="dim co-note">
+        仅分类文档：没有需要校验的字段，直接「通过」即可。</p>
       <div v-else class="fields" ref="fieldsEl">
         <div v-for="(f, i) in visibleFields" :key="f.name" class="field"
              :class="{ active: activeKey === `f:${f.name}` }" :data-key="`f:${f.name}`"
@@ -275,13 +277,34 @@ async function copyFid() {
   } catch { toast.error("复制失败，请手动从任务列表复制"); }
 }
 const pageOffset = computed(() => activeItem.value?.page_offset ?? 0);
-const toRootPage = (page: number) => page + pageOffset.value;
-const toLocalPage = (page: number) => Math.max(1, page - pageOffset.value);
+// 9.15 WP4: advanced children carry source_pages (original-file pages, maybe
+// non-consecutive) — the fact source; legacy children fall back to the
+// cumulative page_offset
+function srcPages(part: ReviewItem | null | undefined): number[] | null {
+  const sp = part?.document?.source_pages;
+  return sp && sp.length ? sp : null;
+}
+const toRootPage = (page: number) => {
+  const sp = srcPages(activeItem.value);
+  if (sp) return sp[Math.max(0, Math.min(page, sp.length) - 1)];
+  return page + pageOffset.value;
+};
+const toLocalPage = (page: number) => {
+  const sp = srcPages(activeItem.value);
+  if (sp) return Math.max(1, sp.indexOf(page) + 1 || 1);
+  return Math.max(1, page - pageOffset.value);
+};
 function partRange(part: ReviewItem): string {
+  const sp = srcPages(part);
+  if (sp) return sp.length === 1 ? String(sp[0])
+    : `${sp[0]}–${sp[sp.length - 1]}` + (sp.some((p, i) => i && p !== sp[i - 1] + 1)
+        ? `（${sp.join(",")}）` : "");
   const start = (part.page_offset ?? 0) + 1;
   const end = start + Math.max(part.page_count, 1) - 1;
   return start === end ? String(start) : `${start}–${end}`;
 }
+const classifyOnly = computed(() =>
+  activeItem.value?.document?.extraction_status === "not_requested");
 
 // tab preference survives reloads (caching design §9.0 layer ⑤)
 const tab = ref<"all" | "review" | "seal">(

@@ -250,9 +250,16 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
     out = []
     for f, sc in rows:
         flat = {k: _flat_value(v) for k, v in (f.result or {}).items()}
-        out.append({"file_id": f.id, "file_name": f.file_name,
-                    "status": f.status, "verified_by": f.verified_by,
-                    "created_at": f.created_at.isoformat(), **flat})
+        meta = f.document_meta or {}
+        # 9.15 WP4: advanced skills emit one row per child document; doc_type
+        # is a new column, legacy rows just leave it out
+        row = {"file_id": f.id, "file_name": f.file_name,
+               "status": f.status, "verified_by": f.verified_by,
+               "created_at": f.created_at.isoformat()}
+        if meta.get("doc_index") is not None:
+            row["doc_type"] = meta.get("doc_type") or ""
+            row["source_pages"] = meta.get("source_pages") or []
+        out.append({**row, **flat})
     return out
 
 
@@ -300,7 +307,14 @@ async def cabinet_csv(skill_code: str, limit: int = 1000):
     if not rows:
         raise HTTPException(404, "no decided files for this skill")
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+    # union of keys across rows: doc_type/source_pages exist only on advanced
+    # children — the column set must not depend on which row came first
+    fieldnames: list[str] = []
+    for r in rows:
+        for k in r:
+            if k not in fieldnames:
+                fieldnames.append(k)
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
     return PlainTextResponse(buf.getvalue(), media_type="text/csv",

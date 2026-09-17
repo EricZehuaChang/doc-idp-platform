@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
+from app import references
 from app.db import session_factory
 from app.models import FileRecord, Skill, SkillVersion, Transaction
 from app.storage import get_storage
@@ -246,6 +247,16 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         s.add(txn)
         try:
             await s.flush()
+        # 9.15 WP4 (§3.4): freeze the execution config now — package + resolved
+        # dependency packages (R10). Stored on the txn row in the same DB
+        # transaction; legacy rows keep snapshot=None.
+            txn.execution_snapshot = await references.build_execution_snapshot(
+                s, tenant, skill_code, ver.version)
+        except references.ReferenceUnavailable as e:
+            raise HTTPException(409, detail={
+                "code": "reference_unavailable",
+                "message": f"技能引用的依赖不存在：{e.skill_code}"
+                           + (f" v{e.version}" if e.version else "")})
         except IntegrityError:
             # racing duplicate lost the unique-index race: roll back and hand
             # back the winner's transaction (or 409 if payloads differ) —
@@ -413,11 +424,15 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
                                 if isinstance(r, dict) else r for r in v]
                     return v
                 result = {k: _plain(v) for k, v in result.items()}
+            from app.api.routes.docmeta import document_view
             return {
                 "file_id": f.id, "file_name": f.file_name, "status": f.status,
                 "page_count": f.page_count, "msg": f.error or "",
                 "input_tokens": f.input_tokens, "output_tokens": f.output_tokens,
                 "result": result, "parent_file_id": f.parent_file_id,
+                # 9.15 WP4 (§3.6): per-document view, new key only — absent for
+                # legacy/standard files without classification metadata
+                "document": document_view(f),
             }
 
         # One API row per uploaded file. Internal split jobs remain available as

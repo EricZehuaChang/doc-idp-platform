@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     # multi-doc split (M2 item 7): "auto" = LLM page classification on
     # multi-page files (one cheap call per file); "off" = never split
     multi_doc_split: str = "auto"
+    # 9.15 WP4: concurrent extraction of sibling documents in one advanced file
+    doc_concurrency: int = 4
 
     # seal/signature detection (design 2026-08-07): per-host overrides for the
     # detectors.yaml model locations — air_gapped pre-seeds absolute paths,
