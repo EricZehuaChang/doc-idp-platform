@@ -171,7 +171,10 @@ def main() -> int:
         lines.append(f"| {skill} | 字段准确率 | "
                      f"{f'{acc:.1%}' if acc is not None else '—'} |"
                      f" n={res['accuracy_samples']} |")
-    lines += ["", "> 仅限开发/测试环境实测；报告只陈述实测数字与环境。"]
+    lines += ["", "> 高级技能的子文档继承父文件的 queue_ms/parse_ms/classify_ms"
+                  "（解析与分类按原件各发生一次，不是在每份文档上重复消耗）；"
+                  "「仅分类」文档只有 total_ms。",
+              "> 仅限开发/测试环境实测；报告只陈述实测数字与环境。"]
     Path(f"{args.out}.md").write_text("\n".join(lines) + "\n")
     print(f"written: {args.out}.json / {args.out}.md")
     return 0

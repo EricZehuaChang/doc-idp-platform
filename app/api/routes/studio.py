@@ -7,11 +7,12 @@ import asyncio
 import hashlib
 import json
 import uuid
+from datetime import timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.db import session_factory
 from app.skillengine.schema import SkillPackageLoose
@@ -246,14 +247,97 @@ class RunRequest(BaseModel):
     sample_ids: list[str]
 
 
-def _run_view(r: StudioRun) -> dict:
+# D2 (#6): the StudioRun row is written once at submit; status and duration
+# are DERIVED at read time from the file records instead of adding a second
+# write path. Vocabulary: queued / running / completed / needs_review / failed.
+_FILE_TO_RUN_STATUS = {
+    "queued": "queued", "processing": "running", "completed": "completed",
+    "passed": "completed", "pending_verification": "needs_review",
+    "error": "failed", "rejected": "failed",
+    # a split parent's own state says nothing about progress — its children
+    # carry the real per-document state, so it contributes nothing here
+    "split": None,
+}
+_RUN_SETTLED = {"completed", "needs_review", "failed"}
+
+
+def _derive_run(r: StudioRun, file_rows: list) -> dict:
+    """file_rows = the run's file + (for a split parent) its children."""
+    rows = [f for f in file_rows if f is not None]
+    if not rows:
+        status = _FILE_TO_RUN_STATUS.get(r.status, r.status)
+        return {"status": status, "duration_ms": r.duration_ms,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None}
+    derived = [d for d in (_FILE_TO_RUN_STATUS.get(f.status, f.status)
+                           for f in rows) if d is not None]
+    if not derived:
+        derived = ["running"]
+    if "failed" in derived:
+        status = "failed"
+    elif all(d == "completed" for d in derived):
+        status = "completed"
+    elif "needs_review" in derived and not any(
+            d in ("queued", "running") for d in derived):
+        status = "needs_review"
+    elif all(d == "needs_review" for d in derived):
+        status = "needs_review"
+    elif any(d == "queued" for d in derived):
+        status = "queued"
+    else:
+        status = "running"
+
+    def _aware(dt):
+        if dt is None:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    # submission = the earliest row (the root is created first); completion =
+    # the last DOCUMENT producing a result (a split parent has no processed_at
+    # of its own, so it must not veto the duration)
+    state_rows = [f for f in rows
+                  if _FILE_TO_RUN_STATUS.get(f.status, f.status) is not None]         or rows
+    starts = [x for x in (_aware(f.created_at) for f in rows) if x]
+    ends = [x for x in (_aware(f.processed_at) for f in state_rows) if x]
+    duration = None
+    finished = None
+    if starts and len(ends) == len(state_rows):
+        finished = max(ends)
+        duration = max(int((finished - min(starts)).total_seconds() * 1000), 1)
+    elif ends:
+        finished = max(ends)
+    return {"status": status, "duration_ms": duration,
+            "finished_at": finished.isoformat() if finished else None}
+
+
+def _run_view(r: StudioRun, derived: dict | None = None) -> dict:
+    d = derived or {"status": r.status, "duration_ms": r.duration_ms,
+                    "finished_at": None}
     return {"run_id": r.id, "skill_code": r.skill_code,
             "version": r.skill_version, "sample_id": r.sample_id,
             "transaction_id": r.transaction_id, "file_id": r.file_id,
-            "status": r.status, "processing_mode": r.processing_mode,
-            "duration_ms": r.duration_ms, "created_by": r.created_by,
+            "status": d["status"], "processing_mode": r.processing_mode,
+            "duration_ms": d["duration_ms"], "created_by": r.created_by,
             "created_at": r.created_at.isoformat(),
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None}
+            "finished_at": d["finished_at"] or
+            (r.finished_at.isoformat() if r.finished_at else None)}
+
+
+async def _rows_for_runs(s, runs: list[StudioRun]) -> dict[str, list]:
+    """run_id -> [file, *children] in one query pair (no N+1)."""
+    from app.models import FileRecord as _FR
+    ids = [r.file_id for r in runs if r.file_id]
+    if not ids:
+        return {}
+    rows = (await s.execute(
+        select(_FR).where(or_(_FR.id.in_(ids), _FR.parent_file_id.in_(ids)))
+    )).scalars().all()
+    by_id = {f.id: f for f in rows}
+    out: dict[str, list] = {}
+    for r in runs:
+        group = [by_id.get(r.file_id)] if r.file_id else []
+        group += [f for f in rows if f.parent_file_id == r.file_id]
+        out[r.id] = group
+    return out
 
 
 def _package_hash(package: dict) -> str:
@@ -351,7 +435,7 @@ async def create_run(payload: RunRequest,
                 processing_mode=getattr(pkg, "processing_mode", "balanced"))
             s.add(run)
             await s.flush()
-            runs.append(_run_view(run))
+            runs.append(_run_view(run, _derive_run(run, [f])))
         await s.commit()
     txn_id = txn.id
     runner.submit(txn_id)   # dispatch seam: sync call, inprocess/celery inside
@@ -371,7 +455,9 @@ async def list_runs(skill_code: str | None = None, sample_id: str | None = None)
         if sample_id:
             q = q.where(StudioRun.sample_id == sample_id)
         rows = (await s.execute(q)).scalars().all()
-    return {"runs": [_run_view(r) for r in rows]}
+        grouped = await _rows_for_runs(s, rows)
+    return {"runs": [_run_view(r, _derive_run(r, grouped.get(r.id, [])))
+                     for r in rows]}
 
 
 @router.get("/runs/{run_id}")
@@ -385,7 +471,8 @@ async def run_detail(run_id: str):
             raise HTTPException(404, detail={"code": "run_not_found",
                                              "message": "运行记录不存在"})
         txn = await s.get(Transaction, r.transaction_id)
-        out = _run_view(r)
+        grouped = await _rows_for_runs(s, [r])
+        out = _run_view(r, _derive_run(r, grouped.get(r.id, [])))
         out["transaction_status"] = txn.status if txn else None
         out["transaction_error"] = None   # file-level errors live on files
     return out
@@ -394,11 +481,20 @@ async def run_detail(run_id: str):
 @router.post("/naming-preview")
 async def naming_preview(payload: dict):
     """Server-side naming preview (§WP6: the ONLY implementation — the editor
-    calls this 300ms after the last keystroke). `sample` values prefer the
-    latest Playground run of a sample; the editor falls back to placeholders."""
+    calls this 300ms after the last keystroke).
+
+    D4 (#13): besides the tokens the rule already uses, return
+    `available_tokens` — every variable legal for the CURRENT action — so the
+    editor can show clickable tags without inventing the list itself, and
+    `doc_index` appears only for split.
+
+    Sample values come from the SERVER: the sample's latest Playground run
+    result when there is one, otherwise a `‹field›` placeholder (an empty
+    render made it look like the rule was broken)."""
     from app.extraction import naming
     from app.config import get_settings
     pattern = str(payload.get("pattern") or "")
+    action = str(payload.get("action") or "rename")
     errors = naming.validate_pattern(pattern)
     tokens = naming.tokens_of(pattern)
     normalized, appended = naming.ensure_extension(pattern)
@@ -406,6 +502,75 @@ async def naming_preview(payload: dict):
     data = sample.get("data") or {}
     clean = {k: (v.get("$value") if isinstance(v, dict) else v)
              for k, v in data.items()} if isinstance(data, dict) else {}
+
+    # —— which data fields exist (server composes the tag list) ——
+    field_names: list[str] = []
+    raw_fields = payload.get("fields")
+    if isinstance(raw_fields, list):
+        for f in raw_fields:
+            name = f.get("name") if isinstance(f, dict) else f
+            if isinstance(name, str) and name.strip():
+                field_names.append(name.strip())
+    elif payload.get("skill_code"):
+        ver = payload.get("version")
+        sf = session_factory()
+        async with sf() as s:
+            q = select(SkillVersion).where(
+                SkillVersion.tenant_id == current_tenant(),
+                SkillVersion.skill_code == str(payload["skill_code"]))
+            q = q.where(SkillVersion.version == int(ver)) if ver else \
+                q.order_by(SkillVersion.version.desc())
+            row = (await s.execute(q)).scalars().first()
+        if row is not None:
+            raw = row.package or {}
+            field_names = [f.get("name") for f in (raw.get("fields") or [])
+                           if isinstance(f, dict) and f.get("name")]
+            for cat in raw.get("categories") or []:
+                field_names += [f.get("name") for f in (cat.get("fields") or [])
+                                if isinstance(f, dict) and f.get("name")]
+    seen: list[str] = []
+    for n in field_names:
+        if n not in seen:
+            seen.append(n)
+
+    # —— sample values: latest Playground result of this sample, else ‹field› ——
+    sample_id = payload.get("sample_id")
+    server_data: dict = {}
+    if sample_id:
+        sf = session_factory()
+        async with sf() as s:
+            run = (await s.execute(
+                select(StudioRun)
+                .where(StudioRun.tenant_id == current_tenant(),
+                       StudioRun.sample_id == str(sample_id),
+                       StudioRun.transaction_id.is_not(None))
+                .order_by(StudioRun.created_at.desc()))).scalars().first()
+            if run is not None:
+                f = (await s.execute(
+                    select(FileRecord)
+                    .where(FileRecord.transaction_id == run.transaction_id)
+                    .order_by(FileRecord.created_at, FileRecord.id))
+                ).scalars().first()
+                children = (await s.execute(
+                    select(FileRecord)
+                    .where(FileRecord.parent_file_id == (f.id if f else ""))
+                    .order_by(FileRecord.created_at))
+                ).scalars().all() if f else []
+                for row in ([f] if f else []) + list(children):
+                    for k, v in (row.result or {}).items():
+                        if isinstance(v, dict) and "$value" in v and k not in server_data:
+                            server_data[k] = v.get("$value")
+    merged = dict(server_data)
+    merged.update(clean)                      # explicit sample values still win
+    render_data = {}
+    for n in seen:
+        v = merged.get(n)
+        render_data[n] = v if v not in (None, "") else f"‹{n}›"
+
+    available = ["original_name", "original_ext", "date", "time", "doc_type"]
+    if action == "split":
+        available.append("doc_index")
+    available += [f"data.{n}" for n in seen]
     preview, r_errs = naming.render(
         pattern,
         original_name=str(sample.get("original_name") or "sample.pdf"),
@@ -413,8 +578,11 @@ async def naming_preview(payload: dict):
         output_is_pdf=bool(payload.get("searchable_pdf")),
         doc_type=sample.get("doc_type"),
         doc_index=sample.get("doc_index"),
-        data=clean if isinstance(clean, dict) else {},
+        data=render_data or clean,
         output_tz=get_settings().output_tz)
     return {"ok": not errors and not r_errs, "preview": preview,
             "appended_ext": appended, "normalized_pattern": normalized,
-            "errors": errors + r_errs, "tokens": tokens}
+            "errors": errors + r_errs, "tokens": tokens,
+            "available_tokens": available,
+            "field_names": seen,
+            "sample_source": "playground" if server_data else "placeholder"}

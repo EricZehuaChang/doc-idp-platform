@@ -504,6 +504,17 @@ async def transaction_documents(transaction_id: str):
                     names.append(name)
             return names
 
+        def _extraction_status(f: FileRecord) -> str:
+            """#7: meta first, file status as the honest fallback (D8: rejected
+            already HAS its extraction — the rejection is a review state)."""
+            meta = f.document_meta or {}
+            if meta.get("extraction_status"):
+                return str(meta["extraction_status"])
+            return {"queued": "processing", "processing": "processing",
+                    "completed": "completed", "passed": "completed",
+                    "pending_verification": "completed", "rejected": "completed",
+                    "error": "failed"}.get(f.status, "processing")
+
         def _documents(f: FileRecord) -> list[dict]:
             kids = children_by_parent.get(f.id)
             if kids:
@@ -530,9 +541,10 @@ async def transaction_documents(transaction_id: str):
                 "file_id": f.id, "doc_index": 1, "doc_type": None,
                 "category_id": None, "handler": None,
                 "source_pages": pages, "page_range": page_range(pages),
-                "extraction_status": "completed" if f.status in
-                                     ("completed", "passed") else
-                                     ("failed" if f.status == "error" else "processing"),
+                # #7 (D8): the runner stamps extraction_status when it finishes;
+                # falling back to the file status must not report an extracted,
+                # waiting-for-review file as still processing (agents polled on)
+                "extraction_status": _extraction_status(f),
                 "error": f.error or None,
                 "data": _clean_data(f),
                 "review_fields": _review_fields(f.result or {}),

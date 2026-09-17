@@ -123,7 +123,7 @@ async def export_package(payload: dict):
         headers={"Cache-Control": "no-store"})
 
 
-def _stash(tenant: str, user: str, inner: dict) -> str:
+def _stash(tenant: str, user: str, inner: dict, sha256: str = "") -> str:
     """§3.8: stash the decrypted inner JSON (platform-key encrypted) under an
     import token, bound to tenant+user, 30-minute TTL. The expiry rides in
     the blob — no extra table, and a missing key is just an expired import."""
@@ -131,7 +131,9 @@ def _stash(tenant: str, user: str, inner: dict) -> str:
     blob = json.dumps({
         "tenant": tenant, "user": user,
         "expires_at": (datetime.now(timezone.utc) + _STASH_TTL).isoformat(),
-        "inner": inner}).encode()
+        # #23: the package digest is stored server-side at preview time so the
+        # commit step never trusts a client-supplied sha256
+        "sha256": sha256, "inner": inner}).encode()
     get_storage().put_bytes(f"imports/{tenant}/{token}.bin",
                             encrypt_value(blob.decode()).encode())
     return token
@@ -153,7 +155,7 @@ def _unstash(tenant: str, user: str, token: str) -> dict | None:
     if datetime.fromisoformat(blob["expires_at"]) < datetime.now(timezone.utc):
         st.delete(key)
         return None
-    return blob.get("inner")
+    return blob
 
 
 def _unstash_delete(tenant: str, token: str) -> None:
@@ -230,7 +232,7 @@ async def import_preview(zip_file: UploadFile = File(...),
                                "doc_type": cat.doc_type,
                                "skill_code": ref.get("skill_code"),
                                "version": ref.get("version")})
-    token = _stash(tenant, user, inner)
+    token = _stash(tenant, user, inner, sha)
     return {"import_token": token, "sha256": sha,
             "skill": {"code": skill.get("skill_code"), "name": skill.get("name"),
                       "kind": skill.get("kind"), "version": skill.get("version"),
@@ -257,10 +259,12 @@ async def import_commit(payload: dict):
     transaction — on failure nothing is created (§WP7)."""
     tenant = current_tenant()
     user = current_actor().get("name") or "api"
-    inner = _unstash(tenant, user, payload.get("import_token") or "")
-    if inner is None:
+    stashed = _unstash(tenant, user, payload.get("import_token") or "")
+    if stashed is None:
         raise HTTPException(410, detail={"code": "import_token_expired",
                                          "message": "导入会话已过期，请重新解析"})
+    inner = stashed.get("inner") or {}
+    sha256 = str(stashed.get("sha256") or "")   # #23: server-side value only
     skill = inner.get("skill") or {}
     pkg_raw = json.loads(json.dumps(skill.get("package") or {}))
     deps = inner.get("dependencies") or {}
@@ -324,7 +328,7 @@ async def import_commit(payload: dict):
         source_name = skill.get("name") or pkg.name
         source_ver = skill.get("version")
         changelog = (f"从技能包导入：{source_name} v{source_ver}"
-                     f"（{(payload.get('sha256') or '')[:8]}）")
+                     f"（{sha256[:8]}）")
         if changelog_extra:
             changelog += "；" + "；".join(changelog_extra)
 
@@ -367,7 +371,7 @@ async def import_commit(payload: dict):
         s.add(AuditLog(tenant_id=tenant, actor=user,
                        action="skills.package_imported",
                        detail={"skill_code": new_code, "version": version,
-                               "sha256": (payload.get("sha256") or "")[:64],
+                               "sha256": sha256[:64],
                                "conflict": conflict}))
         await s.commit()          # single transaction: fail => nothing created
     _unstash_delete(tenant, payload.get("import_token") or "")

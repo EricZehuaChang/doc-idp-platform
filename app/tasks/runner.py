@@ -278,7 +278,8 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
             await mark_error(file_id, f"classification_failed: {e}")
             return
         classify_ms = int((datetime.now(timezone.utc) - _c0).total_seconds() * 1000)
-        meta = await _fan_out_children(file_id, udr, plan, pkg, deps or {})
+        meta = await _fan_out_children(file_id, udr, plan, pkg, deps or {},
+                                       classify_ms=classify_ms)
         await shadow_meter(tenant_id=tenant, file_id=file_id,
                            pages=0, usage=class_usage)   # classification tokens
         await webhooks.fire(tenant, "file.split",
@@ -360,9 +361,22 @@ async def _complete_classify_only(file_id: str) -> None:
         tenant = f.tenant_id
         f.result = {}
         f.status = "completed"
-        f.processed_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        f.processed_at = now
         meta = dict(f.document_meta or {})
         meta["extraction_status"] = "not_requested"
+        # #22: a classify-only document still takes time — record it (the
+        # inherited parse/classify timings are already in meta["metrics"])
+        metrics = dict(meta.get("metrics") or {})
+        started = f.created_at
+        if started is not None and started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        if started is not None:
+            metrics["total_ms"] = max(int((now - started).total_seconds() * 1000), 1)
+        metrics["pages"] = f.page_count or 0
+        metrics.setdefault("provider_used", "")
+        if metrics:
+            meta["metrics"] = metrics
         f.document_meta = meta
         await s.commit()
         pages = f.page_count
@@ -429,7 +443,8 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
 
 async def _fan_out_children(file_id: str, udr: UDR,
                             plan: list[dict], pkg: SkillPackage,
-                            deps: dict) -> dict:
+                            deps: dict,
+                            classify_ms: int | None = None) -> dict:
     """Create one child FileRecord per document in the plan: sliced UDR on
     disk, physical PDF slice when possible (split_pdf copies page ranges, so
     non-consecutive plans work), parent marked split.
@@ -466,10 +481,23 @@ async def _fan_out_children(file_id: str, udr: UDR,
             meta: dict = {}
             if advanced:
                 subpkg = category_subpackage(pkg, cat_id, pinned_packages=pinned)
+                # #22: the child's own extract_ms is measured later, but parse
+                # and classification happen ONCE for the parent — carry those
+                # timings down so per-document metrics and the bench report are
+                # not silently missing them (rows are copied, not shared).
+                inherited = {k: v for k, v in
+                             ((parent.document_meta or {}).get("metrics") or {}
+                              ).items() if k in ("queue_ms", "parse_ms")}
+                if classify_ms is not None:
+                    inherited["classify_ms"] = classify_ms
+                if inherited:
+                    inherited["inherited_from_parent"] = True
                 meta = {"doc_index": i, "doc_type": doc_type,
                         "category_id": cat_id, "handler": handler,
                         "source_pages": list(pages),
                         "effective_schema": json.loads(subpkg.model_dump_json())}
+                if inherited:
+                    meta["metrics"] = inherited
             child = FileRecord(
                 tenant_id=parent.tenant_id, transaction_id=parent.transaction_id,
                 parent_file_id=parent.id, file_name=f"{stem}#doc{i}{suffix}",
