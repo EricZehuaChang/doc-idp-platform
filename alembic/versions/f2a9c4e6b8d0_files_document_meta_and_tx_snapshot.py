@@ -28,9 +28,13 @@ def upgrade() -> None:
     # resolve to arbitrary rows. A pre-existing duplicate must be cleaned before
     # upgrading (the plan explicitly forbids blindly adding constraints).
     conn = op.get_bind()
+    # NB: `HAVING c > 1` on a SELECT alias works on SQLite but NOT on
+    # PostgreSQL ("column c does not exist", found by CI's PG matrix) — the
+    # guard must be engine-neutral, and it must group by the same triple as
+    # the unique index below. (2026-09-18)
     dupes = conn.execute(sa.text(
-        "SELECT skill_code, tenant_id, COUNT(*) c FROM skill_versions "
-        "GROUP BY skill_code, tenant_id, version HAVING c > 1")).fetchall()
+        "SELECT tenant_id, skill_code, version, COUNT(*) AS n FROM skill_versions "
+        "GROUP BY tenant_id, skill_code, version HAVING COUNT(*) > 1")).fetchall()
     if dupes:
         raise RuntimeError(
             "skill_versions has duplicate (skill_code, version) rows — clean "

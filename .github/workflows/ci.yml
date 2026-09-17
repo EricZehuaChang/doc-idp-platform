@@ -52,7 +52,10 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install
-        run: pip install -e ".[dev,parsers,pg]"
+        # `output` carries reportlab (9.15 WP6 searchable PDF). Without it the
+        # artifact tests fail with ModuleNotFoundError in CI while passing on a
+        # dev machine that had reportlab installed by hand.
+        run: pip install -e ".[dev,parsers,pg,output]"
 
       - name: Ruff
         run: ruff check app tests

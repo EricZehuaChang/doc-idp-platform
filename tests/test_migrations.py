@@ -213,3 +213,48 @@ async def test_storage_key_backfill_migration(tmp_path, monkeypatch):
     finally:
         await engine.dispose()
         config.get_settings.cache_clear()
+
+
+async def test_duplicate_skill_versions_block_the_upgrade(tmp_path):
+    """f2a9c4e6b8d0 adds the (tenant_id, skill_code, version) unique index after
+    a guard query. The guard must (a) run on PostgreSQL too — `HAVING c > 1` on
+    a SELECT alias only works on SQLite and broke the PG CI job — and (b) fail
+    loudly with a clean message instead of a driver error."""
+    import sqlite3
+
+    from sqlalchemy import create_engine
+
+    db = tmp_path / "dupes.db"
+    url = f"sqlite+aiosqlite:///{db}"
+    # build the schema up to the revision BEFORE the unique index lands
+    await asyncio.to_thread(command.upgrade, alembic_config(url),
+                            "c9d2e4f6a8b0")
+    sync = create_engine(f"sqlite:///{db}")
+    try:
+        with sync.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO skill_versions (id, tenant_id, skill_code, version,"
+                " status, package, changelog, created_at) VALUES"
+                " ('d1','default','dup',1,'draft','{}','',CURRENT_TIMESTAMP),"
+                " ('d2','default','dup',1,'draft','{}','',CURRENT_TIMESTAMP)")
+    finally:
+        sync.dispose()
+
+    with pytest.raises(Exception) as err:
+        await asyncio.to_thread(command.upgrade, alembic_config(url), "head")
+    assert "duplicate" in str(err.value).lower()
+
+    # cleaning the duplicates lets the same upgrade through
+    sync = create_engine(f"sqlite:///{db}")
+    try:
+        with sync.begin() as conn:
+            conn.exec_driver_sql("DELETE FROM skill_versions WHERE id='d2'")
+    finally:
+        sync.dispose()
+    await asyncio.to_thread(command.upgrade, alembic_config(url), "head")
+    with sqlite3.connect(db) as raw:
+        version = raw.execute("select version_num from alembic_version").fetchone()[0]
+        indexes = {r[0] for r in raw.execute(
+            "select name from sqlite_master where type='index'")}
+    assert version == "b8d0f2a4c6e8"
+    assert "ux_skill_versions_code_version" in indexes
