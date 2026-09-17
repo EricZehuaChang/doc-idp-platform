@@ -19,7 +19,7 @@ from app.models import AuditLog, GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app.skillengine import catalog, studio
-from app.skillengine.schema import SkillPackage
+from app.skillengine.schema import SkillPackage, SkillPackageLoose
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant
 
@@ -580,7 +580,7 @@ async def dry_run(file: UploadFile = File(...), package: str = Form(...),
     """Try a package on one sample without creating a task; multiple providers
     run side-by-side (output/usage comparison — Unstract-validated UX)."""
     try:
-        pkg = SkillPackage.model_validate_json(package)
+        pkg = SkillPackageLoose.model_validate_json(package)
     except Exception as e:
         raise HTTPException(400, f"invalid package json: {e}") from e
     plist = [p.strip() for p in providers.split(",") if p.strip()]
@@ -604,7 +604,7 @@ async def export_yaml(skill_code: str, version: int | None = None):
         row = (await s.execute(q)).scalars().first()
         if row is None:
             raise HTTPException(404, "skill/version not found")
-        return studio.package_to_yaml(SkillPackage(**row.package))
+        return studio.package_to_yaml(SkillPackageLoose(**row.package))
 
 
 @router.post("/import", status_code=201)
@@ -687,7 +687,7 @@ async def golden_check(skill_code: str, version: int):
     if not goldens:
         return {"samples": 0, "note": "no golden samples attached"}
     await _warm_byok()
-    pkg = SkillPackage(**row.package)
+    pkg = SkillPackageLoose(**row.package)
 
     def _run():
         # the gate must exercise the parser the version actually pins, or it
@@ -714,6 +714,12 @@ async def publish(skill_code: str, version: int):
             raise HTTPException(404, "version not found")
         if target.status == "published":
             return {"skill_code": skill_code, "version": version, "status": "published"}
+        # 9.15 WP3 gate (§0 default, remove in WP4): advanced-mode packages pass
+        # validation, but the分类执行 runtime is not live yet — publishing one
+        # would run it as a standard single-pass skill and produce wrong output.
+        if (target.package or {}).get("skill_mode") == "advanced":
+            raise HTTPException(422, "高级提取运行时尚未上线，当前无法发布高级模式技能；"
+                                     "请改用标准模式或等待高级提取批次开放")
         current = (await s.execute(
             select(SkillVersion).where(SkillVersion.skill_code == skill_code,
                                        SkillVersion.status == "published"))).scalars().all()

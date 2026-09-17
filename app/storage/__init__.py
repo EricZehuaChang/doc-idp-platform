@@ -39,6 +39,9 @@ class Storage(Protocol):
     def exists(self, key: str) -> bool: ...
     def size(self, key: str) -> int: ...
     def local_path(self, key: str) -> str: ...
+    def delete(self, key: str) -> bool:
+        """Remove one object; returns False when it was already gone."""
+        ...
 
 
 class LocalStorage:
@@ -87,6 +90,14 @@ class LocalStorage:
         if not os.path.isabs(key):
             path.parent.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+    def delete(self, key: str) -> bool:
+        path = self._read_path(key)
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
 
 
 _storage: Storage | None = None

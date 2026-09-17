@@ -454,3 +454,20 @@ async def test_file_list_shows_skill_name_and_searches_it(tmp_path, monkeypatch)
             body = (await c.get("/api/v1/files", params={"q": "gamma"})).json()
             assert body["total"] == 1
             assert body["data"][0]["skill_name"] == "ghost"
+
+
+async def test_advanced_publish_gated_until_wp4(tmp_path, monkeypatch):
+    """9.15 WP3: advanced-mode skills save fine but cannot be published until
+    the分类 runtime ships (route-level gate, removed in WP4)."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+      async with AsyncClient(transport=ASGITransport(app=app),
+                             base_url="http://test") as c:
+        pkg = SkillPackage(skill_code="gate_adv", name="高级门禁",
+                           fields=[FieldSpec(name="invoice_no")],
+                           skill_mode="advanced").model_dump()
+        r = await c.post("/api/v1/skills", json={"package": pkg})
+        assert r.status_code == 201, r.text
+        r = await c.post("/api/v1/skills/gate_adv/versions/1/publish")
+        assert r.status_code == 422
+        assert "高级提取运行时尚未上线" in r.json()["detail"]

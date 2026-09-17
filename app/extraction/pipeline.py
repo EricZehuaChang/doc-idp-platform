@@ -7,6 +7,7 @@ import re
 
 from app.config import load_providers
 from app.extraction import confidence as conf
+from app.extraction import formatting
 from app.extraction.provider_client import chat_json_with_fallback
 from app.extraction.validators import run_validators
 from app.parsers.base import UDR
@@ -232,7 +233,8 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         raw_val = raw.get(f.name)
         if f.type == "table":
             rows = raw_val if isinstance(raw_val, list) else []
-            result[f.name] = _locate_rows(rows, f, udr)
+            rows = _locate_rows(rows, f, udr)
+            result[f.name] = formatting.format_table_rows(rows, f)
             continue
         reasoning = None
         if f.mode == "inferred" and isinstance(raw_val, dict):
@@ -266,6 +268,19 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
             cell["$reasoning"] = reasoning or ""
         if f.name in rule_failures:
             cell["$rule_failures"] = rule_failures[f.name]
+        # 9.15 R11: format AFTER locating/scoring the raw value — formatting
+        # first would break `$bbox`/highlight lookup. Success adds `$raw`; a
+        # parse failure keeps the raw value, caps confidence at 1 (auto-review)
+        # and never fabricates a value.
+        formatted, fmt_err = formatting.format_value(f, value)
+        if fmt_err is None:
+            if formatted != value:
+                cell["$raw"] = value
+                cell["$value"] = formatted
+        else:
+            cell["$format_error"] = fmt_err
+            score = min(score, 1)
+            cell["$confidence"] = score
         result[f.name] = cell
         lowest = min(lowest, score)
 

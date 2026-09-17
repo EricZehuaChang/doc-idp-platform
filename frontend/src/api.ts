@@ -170,17 +170,50 @@ export interface TxnFile {
 }
 
 // —— Skill Studio types (mirror app/skillengine/schema.py) ——
+export interface FieldOutputFormat {
+  date_pattern: "YYYY-MM-DD" | "YYYY/MM/DD" | "YYYYMMDD" | "YYYY-MM-DD HH:mm:ss"
+    | "DD/MM/YYYY" | "MM/DD/YYYY" | null;
+  decimal_places: number | null;
+}
 export interface FieldSpec {
   name: string; type: string; instruction: string; mode: string; required: boolean;
   anchor_hints: string[]; enum_values: string[]; columns: FieldSpec[];
+  /** 9.15 R11: finite display format (dates/numbers) */
+  output_format?: FieldOutputFormat | null;
 }
 export interface ValidatorSpec {
   type: string; field?: string | null; pattern?: string | null;
   target?: string | null; parts: string[];
 }
+export interface SkillRef {
+  skill_code: string; version: number | null;
+}
+export interface CategorySpec {
+  id: string; doc_type: string; recognition_instruction: string;
+  is_other: boolean;
+  handler: "inline" | "existing_skill" | "classify_only";
+  fields: FieldSpec[];
+  validators: ValidatorSpec[];
+  additional_rules: string;
+  output_shape: "object" | "list";
+  skill_ref: SkillRef | null;
+}
+export interface OutputConfig {
+  enabled: boolean; action: "off" | "rename" | "split";
+  naming_rule: string; searchable_pdf: boolean;
+}
 export interface SkillPackage {
   skill_code: string; name: string; description: string; kind: string;
   doc_type_hint: string;
+  /** 9.15 DSL v2: absent on v1 rows until re-saved by the editor */
+  schema_version?: number;
+  processing_mode?: "balanced" | "fast";
+  skill_mode?: "standard" | "advanced";
+  document_layout?: "single" | "mixed" | "same_type_independent" | "same_type_continuous";
+  classification_rules?: string;
+  categories?: CategorySpec[];
+  output_shape?: "object" | "list";
+  output?: OutputConfig;
   system_prompt: string; fields: FieldSpec[];
   few_shot: { input_excerpt: string; expected_output: Record<string, unknown> }[];
   validators: ValidatorSpec[];
@@ -513,6 +546,27 @@ export const api = {
     f.append("kinds", kinds);
     return reqForm<DetectResult>("/api/v1/detect", f);
   },
+  // —— 9.15 WP3: skill studio samples + combined field generation ——
+  studioUploadSample: (file: File, skillCode?: string, onProgress?: never) => {
+    const f = new FormData();
+    f.append("file", file);
+    if (skillCode) f.append("skill_code", skillCode);
+    return reqForm<{ id: string; file_name: string; pages: {
+      page_no: number; width: number; height: number }[];
+      parse_error: string | null }>("/api/v1/studio/samples", f);
+  },
+  studioSamples: (skillCode?: string) =>
+    req<{ samples: { id: string; file_name: string; skill_code: string | null;
+                     created_at: string }[] }>(
+      "GET", `/api/v1/studio/samples${skillCode ? `?skill_code=${skillCode}` : ""}`),
+  studioDeleteSample: (id: string) => req("DELETE", `/api/v1/studio/samples/${id}`),
+  studioSampleFileUrl: (id: string) => `/api/v1/studio/samples/${id}/file`,
+  generateFields: (body: { sample_id?: string; description?: string;
+                           provider?: string }) =>
+    req<{ fields: FieldSpec[]; examples: Record<string, string>;
+          pages: { page_no: number; width: number; height: number }[];
+          provider_used: string }>("POST", "/api/v1/studio/generate-fields", body),
+
   // account (§11.8)
   login: (email: string, password: string) =>
     req<LoginResult>("POST", "/api/v1/auth/login", { email, password }),

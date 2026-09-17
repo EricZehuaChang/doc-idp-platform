@@ -41,6 +41,32 @@
                @input="draft.enum_values = split(($event.target as HTMLInputElement).value)" />
       </label>
 
+      <!-- 9.15 R11: finite display format for dates / numbers. The value is
+           formatted after confidence scoring; the raw reading stays in $raw. -->
+      <label v-if="draft.type === 'date'">输出格式
+        <select v-model="datePattern">
+          <option value="">保持原文写法</option>
+          <option value="YYYY-MM-DD">2026-09-17</option>
+          <option value="YYYY/MM/DD">2026/09/17</option>
+          <option value="YYYYMMDD">20260917</option>
+          <option value="YYYY-MM-DD HH:mm:ss">2026-09-17 14:30:00</option>
+          <option value="DD/MM/YYYY">17/09/2026</option>
+          <option value="MM/DD/YYYY">09/17/2026</option>
+        </select>
+        <span class="hint dim">解析失败时保留原文并标记低置信，进入人工复核</span>
+      </label>
+      <label v-if="draft.type === 'number'">小数位数
+        <select v-model.number="decimalPlaces">
+          <option :value="null">保持原值</option>
+          <option :value="0">0 位（整数）</option>
+          <option :value="1">1 位</option>
+          <option :value="2">2 位（金额常用）</option>
+          <option :value="3">3 位</option>
+          <option :value="4">4 位</option>
+        </select>
+        <span class="hint dim">按四舍五入（ROUND_HALF_UP）量化，货币符号与千分位自动去除</span>
+      </label>
+
       <label>位置提示
         <input :value="draft.anchor_hints.join(',')" placeholder="例如：右上角、页脚"
                @input="draft.anchor_hints = split(($event.target as HTMLInputElement).value)" />
@@ -60,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive } from "vue";
+import { computed, reactive } from "vue";
 import type { FieldSpec } from "../api";
 
 const props = defineProps<{ field: FieldSpec; isNew: boolean; isColumn: boolean }>();
@@ -72,9 +98,25 @@ const draft = reactive<FieldSpec>(JSON.parse(JSON.stringify(props.field)));
 const split = (v: string) =>
   v.replace(/，/g, ",").split(",").map((s) => s.trim()).filter(Boolean);
 
+const datePattern = computed<string>({
+  get: () => draft.output_format?.date_pattern ?? "",
+  set: (v) => {
+    if (!v) draft.output_format = null;
+    else draft.output_format = { date_pattern: v as never, decimal_places: null };
+  },
+});
+const decimalPlaces = computed<number | null>({
+  get: () => draft.output_format?.decimal_places ?? null,
+  set: (v) => {
+    if (v === null || v === undefined) draft.output_format = null;
+    else draft.output_format = { date_pattern: null, decimal_places: v };
+  },
+});
+
 function save() {
   if (draft.type !== "table") draft.columns = [];
   if (draft.type !== "enum") draft.enum_values = [];
+  if (draft.type !== "date" && draft.type !== "number") draft.output_format = null;
   emit("save", JSON.parse(JSON.stringify(draft)));
 }
 </script>

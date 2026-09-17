@@ -31,6 +31,20 @@ def _mode_note(f: FieldSpec) -> str:
             else "（原文字段：值必须来自文档原文，绝不编造）")
 
 
+def _format_note(f: FieldSpec) -> str:
+    """9.15 R11: finite display-format hint appended to the field definition
+    line. Fields without output_format keep their old wording byte-for-byte
+    (v1 prompt snapshots must not drift)."""
+    of = f.output_format
+    if of is None:
+        return ""
+    if f.type == "date" and of.date_pattern:
+        return f" 输出格式：{of.date_pattern}"
+    if f.type == "number" and of.decimal_places is not None:
+        return f" 保留 {of.decimal_places} 位小数"
+    return ""
+
+
 def _spec_line(f: FieldSpec, bullet: str, indent: str) -> str:
     """One field/column definition line. Columns render through the same path as
     scalars so a column never silently carries less than the author wrote."""
@@ -41,7 +55,8 @@ def _spec_line(f: FieldSpec, bullet: str, indent: str) -> str:
         head = f"{f.name}: 枚举，只能取 {f.enum_values}。"
     else:
         head = f"{f.name}: {f.type}。"
-    return f"{indent}{bullet} {head}{_mode_note(f)}{required}{rule}{anchors}"
+    return (f"{indent}{bullet} {head}{_mode_note(f)}{required}"
+            f"{_format_note(f)}{rule}{anchors}")
 
 
 def _field_lines(fields: list[FieldSpec]) -> str:

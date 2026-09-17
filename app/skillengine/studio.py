@@ -320,3 +320,47 @@ def fields_from_table(rows: list[list]) -> list[FieldSpec]:
             fields.append(spec)
             by_name[name] = spec
     return fields
+
+# —— 9.15 WP3: sample pre-annotation + description, one combined draft ———
+
+_GENERATE_PROMPT = (
+    "你是文档抽取技能设计专家。给你一份文档样本（文本摘录）和用户对所需字段的描述。\n"
+    "任务：起草字段清单。规则：\n"
+    "1) 字段范围以用户描述为准：描述里提到的每个字段都必须出现；"
+    "描述没提但样本里明显存在且对理解该类单据必要的字段可少量补充（不超过 3 个）。\n"
+    "2) 字段名、类型和示例值参考样本：name 用样本中的实际写法（英文键名或原文标签），"
+    "type 从 string/number/date/enum/table 里选，example_value 从样本原文摘录。\n"
+    "3) 需要判断/推导的字段 mode=inferred；重复行明细归为一个 table 字段并给出 columns。\n"
+    "4) generated datetime 统一映射为 date 类型并在说明里写明包含时间。\n"
+    "输出 JSON：{\"fields\": [{\"name\": \"\", \"type\": \"string\", "
+    "\"instruction\": \"抽取说明（保留用户原话中的规则）\", \"mode\": \"verbatim\", "
+    "\"required\": false, \"example_value\": \"\", "
+    "\"columns\": [{\"name\": \"仅table类型填\", \"instruction\": \"\"}]}]}。"
+    "只输出 JSON。"
+)
+
+
+def generate_fields(sample_text: str, description: str,
+                    provider: str | None = None, transport=None) -> dict:
+    """样本预标注 + 描述生成 二合一 (R05/图13): description governs the field
+    scope; the sample governs names, types and example values. Returns a draft
+    (never persisted)."""
+    parts = []
+    if description.strip():
+        parts.append("## 用户描述\n" + description.strip()[:4000])
+    if sample_text.strip():
+        parts.append("## 文档样本摘录\n" + sample_text.strip()[:8000])
+    raw, usage, used = chat_json_with_fallback(
+        [{"role": "system", "content": _GENERATE_PROMPT},
+         {"role": "user", "content": "\n\n".join(parts)}],
+        _studio_chain(provider), transport=transport)
+    draft = raw if isinstance(raw, dict) else {}
+    fields = draft_to_fields(draft.get("fields") if isinstance(draft, dict) else [])
+    examples = {}
+    for f in (draft.get("fields") or []):
+        if isinstance(f, dict) and f.get("name"):
+            ev = f.get("example_value")
+            if ev not in (None, ""):
+                examples[str(f["name"])] = str(ev)
+    return {"fields": fields, "examples": examples, "doc_type": "",
+            "usage": usage, "provider_used": used}

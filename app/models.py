@@ -291,3 +291,17 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(100))
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class StudioSample(Base):
+    """Editor sample uploads (9.15 WP3, §3.4): tenant-scoped helper files for
+    the field-design stage — NOT production documents. Lifecycle is separate
+    from originals; scripts/cleanup_studio_samples.py prunes old rows."""
+    __tablename__ = "studio_samples"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    skill_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    uploader_id: Mapped[str] = mapped_column(String(32))
+    file_name: Mapped[str] = mapped_column(String(500))    # display only
+    storage_key: Mapped[str] = mapped_column(String(1000))  # content-hash key
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

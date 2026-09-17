@@ -1,274 +1,360 @@
 <template>
-  <main class="editor" :class="{ 'no-rail': isNew }" v-if="pkg">
-    <!-- left rail: version history (Insavlo editor layout) -->
-    <aside v-if="!isNew" class="ver-rail">
-      <div class="rail-head">版本历史</div>
-      <button class="new-ver" @click="newVersion">＋ 新建版本</button>
-      <div class="ver-list">
-        <div v-for="v in [...versions].reverse()" :key="v.version" class="ver-card"
-             :class="{ current: v.version === selectedVersion }"
-             @click="selectVersion(v.version)">
-          <div class="ver-row">
-            <strong>v{{ v.version }}</strong>
-            <span class="chip" :class="`chip-${v.status}`">{{ verLabel(v.status) }}</span>
-          </div>
-          <span class="dim ver-date">{{ shortDate(v.created_at) }}</span>
-          <!-- each version carries its own note; showing it here is what makes
-               "介绍不见了" diagnosable instead of mysterious (P05) -->
-          <p v-if="v.changelog" class="ver-note-line" :title="v.changelog">{{ v.changelog }}</p>
-        </div>
-      </div>
-    </aside>
-
-    <!-- main column -->
+  <main class="editor" v-if="pkg">
+    <!-- 9.15 WP3 shell: top bar (identity + version menu + actions) above a
+         设计/测试 tab pair; the left version rail became a dropdown menu -->
     <div class="main-col">
       <div class="toolbar">
+        <router-link to="/skills" class="back" title="返回技能列表">‹</router-link>
         <div class="ident">
           <h1>{{ pkg.name || pkg.skill_code || "新技能" }}</h1>
-          <span class="dim code-line">技能代码：{{ pkg.skill_code || "（保存时确定）" }}</span>
+          <span class="dim code-line">
+            {{ pkg.skill_code || "（保存时确定）" }}
+            <button v-if="pkg.skill_code" class="copy" title="复制技能代码"
+                    @click="copyCode">{{ copied ? "✓" : "⧉" }}</button>
+          </span>
         </div>
+
+        <!-- version dropdown replaces the old left rail (图02/03) -->
+        <details v-if="!isNew" class="ver-menu" @close="">
+          <summary class="ver-chip">
+            v{{ selectedVersion ?? "—" }}
+            <span class="chip" :class="`chip-${selectedStatus}`">{{ verLabel(selectedStatus ?? "") }}</span>
+            ▾
+          </summary>
+          <div class="ver-pop">
+            <button class="new-ver" @click="newVersion">＋ 新建版本</button>
+            <div v-for="v in [...versions].reverse()" :key="v.version" class="ver-card"
+                 :class="{ current: v.version === selectedVersion }"
+                 @click="selectVersion(v.version)">
+              <div class="ver-row">
+                <strong>v{{ v.version }}</strong>
+                <span class="chip" :class="`chip-${v.status}`">{{ verLabel(v.status) }}</span>
+              </div>
+              <span class="dim ver-date">{{ shortDate(v.created_at) }}</span>
+              <p v-if="v.changelog" class="ver-note-line" :title="v.changelog">{{ v.changelog }}</p>
+            </div>
+          </div>
+        </details>
+
+        <div class="tabs">
+          <button :class="{ on: tab === 'design' }" @click="tab = 'design'">设计</button>
+          <button :class="{ on: tab === 'test' }" @click="tab = 'test'">测试</button>
+        </div>
+
         <div class="acts">
+          <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
+            导出</button>
+          <details class="more-menu">
+            <summary>更多</summary>
+            <div class="more-pop">
+              <button @click="apiModal = true">🔌 API 接入</button>
+              <button @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
+                导出 YAML</button>
+              <button v-if="!isNew && versions.length > 1" class="danger"
+                      :disabled="selectedStatus === 'published'"
+                      :title="selectedStatus === 'published'
+                              ? '当前发布版本不可删除——提交都按它跑'
+                              : '只删除当前这一个版本'"
+                      @click="removeVersion">删除当前版本</button>
+            </div>
+          </details>
           <button class="primary" :disabled="saving" @click="save">
             💾 {{ isNew ? "创建技能" : saveLabel }}</button>
           <button v-if="!isNew && selectedStatus === 'draft'" class="confirm"
                   @click="publishSelected">🚀 发布</button>
-          <button v-if="!isNew" @click="apiModal = true">🔌 API 接入</button>
-          <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
-            导出 YAML</button>
-          <button v-if="!isNew && versions.length > 1" class="danger"
-                  :disabled="selectedStatus === 'published'"
-                  :title="selectedStatus === 'published'
-                          ? '当前发布版本不可删除——提交都按它跑；请先发布其它版本'
-                          : '只删除当前这一个版本，技能与其它版本不受影响'"
-                  @click="removeVersion">删除当前版本</button>
-          <!-- 9.15 R18: 「删除技能」入口已从编辑器移除——技能级删除统一走
-               技能列表行上的「⋯」菜单，避免编辑器里两个危险按钮并排 -->
-          <router-link to="/skills"><button class="ghost">‹ 返回技能列表</button></router-link>
         </div>
       </div>
       <p v-if="!isNew && selectedStatus === 'draft'" class="ver-note dim">
-        当前编辑 v{{ selectedVersion }}（草稿）——点「保存」原地更新本草稿，不会新增版本；
-        要留存快照请点左侧「＋ 新建版本」。
-      </p>
+        当前编辑 v{{ selectedVersion }}（草稿）——「保存」原地更新本草稿；
+        要留存快照请用版本菜单「＋ 新建版本」。</p>
       <p v-else-if="!isNew && selectedStatus" class="ver-note dim">
         当前查看 v{{ selectedVersion }}（{{ verLabel(selectedStatus) }}）——已发布版本不可改，
-        点「另存为新草稿」将以此为底新建一个草稿版本。
-      </p>
+        「另存为新草稿」将以此为底新建草稿版本。</p>
 
-      <!-- guidance for a blank new skill -->
-      <div v-if="isNew && !pkg.fields.length" class="guide card-panel">
-        <span class="step"><b>1</b> 起草字段：样本预标注 / 自然语言描述 / 表格清单</span>
-        <span class="arrow">→</span>
-        <span class="step"><b>2</b> 逐字段核对修改（点 ✎ 编辑）</span>
-        <span class="arrow">→</span>
-        <span class="step"><b>3</b> 试跑验证，创建并发布</span>
-      </div>
-
-      <!-- basic info -->
-      <section class="card-panel block">
-        <h3 class="block-title">基本信息</h3>
-        <div class="basic-grid">
-          <label>技能名称
-            <input v-model="pkg.name" placeholder="例如：XCMG 海外发票" /></label>
-          <label>skill_code（英文，创建后不可改）
-            <input v-model="pkg.skill_code" class="mono" :disabled="!isNew" /></label>
-          <label class="span2">描述
-            <textarea v-model="pkg.description" rows="2"
-                      placeholder="这个技能处理什么文档、服务什么业务（给同事看的说明）"></textarea>
-          </label>
-          <!-- version note lives on the SkillVersion row, not in the package:
-               it answers "这一版改了什么", per version, and never leaks across
-               versions (P05) -->
-          <label v-if="!isNew" class="span2">版本介绍（v{{ selectedVersion }} 的说明）
-            <input v-model="changelog"
-                   placeholder="这一版改了什么，例如：新增税额字段、放宽发票号正则" />
-          </label>
-          <label>审核模式（Needs Review Mode）
-            <select v-model="pkg.review_policy.mode">
-              <option value="auto">低置信进人审（Review on Low Confidence）</option>
-              <option value="always">全部人审</option>
-              <option value="never">全部直通</option>
-            </select></label>
-          <label>置信阈值（低于则人审）
-            <select v-model.number="pkg.review_policy.confidence_threshold">
-              <option :value="1">1</option><option :value="2">2</option><option :value="3">3</option>
-            </select></label>
-        </div>
-      </section>
-
-      <!-- field configuration: hierarchical cards, modal editing -->
-      <section class="card-panel block">
-        <div class="block-head">
-          <h3 class="block-title">字段配置</h3>
-          <label class="file-btn slim">
-            <input type="file" hidden @change="probe" :disabled="probing" />
-            <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
-          </label>
-          <button class="mini" :class="{ primary: textPanel }"
-                  @click="textPanel = !textPanel">📝 描述生成</button>
-          <label class="file-btn slim">
-            <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
-            <span class="btn-like">📊 表格导入</span>
-          </label>
-          <button v-if="pkg.fields.length" class="mini" :disabled="enriching"
-                  title="让大模型把字段说明扩写为 关键词→清洗规则→输出格式 的完整抽取指令"
-                  @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
+      <!-- —— 设计 tab —— -->
+      <template v-if="tab === 'design'">
+        <div v-if="isNew && !pkg.fields.length" class="guide card-panel">
+          <span class="step"><b>1</b> 自动生成或起草字段</span>
+          <span class="arrow">→</span>
+          <span class="step"><b>2</b> 逐字段核对修改（点 ✎ 编辑）</span>
+          <span class="arrow">→</span>
+          <span class="step"><b>3</b> 测试页签试跑，创建并发布</span>
         </div>
 
-        <div v-if="textPanel" class="text-panel">
-          <textarea v-model="draftText" rows="4"
-                    placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）、明细行（品名/数量/单价/金额），并判断是否为红字发票。"></textarea>
-          <div class="text-panel-act">
-            <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
-            <button class="primary" :disabled="drafting || !draftText.trim()"
-                    @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
-          </div>
-        </div>
+        <div class="design-body">
+          <!-- flow rail: 基础 → (文档分类) → 字段提取 → 文件产出 -->
+          <nav class="flow-rail" aria-label="设计步骤">
+            <button v-for="n in flowNodes" :key="n.key" class="node"
+                    :class="{ on: step === n.key, bad: n.bad,
+                              pending: n.key === 'classify' }"
+                    :disabled="n.key === 'classify'"
+                    :title="n.key === 'classify'
+                            ? '分类配置界面随高级提取批次开放' : ''"
+                    @click="goto(n.key)">
+              <span class="dot"></span>
+              <span class="lbl">{{ n.label }}</span>
+              <span class="sub dim">{{ n.sub }}</span>
+            </button>
+          </nav>
 
-        <p v-if="!pkg.fields.length" class="dim pad">
-          还没有字段。用上方三种方式起草，或点下方「＋ 添加字段」手动创建。
-        </p>
-        <p v-if="pkg.fields.length > 1" class="dim drag-tip">
-          拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
-        </p>
-        <div class="field-tree" ref="treeEl">
-          <FieldCard v-for="(f, i) in pkg.fields" :key="f.name || i" :field="f" :index="i"
-                     :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
-                     @edit="openEdit(pkg!.fields, i)"
-                     @remove="pkg!.fields.splice(i, 1)"
-                     @edit-column="(ci) => openEdit(f.columns, ci, true)"
-                     @add-column="openAdd(f.columns, true)"
-                     @grip-down="startFieldDrag" />
-          <button class="add-field" @click="openAdd(pkg!.fields)">＋ 添加字段</button>
-        </div>
-      </section>
-
-      <!-- model binding / parser / extra rules -->
-      <section class="card-panel block">
-        <h3 class="block-title">模型与解析</h3>
-        <!-- Model and parser fields are comboboxes: pick a configured channel
-             from the list, or type any name by hand — private deployments run
-             channels this console has never heard of (self-hosted vLLM, a
-             customer's internal gateway), so a closed <select> would lock them
-             out. The lists come from the server's own config, never hardcoded. -->
-        <datalist id="dl-providers">
-          <option v-for="p in providerOptions" :key="p.name" :value="p.name"
-                  :label="`${p.name} · ${p.model}${p.active ? '（平台默认）' : ''}${p.custom ? '（自定义）' : ''}${p.vision ? '・支持图像' : ''}`" />
-        </datalist>
-        <datalist id="dl-parsers">
-          <option v-for="p in parserOptions" :key="p.name" :value="p.name"
-                  :label="p.description ? `${p.name} — ${p.description}` : p.name" />
-        </datalist>
-        <div class="basic-grid">
-          <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
-            <input v-model="pkg.model_binding.extractor" list="dl-providers"
-                   placeholder="下拉选择或直接输入，如 qwen"
-                   @focus="comboOpen" @input="comboTyped" @blur="comboClose" /></label>
-          <label>备用模型（fallback）
-            <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
-                   placeholder="可空；下拉选择或直接输入"
-                   @focus="comboOpen" @blur="comboClose"
-                   @input="comboTyped($event); pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
-          <label>挑战者模型（不一致标人审）
-            <input :value="pkg.model_binding.challenger ?? ''" list="dl-providers"
-                   placeholder="可空；下拉选择或直接输入"
-                   @focus="comboOpen" @blur="comboClose"
-                   @input="comboTyped($event); pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
-          <label>解析器（空=自动路由）
-            <input :value="pkg.parser ?? ''" list="dl-parsers"
-                   placeholder="自动；下拉选择或直接输入"
-                   @focus="comboOpen" @blur="comboClose"
-                   @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
-          <p class="span2 dim combo-note">
-            模型与解析器均支持下拉选择或手动输入；手动输入的名称需在服务端
-            <code>configs/providers.yaml</code> / <code>configs/parsers.yaml</code> 中存在才会生效。
-          </p>
-          <label class="span2">附加规则（自由文本，进提示词）
-            <textarea v-model="pkg.additional_rules" rows="2"
-                      placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea></label>
-        </div>
-      </section>
-    </div>
-
-    <!-- right rail: studio tools -->
-    <aside class="studio-rail">
-      <section class="card-panel s-block">
-        <h3 class="block-title">试运行（dry-run）</h3>
-        <p class="dim">当前定义在一份样本上试跑，可多模型并排对比。</p>
-        <input v-model="dryProviders" list="dl-providers"
-               placeholder="模型列表，逗号分隔；空=默认" />
-        <label class="file-btn"><input type="file" hidden @change="dryRun" :disabled="running" />
-          <span class="btn-like">{{ running ? "⏳ 试跑中…" : "上传样本试跑" }}</span></label>
-        <div v-if="dryRuns.length" class="runs">
-          <div v-for="r in dryRuns" :key="r.provider" class="run">
-            <div class="run-head">
-              <strong>{{ r.provider }}</strong>
-              <span v-if="r.ok && r.vision_pages" class="vis" title="本次调用附带了原件页面图">
-                🖼 {{ r.vision_pages }} 页图</span>
-              <span v-if="r.ok" class="dim">
-                {{ r.usage?.prompt_tokens }}+{{ r.usage?.completion_tokens }} tokens</span>
-              <span v-else class="rulefail">{{ r.error }}</span>
+          <!-- —— 基础 —— -->
+          <section v-show="step === 'basic'" class="card-panel block step-panel">
+            <h3 class="block-title">基本信息</h3>
+            <div class="basic-grid">
+              <label>技能名称
+                <input v-model="pkg.name" placeholder="例如：XCMG 海外发票" /></label>
+              <label>skill_code（英文，创建后不可改）
+                <input v-model="pkg.skill_code" class="mono" :disabled="!isNew" /></label>
+              <label class="span2">描述
+                <textarea v-model="pkg.description" rows="2"
+                          placeholder="这个技能处理什么文档、服务什么业务（给同事看的说明）"></textarea>
+              </label>
+              <label v-if="!isNew" class="span2">版本介绍（v{{ selectedVersion }} 的说明）
+                <input v-model="changelog"
+                       placeholder="这一版改了什么，例如：新增税额字段、放宽发票号正则" />
+              </label>
             </div>
-            <p v-if="r.note" class="dim run-note">{{ r.note }}</p>
-            <table v-if="r.ok && r.result">
-              <tbody>
-                <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
-                  <td class="dim">{{ name }}</td>
-                  <td>{{ cell.$value || "—" }}</td>
-                  <td><span class="conf">c{{ cell.$confidence }}</span></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
 
-      <section v-if="!isNew" class="card-panel s-block">
-        <h3 class="block-title">金样本回归（发布门禁）</h3>
-        <p class="dim">挂固定样本＋期望值，发布前跑回归防退化。</p>
-        <label class="file-btn"><input type="file" hidden @change="pickGolden" />
-          <span class="btn-like">{{ goldenFile ? goldenFile.name : "选择样本文件" }}</span></label>
-        <textarea v-model="goldenExpected" rows="3"
-                  placeholder='期望值 JSON，如 {"invoice_no": "INV-1"}'></textarea>
-        <button :disabled="!goldenFile" @click="addGolden">挂载金样本</button>
-        <button v-if="selectedVersion" @click="goldenCheck" :disabled="checking">
-          {{ checking ? "⏳ 回归中…" : `对 v${selectedVersion} 跑回归` }}</button>
-        <div v-if="goldenReport" class="golden-report">
-          <template v-if="goldenReport.samples === 0">
-            <p class="dim">{{ goldenReport.note }}</p>
-          </template>
-          <template v-else>
-            <p><strong>{{ goldenReport.samples }}</strong> 个样本，平均匹配率
-              <strong :class="{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }">
-                {{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></p>
-            <div v-for="(rep, i) in goldenReport.reports" :key="i" class="rep">
-              <template v-if="rep.ok">
-                <span class="dim">样本 {{ i + 1 }}：匹配 {{ Math.round((rep.match_rate ?? 0) * 100) }}%</span>
-                <div v-for="(d, fname) in rep.diffs" :key="fname" class="rulefail">
-                  {{ fname }}: 期望「{{ d.expected }}」→ 实得「{{ d.got }}」</div>
+            <h4 class="sub-title">人工复核模式</h4>
+            <div class="cards">
+              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'never' }"
+                      @click="pkg.review_policy.mode = 'never'">
+                <strong>无需人工复核</strong>
+                <span class="dim">识别结果直接通过，不停留审单</span></button>
+              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'auto' }"
+                      @click="pkg.review_policy.mode = 'auto'">
+                <strong>低置信度时复核</strong>
+                <span class="dim">低于阈值的字段进入审单</span></button>
+              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'always' }"
+                      @click="pkg.review_policy.mode = 'always'">
+                <strong>始终需要复核</strong>
+                <span class="dim">每份文档都进审单</span></button>
+            </div>
+            <label v-if="pkg.review_policy.mode === 'auto'" class="thr">
+              置信阈值（低于则人审）
+              <select v-model.number="pkg.review_policy.confidence_threshold">
+                <option :value="1">1</option><option :value="2">2</option>
+                <option :value="3">3</option>
+              </select></label>
+
+            <h4 class="sub-title">技能模式</h4>
+            <div class="cards">
+              <button class="mode-card" :class="{ on: pkg.skill_mode !== 'advanced' }"
+                      @click="pkg.skill_mode = 'standard'">
+                <strong>标准</strong>
+                <span class="dim">一份文档、一组字段，适合大多数单据</span></button>
+              <button class="mode-card" :class="{ on: pkg.skill_mode === 'advanced' }"
+                      @click="pkg.skill_mode = 'advanced'">
+                <strong>高级</strong>
+                <span class="dim">一份文件多种单据，先分类再提取</span></button>
+            </div>
+            <p v-if="pkg.skill_mode === 'advanced'" class="dim adv-note">
+              「文档分类」步骤（类别、识别说明、引用已有技能）随高级提取批次开放；
+              当前保存会保留技能模式标记，发布前需要完成分类配置。</p>
+
+            <details class="adv-settings">
+              <summary>高级设置（抽取模型、备用模型、挑战者模型、解析器）</summary>
+              <div class="basic-grid">
+                <datalist id="dl-providers">
+                  <option v-for="p in providerOptions" :key="p.name" :value="p.name"
+                          :label="`${p.name} · ${p.model}${p.active ? '（平台默认）' : ''}${p.custom ? '（自定义）' : ''}${p.vision ? '・支持图像' : ''}`" />
+                </datalist>
+                <datalist id="dl-parsers">
+                  <option v-for="p in parserOptions" :key="p.name" :value="p.name"
+                          :label="p.description ? `${p.name} — ${p.description}` : p.name" />
+                </datalist>
+                <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
+                  <input v-model="pkg.model_binding.extractor" list="dl-providers"
+                         placeholder="下拉选择或直接输入，如 qwen"
+                         @focus="comboOpen" @input="comboTyped" @blur="comboClose" /></label>
+                <label>备用模型（fallback）
+                  <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
+                         placeholder="可空；下拉选择或直接输入"
+                         @focus="comboOpen" @blur="comboClose"
+                         @input="comboTyped($event); pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
+                <label>挑战者模型（不一致标人审）
+                  <input :value="pkg.model_binding.challenger ?? ''" list="dl-providers"
+                         placeholder="可空；下拉选择或直接输入"
+                         @focus="comboOpen" @blur="comboClose"
+                         @input="comboTyped($event); pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
+                <label>解析器（空=自动路由）
+                  <input :value="pkg.parser ?? ''" list="dl-parsers"
+                         placeholder="自动；下拉选择或直接输入"
+                         @focus="comboOpen" @blur="comboClose"
+                         @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
+              </div>
+            </details>
+          </section>
+
+          <!-- —— 字段提取 —— -->
+          <section v-show="step === 'fields'" class="card-panel block step-panel fields-step">
+            <SamplePanel :skill-code="code" class="sample-col" />
+            <div class="fields-col">
+              <div class="block-head">
+                <h3 class="block-title">字段配置</h3>
+                <div class="seg" role="group" aria-label="输出结构">
+                  <button :class="{ on: pkg.output_shape !== 'list' }"
+                          title="每个字段一个键（默认）"
+                          @click="pkg.output_shape = 'object'">Object</button>
+                  <button :class="{ on: pkg.output_shape === 'list' }"
+                          title="结果为对象数组，每行一组字段（如逐行明细）"
+                          @click="pkg.output_shape = 'list'">List</button>
+                </div>
+                <button class="mini" :disabled="!undoStack.length"
+                        title="撤销上一次自动生成/起草的结果"
+                        @click="undoGenerate">↩ 撤销上次生成</button>
+                <button class="mini primary" @click="genModal = true">✨ 自动生成字段</button>
+                <details class="more-draft">
+                  <summary class="mini btn-like">更多起草方式 ▾</summary>
+                  <div class="more-pop">
+                    <label class="file-btn slim">
+                      <input type="file" hidden @change="probe" :disabled="probing" />
+                      <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
+                    </label>
+                    <button class="mini" :class="{ primary: textPanel }"
+                            @click="textPanel = !textPanel">📝 描述生成</button>
+                    <label class="file-btn slim">
+                      <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
+                      <span class="btn-like">📊 表格导入</span>
+                    </label>
+                    <button class="mini" :disabled="!pkg.fields.length || enriching"
+                            title="把字段说明扩写为完整抽取指令"
+                            @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
+                  </div>
+                </details>
+                <button v-if="pkg.fields.length" class="mini danger"
+                        @click="clearFields">清空全部字段</button>
+              </div>
+
+              <div v-if="textPanel" class="text-panel">
+                <textarea v-model="draftText" rows="4"
+                          placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）…"></textarea>
+                <div class="text-panel-act">
+                  <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
+                  <button class="primary" :disabled="drafting || !draftText.trim()"
+                          @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
+                </div>
+              </div>
+
+              <p v-if="!pkg.fields.length" class="dim pad">
+                还没有字段。用「✨ 自动生成字段」从样本/描述起草，或「＋ 添加字段」手动创建。
+              </p>
+              <p v-if="pkg.fields.length > 1" class="dim drag-tip">
+                拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
+              </p>
+              <div class="field-tree" ref="treeEl">
+                <FieldCard v-for="(f, i) in pkg.fields" :key="f.name || i" :field="f" :index="i"
+                           :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
+                           @edit="openEdit(pkg!.fields, i)"
+                           @remove="pkg!.fields.splice(i, 1)"
+                           @edit-column="(ci) => openEdit(f.columns, ci, true)"
+                           @add-column="openAdd(f.columns, true)"
+                           @grip-down="startFieldDrag" />
+                <button class="add-field" @click="openAdd(pkg!.fields)">＋ 添加字段</button>
+              </div>
+
+              <details class="rules-fold">
+                <summary>附加规则（可选，自由文本，进提示词）</summary>
+                <textarea v-model="pkg.additional_rules" rows="2"
+                          placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea>
+              </details>
+            </div>
+          </section>
+
+          <!-- —— 文件产出（WP6 上线前保持诚实占位） —— -->
+          <section v-show="step === 'output'" class="card-panel block step-panel">
+            <h3 class="block-title">文件产出</h3>
+            <p class="dim">
+              产出文件（按命名规则重命名、按文档拆分、可检索 PDF）随「文件产出」批次开放，
+              当前版本一律不改变上传原件。已配置的下载开关不会丢失。</p>
+          </section>
+        </div>
+      </template>
+
+      <!-- —— 测试 tab：试运行 + 金样本回归（Playground 将在极速模式批次替换试运行） —— -->
+      <template v-else>
+        <div class="test-grid">
+          <section class="card-panel block">
+            <h3 class="block-title">试运行（dry-run）</h3>
+            <p class="dim">当前定义在一份样本上试跑，可多模型并排对比。</p>
+            <input v-model="dryProviders" list="dl-providers"
+                   placeholder="模型列表，逗号分隔；空=默认" />
+            <label class="file-btn"><input type="file" hidden @change="dryRun" :disabled="running" />
+              <span class="btn-like">{{ running ? "⏳ 试跑中…" : "上传样本试跑" }}</span></label>
+            <div v-if="dryRuns.length" class="runs">
+              <div v-for="r in dryRuns" :key="r.provider" class="run">
+                <div class="run-head">
+                  <strong>{{ r.provider }}</strong>
+                  <span v-if="r.ok && r.vision_pages" class="vis">🖼 {{ r.vision_pages }} 页图</span>
+                  <span v-if="r.ok" class="dim">
+                    {{ r.usage?.prompt_tokens }}+{{ r.usage?.completion_tokens }} tokens</span>
+                  <span v-else class="rulefail">{{ r.error }}</span>
+                </div>
+                <table v-if="r.ok && r.result">
+                  <tbody>
+                    <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
+                      <td class="dim">{{ name }}</td>
+                      <td>{{ cell.$value || "—" }}</td>
+                      <td><span class="conf">c{{ cell.$confidence }}</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="!isNew" class="card-panel block">
+            <h3 class="block-title">金样本回归（发布门禁）</h3>
+            <p class="dim">挂固定样本＋期望值，发布前跑回归防退化。</p>
+            <label class="file-btn"><input type="file" hidden @change="pickGolden" />
+              <span class="btn-like">{{ goldenFile ? goldenFile.name : "选择样本文件" }}</span></label>
+            <textarea v-model="goldenExpected" rows="3"
+                      placeholder='期望值 JSON，如 {"invoice_no": "INV-1"}'></textarea>
+            <button :disabled="!goldenFile" @click="addGolden">挂载金样本</button>
+            <button v-if="selectedVersion" @click="goldenCheck" :disabled="checking">
+              {{ checking ? "⏳ 回归中…" : `对 v${selectedVersion} 跑回归` }}</button>
+            <div v-if="goldenReport" class="golden-report">
+              <template v-if="goldenReport.samples === 0">
+                <p class="dim">{{ goldenReport.note }}</p>
               </template>
-              <span v-else class="rulefail">样本 {{ i + 1 }}：{{ rep.error }}</span>
+              <template v-else>
+                <p><strong>{{ goldenReport.samples }}</strong> 个样本，平均匹配率
+                  <strong :class="{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }">
+                    {{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></p>
+                <div v-for="(rep, i) in goldenReport.reports" :key="i" class="rep">
+                  <template v-if="rep.ok">
+                    <span class="dim">样本 {{ i + 1 }}：匹配 {{ Math.round((rep.match_rate ?? 0) * 100) }}%</span>
+                    <div v-for="(d, fname) in rep.diffs" :key="fname" class="rulefail">
+                      {{ fname }}: 期望「{{ d.expected }}」→ 实得「{{ d.got }}」</div>
+                  </template>
+                  <span v-else class="rulefail">样本 {{ i + 1 }}：{{ rep.error }}</span>
+                </div>
+              </template>
             </div>
-          </template>
+          </section>
         </div>
-      </section>
-    </aside>
+      </template>
+    </div>
 
     <FieldEditModal v-if="editing" :field="editing.spec" :is-new="editing.isNew"
                     :is-column="editing.isColumn"
                     @save="commitEdit" @cancel="editing = null" />
     <SkillApiModal v-if="apiModal" :skill-code="code" @close="apiModal = false" />
+    <GenerateFieldsModal v-if="genModal" :skill-code="code"
+                         @apply="applyGenerated" @close="genModal = false" />
   </main>
   <main v-else class="editor"><Skeleton :rows="8" /></main>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type DryRunEntry, type FieldCell, type FieldSpec,
          type SkillPackage } from "../api";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
+import GenerateFieldsModal from "../components/GenerateFieldsModal.vue";
+import SamplePanel from "../components/SamplePanel.vue";
 import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { VERSION_LABELS } from "../labels";
@@ -279,8 +365,7 @@ const props = defineProps<{ code: string }>();
 const router = useRouter();
 const isNew = computed(() => props.code === "new");
 
-// provider/parser catalogue from the server — the editor no longer keeps its
-// own copy (the hardcoded list had drifted from configs/parsers.yaml)
+// provider/parser catalogue from the server (never hardcoded)
 const providerOptions = ref<{ name: string; model: string; active: boolean;
                               custom: boolean; vision: boolean }[]>([]);
 const parserOptions = ref<{ name: string; type: string; description: string | null }[]>([]);
@@ -298,12 +383,19 @@ const apiModal = ref(false);
 const selectedStatus = computed(() =>
   versions.value.find((v) => v.version === selectedVersion.value)?.status ?? null);
 
+// —— WP3 editor state ——
+const tab = ref<"design" | "test">("design");
+const step = ref<"basic" | "fields" | "output">("basic");
+const genModal = ref(false);
+const undoStack = ref<FieldSpec[][]>([]);   // one-shot undo for generation merges
+
 function blankPkg(): SkillPackage {
   return { skill_code: "", name: "", description: "", kind: "extract", doc_type_hint: "",
            system_prompt: "", fields: [], few_shot: [], validators: [],
            review_policy: { mode: "auto", confidence_threshold: 2 },
            model_binding: { extractor: "", fallback: null, challenger: null },
-           parser: null, additional_rules: "" };
+           parser: null, additional_rules: "",
+           schema_version: 2, skill_mode: "standard", output_shape: "object" };
 }
 function blankField(name = ""): FieldSpec {
   return { name, type: "string", instruction: "", mode: "verbatim", required: false,
@@ -325,17 +417,69 @@ async function load(version?: number) {
     const d = await api.skillDetail(props.code, version);
     pkg.value = { ...blankPkg(), ...(d.latest_package ?? {}),
                   skill_code: d.skill_code, name: d.latest_package?.name || d.name };
+    // the detail dump of a v1 row fills schema_version with the Loose default 1;
+    // the editor always works on (and saves) a v2 working copy — §5.2, the
+    // editor is the in-place migration path
+    pkg.value.schema_version = 2;
     versions.value = d.versions;
     selectedVersion.value = d.selected_version ?? null;
-    // the note box always shows the note of the version on screen
     changelog.value = d.versions.find((v) => v.version === d.selected_version)?.changelog ?? "";
   } catch (e) { toast.error(e); }
 }
 watch(() => props.code, () => load(), { immediate: true });
 function selectVersion(v: number) { load(v); }
 
-// —— field order (P07): order is part of the contract (extraction output and
-// CSV/JSON export follow it), so a reorder marks the draft dirty like any edit
+function goto(k: string) {
+  // classify node is a WP4 placeholder: visible, labelled, not clickable
+  if (k !== "classify") step.value = k as typeof step.value;
+}
+
+// —— flow rail: nodes with live subtitles; bad dots from light client checks ——
+const flowNodes = computed(() => {
+  const p = pkg.value!;
+  const badFields = p.fields.some((f) => !f.name.trim());
+  return [
+    { key: "basic" as const, label: "基础",
+      sub: p.review_policy.mode === "never" ? "无需复核" : "复核模式已配置",
+      bad: false },
+    ...(p.skill_mode === "advanced"
+      ? [{ key: "classify" as const, label: "文档分类", sub: "随高级提取批次开放", bad: false }]
+      : []),
+    { key: "fields" as const, label: "字段提取",
+      sub: `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
+      bad: badFields },
+    { key: "output" as const, label: "文件产出", sub: "未开启下载", bad: false },
+  ];
+});
+
+// —— dirty tracking: unsaved edits ask before leaving (R? UX guard § WP3) ——
+const savedSnapshot = ref("");
+function snapshotOf(): string {
+  if (!pkg.value) return "";
+  return JSON.stringify({ p: pkg.value, c: changelog.value });
+}
+watch(pkg, (v) => { if (v && !savedSnapshot.value) savedSnapshot.value = snapshotOf(); },
+      { deep: false, immediate: true });
+watch([pkg, changelog], () => { markDirty(); }, { deep: true });
+const dirty = ref(false);
+function markDirty() {
+  if (!pkg.value) return;
+  dirty.value = savedSnapshot.value !== snapshotOf();
+}
+function markClean() { savedSnapshot.value = snapshotOf(); dirty.value = false; }
+
+function beforeUnload(ev: BeforeUnloadEvent) {
+  if (dirty.value) { ev.preventDefault(); ev.returnValue = ""; }
+}
+onMounted(() => window.addEventListener("beforeunload", beforeUnload));
+onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
+onBeforeRouteLeave(() => {
+  if (!dirty.value) return true;
+  // synchronous confirm is the only browser-native option here
+  return window.confirm("有未保存的修改，离开将丢失。确定离开？");
+});
+
+// —— field order (P07) ——
 const treeEl = ref<HTMLElement>();
 const reorder = useListReorder();
 function startFieldDrag(i: number, ev: PointerEvent) {
@@ -343,7 +487,7 @@ function startFieldDrag(i: number, ev: PointerEvent) {
                 (f, t) => { if (pkg.value) moveItem(pkg.value.fields, f, t); });
 }
 
-// —— field modal editing: all card edits round-trip through the modal ——
+// —— field modal editing ——
 const editing = ref<{ list: FieldSpec[]; index: number; spec: FieldSpec;
                       isNew: boolean; isColumn: boolean } | null>(null);
 function openEdit(list: FieldSpec[], index: number, isColumn = false) {
@@ -360,17 +504,46 @@ function commitEdit(spec: FieldSpec) {
   editing.value = null;
 }
 
-/** Save = update the draft on screen. Only 「新建版本」 and publishing move the
- *  version pointer; a published version has no in-place save, so its button
- *  says what it actually does (P04). */
+// —— generation (R05/图13): snapshot → apply suggested fields → undoable ——
+function applyGenerated(fields: FieldSpec[], replaceAll: boolean) {
+  if (!pkg.value) return;
+  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
+  if (replaceAll) {
+    pkg.value.fields = fields.map((f) => ({ ...blankField(), ...f }));
+    return;
+  }
+  const existing = new Set(pkg.value.fields.map((f) => f.name));
+  const fresh = fields.filter((f) => !existing.has(f.name));
+  const skipped = fields.length - fresh.length;
+  pkg.value.fields.push(...fresh.map((f) => ({ ...blankField(), ...f })));
+  if (skipped) toast.ok(`跳过 ${skipped} 个同名字段（未覆盖你的修改）`);
+}
+function undoGenerate() {
+  if (!pkg.value || !undoStack.value.length) return;
+  pkg.value.fields = undoStack.value.pop()!;
+  toast.ok("已撤销上一次生成");
+}
+function clearFields() {
+  if (!pkg.value || !pkg.value.fields.length) return;
+  if (!confirm(`清空全部 ${pkg.value.fields.length} 个字段？可用「撤销上次生成」恢复。`)) return;
+  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
+  pkg.value.fields = [];
+}
+
+/** Save = update the draft on screen (P04). Outbound payloads are always v2. */
 const saveLabel = computed(() =>
   selectedStatus.value && selectedStatus.value !== "draft" ? "另存为新草稿" : "保存");
 const saving = ref(false);
+function outbound(): SkillPackage {
+  return { ...pkg.value!, schema_version: 2 };
+}
 
 function validPkg(): boolean {
   if (!pkg.value) return false;
   if (!pkg.value.skill_code) { toast.error("请填写 skill_code"); return false; }
-  if (!pkg.value.fields.length) { toast.error("至少定义一个字段"); return false; }
+  if (!pkg.value.fields.length && pkg.value.skill_mode !== "advanced") {
+    toast.error("至少定义一个字段"); return false;
+  }
   return true;
 }
 
@@ -379,30 +552,30 @@ async function save() {
   saving.value = true;
   try {
     if (isNew.value) {
-      await api.skillCreate(pkg.value, changelog.value);
+      await api.skillCreate(outbound(), changelog.value);
       toast.ok("技能已创建（v1 草稿）");
       router.push(`/skills/${pkg.value.skill_code}`);
     } else if (selectedStatus.value === "draft" && selectedVersion.value) {
-      await api.skillSaveDraft(props.code, selectedVersion.value, pkg.value, changelog.value);
+      await api.skillSaveDraft(props.code, selectedVersion.value, outbound(), changelog.value);
       toast.ok(`v${selectedVersion.value} 草稿已保存（未新增版本）`);
       await load(selectedVersion.value);
     } else {
-      // published/archived versions are immutable: branch instead of failing
-      const r = await api.skillNewDraft(props.code, pkg.value, changelog.value);
+      const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
       toast.ok(`已以 v${selectedVersion.value} 为底新建 v${r.version} 草稿`);
       await load(r.version);
     }
+    markClean();
   } catch (e) { toast.error(e); }
   finally { saving.value = false; }
 }
 
-/** Explicit branch: the only button besides publish that adds a version. */
 async function newVersion() {
   if (!validPkg() || !pkg.value) return;
   try {
-    const r = await api.skillNewDraft(props.code, pkg.value, changelog.value);
+    const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
     toast.ok(`已新建 v${r.version} 草稿`);
     await load(r.version);
+    markClean();
   } catch (e) { toast.error(e); }
 }
 async function publishSelected() {
@@ -411,15 +584,11 @@ async function publishSelected() {
     await api.skillPublish(props.code, selectedVersion.value);
     toast.ok(`v${selectedVersion.value} 已发布（旧版本自动归档）`);
     await load(selectedVersion.value);
+    markClean();
   } catch (e) { toast.error(e); }
 }
-// —— combobox open behaviour (2026-09-04) ——
-// A datalist filters its options by what is already in the box, so a field
-// holding "qwen" collapsed the picker to that one entry and you had to clear
-// the box by hand before you could pick anything else. Emptying the input on
-// focus shows the whole list; if the user leaves without typing or picking,
-// the old text goes back. The bound value is only ever written by the real
-// @input handler, so merely opening the list changes nothing.
+
+// —— combobox behaviour (2026-09-04) ——
 function comboOpen(ev: FocusEvent) {
   const el = ev.target as HTMLInputElement;
   el.dataset.prev = el.value;
@@ -429,22 +598,17 @@ function comboOpen(ev: FocusEvent) {
 function comboTyped(ev: Event) {
   (ev.target as HTMLInputElement).dataset.typed = "1";
 }
-function comboClose(ev: FocusEvent) {
+function comboClose(ev: Event) {
   const el = ev.target as HTMLInputElement;
-  // restore only an untouched field — a value cleared on purpose must stick
   if (!el.dataset.typed) el.value = el.dataset.prev ?? "";
   delete el.dataset.prev;
   delete el.dataset.typed;
 }
 
-/** 需求8 / 2026-09-04 放宽：版本删除作用于当前选中的这一个版本（草稿或
- *  已归档）；发布版本由服务端拒绝，按钮置灰。技能级删除已移出编辑器
- *  （9.15 R18）：统一在技能列表的「⋯」菜单。 */
 async function removeVersion() {
   if (!selectedVersion.value) return;
   const ok = confirm(`确定删除 v${selectedVersion.value}（${verLabel(selectedStatus.value ?? "")}）？\n`
-    + "该版本的定义将从版本历史中移除，技能与其它版本不受影响；"
-    + "已跑完的任务保留结果，不受影响。");
+    + "该版本的定义将从版本历史中移除，技能与其它版本不受影响。");
   if (!ok) return;
   try {
     await api.skillDeleteVersion(props.code, selectedVersion.value);
@@ -453,10 +617,20 @@ async function removeVersion() {
   } catch (e) { toast.error(e); }
 }
 
+const copied = ref(false);
+async function copyCode() {
+  try {
+    await navigator.clipboard.writeText(pkg.value?.skill_code ?? "");
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1500);
+  } catch { /* clipboard unavailable */ }
+}
+
 // —— draft channels ——
 const probing = ref(false);
 function mergeDraft(fields: FieldSpec[], docType?: string): number {
   if (!pkg.value) return 0;
+  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
   const existing = new Set(pkg.value.fields.map((f) => f.name));
   const fresh = fields.filter((f) => !existing.has(f.name));
   pkg.value.fields.push(...fresh);
@@ -492,7 +666,7 @@ async function tableImport(ev: Event) {
   if (!file) return;
   try {
     const r = await api.skillDraftFromTable(file);
-    toast.ok(`表格导入完成：新增 ${mergeDraft(r.fields)} 个字段。可点「✨ AI 补全说明」扩写规则`);
+    toast.ok(`表格导入完成：新增 ${mergeDraft(r.fields)} 个字段。可用「✨ AI 补全说明」扩写规则`);
   } catch (e) { toast.error(e); }
   finally { (ev.target as HTMLInputElement).value = ""; }
 }
@@ -569,18 +743,33 @@ async function goldenCheck() {
 </script>
 
 <style scoped>
-.editor { display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(280px, 340px);
-  gap: 0; align-items: start; min-height: calc(100vh - 52px); }
-/* new-skill page has no version rail — drop its column or main lands in 210px */
-.editor.no-rail { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+.editor { min-height: calc(100vh - 52px); display: flex; justify-content: center; }
+.main-col { width: 100%; max-width: 1200px; padding: 16px 20px 40px;
+  display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
-/* version rail */
-.ver-rail { position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto;
-  border-right: 1px solid var(--border); background: var(--bg-panel);
-  padding: 14px 12px; display: flex; flex-direction: column; gap: 10px; }
-.rail-head { font-size: 13px; font-weight: 700; color: var(--text-dim); }
+/* top bar */
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.back { font-size: 22px; line-height: 1; padding: 2px 8px; color: var(--text-dim); }
+.back:hover { color: var(--accent); }
+.ident { flex: 1; min-width: 220px; }
+.ident h1 { margin: 0; font-size: 20px; }
+.code-line { font-family: Consolas, monospace; font-size: 12px;
+  display: inline-flex; gap: 6px; align-items: center; }
+.copy { border: 0; background: none; cursor: pointer; color: var(--text-dim); }
+.copy:hover { color: var(--accent); }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* version dropdown */
+.ver-menu { position: relative; }
+.ver-menu summary { list-style: none; cursor: pointer; }
+.ver-chip { display: inline-flex; gap: 8px; align-items: center;
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px;
+  background: var(--bg-raised); font-weight: 700; }
+.ver-pop { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0;
+  width: 280px; max-height: 420px; overflow: auto; background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+  display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
 .new-ver { border-style: dashed; }
-.ver-list { display: flex; flex-direction: column; gap: 8px; }
 .ver-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
   cursor: pointer; background: var(--bg); }
 .ver-card:hover { border-color: var(--accent); }
@@ -590,14 +779,14 @@ async function goldenCheck() {
 .ver-note-line { margin: 4px 0 0; font-size: 11px; color: var(--text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* main */
-.main-col { padding: 16px 20px 32px; display: flex; flex-direction: column;
-  gap: 14px; min-width: 0; }
-.toolbar { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
-.ident { flex: 1; min-width: 240px; }
-.ident h1 { margin: 0; font-size: 20px; }
-.code-line { font-family: Consolas, monospace; font-size: 12px; }
-.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* design/test tabs */
+.tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; }
+.tabs button { border: 0; background: var(--bg-raised); padding: 6px 18px;
+  font-size: 14px; cursor: pointer; }
+.tabs button.on { background: var(--accent); color: var(--accent-text);
+  font-weight: 700; }
+
 .ver-note { margin: -6px 0 0; font-size: 12px; }
 .guide { display: flex; gap: 14px; align-items: center; justify-content: center;
   padding: 14px; border-style: dashed; flex-wrap: wrap; font-size: 13px;
@@ -606,22 +795,85 @@ async function goldenCheck() {
   background: var(--accent); color: var(--accent-text); align-items: center;
   justify-content: center; margin-right: 6px; }
 .arrow { color: var(--accent); }
-.block { padding: 14px 16px; }
+
+/* flow rail + step panels */
+.design-body { display: grid; grid-template-columns: 190px minmax(0, 1fr);
+  gap: 16px; align-items: start; }
+.flow-rail { position: sticky; top: 66px; display: flex; flex-direction: column;
+  gap: 6px; }
+.node { display: flex; flex-direction: column; align-items: flex-start;
+  gap: 1px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-panel); padding: 9px 12px; cursor: pointer; text-align: left; }
+.node:hover { border-color: var(--accent); }
+.node.on { border-color: var(--accent); background: var(--bg-raised); }
+.node .dot { width: 8px; height: 8px; border-radius: 50%;
+  background: var(--border); position: absolute; }
+.node .lbl { font-weight: 700; font-size: 13.5px; display: flex; gap: 6px;
+  align-items: center; }
+.node.on .lbl { color: var(--accent); }
+.node .sub { font-size: 11.5px; }
+.node.bad .lbl::after { content: "●"; color: var(--red); font-size: 10px; }
+.node.pending { opacity: .6; cursor: default; }
+.step-panel { padding: 14px 16px; }
 .block-title { margin: 0 0 10px; font-size: 14px; color: var(--accent); }
 .block-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
   flex-wrap: wrap; }
-.block-head .block-title { margin: 0; flex: 1; }
+.block-head .block-title { margin: 0; flex: 0 1 auto; }
+.sub-title { margin: 16px 0 6px; font-size: 13px; color: var(--text-dim); }
 .basic-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .basic-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
   color: var(--text-dim); }
 .span2 { grid-column: span 2; }
 .mono { font-family: Consolas, monospace; }
-.file-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
-  border-radius: 6px; padding: 6px 14px; cursor: pointer; display: inline-block;
-  font-size: 13px; }
-.file-btn.slim .btn-like { padding: 3px 10px; font-size: 12px; }
-.file-btn .btn-like:hover { border-color: var(--accent); }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cards + .cards, .thr { margin-top: 8px; }
+.mode-card { border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); padding: 10px 12px; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; gap: 3px; }
+.mode-card:hover { border-color: var(--accent); }
+.mode-card.on { border-color: var(--accent); background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--accent); }
+.mode-card strong { font-size: 13.5px; }
+.mode-card .dim { font-size: 12px; }
+.thr { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+  color: var(--text-dim); max-width: 220px; margin-top: 10px; }
+.adv-note { font-size: 12px; margin: 8px 0 0; }
+.adv-settings { margin-top: 14px; border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; }
+.adv-settings summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
+.adv-settings .basic-grid { margin-top: 10px; }
+.thr select, .adv-settings select { max-width: 100%; }
+
+/* fields step */
+.fields-step { display: flex; gap: 14px; align-items: flex-start; }
+.sample-col { flex: 0 0 320px; }
+.fields-col { flex: 1; min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; }
+.seg button { border: 0; background: var(--bg-raised); padding: 4px 12px;
+  font-size: 12.5px; cursor: pointer; }
+.seg button.on { background: var(--accent); color: var(--accent-text);
+  font-weight: 700; }
+.more-draft { position: relative; }
+.more-draft summary { list-style: none; cursor: pointer; }
+.btn-like { border: 1px solid var(--border); background: var(--bg-raised);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; display: inline-block;
+  font-size: 12px; }
+.more-draft .more-pop, .more-menu .more-pop {
+  position: absolute; z-index: 60; top: calc(100% + 4px); right: 0;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 170px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.more-menu { position: relative; }
+.more-menu summary { list-style: none; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
+  background: var(--bg-raised); font-size: 13px; }
+.more-menu .more-pop button { border: 0; background: none; text-align: left;
+  padding: 6px 8px; cursor: pointer; border-radius: 6px; font-size: 13px; }
+.more-menu .more-pop button:hover { background: var(--bg-hover, rgba(0,0,0,.05)); }
+.more-menu .more-pop button.danger { color: var(--red); }
 .mini { padding: 2px 10px; font-size: 12px; }
+.file-btn .btn-like:hover { border-color: var(--accent); }
 .text-panel { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
   display: flex; flex-direction: column; gap: 8px; background: var(--bg-raised);
   margin-bottom: 10px; }
@@ -629,17 +881,17 @@ async function goldenCheck() {
   justify-content: space-between; font-size: 12px; }
 .pad { padding: 4px 0; margin: 0; }
 .drag-tip { margin: 0 0 8px; font-size: 12px; }
-.combo-note { margin: -2px 0 0; font-size: 11.5px; line-height: 1.6; }
-.combo-note code { font-family: Consolas, monospace; }
 .field-tree { display: flex; flex-direction: column; gap: 10px; }
 .add-field { border-style: dashed; padding: 8px; }
+.rules-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; }
+.rules-fold summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
+.rules-fold textarea { width: 100%; margin-top: 8px; }
 
-/* studio rail */
-.studio-rail { position: sticky; top: 52px; max-height: calc(100vh - 52px);
-  overflow-y: auto; padding: 16px 16px 32px 0; display: flex;
-  flex-direction: column; gap: 14px; }
-.s-block { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.s-block .dim { font-size: 12px; }
+/* test tab */
+.test-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  align-items: start; }
+.block { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .runs { display: flex; flex-direction: column; gap: 10px; }
 .run { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 .run-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
@@ -647,7 +899,6 @@ async function goldenCheck() {
 .run td { padding: 3px 6px; border-bottom: 1px solid var(--border); }
 .conf { font-size: 11px; color: var(--text-dim); }
 .vis { font-size: 11px; color: var(--blue); }
-.run-note { font-size: 11px; margin: 0 0 6px; }
 .rulefail { color: var(--red); font-size: 12px; }
 .golden-report { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
   font-size: 13px; }
@@ -655,9 +906,12 @@ async function goldenCheck() {
 .rep { margin-top: 6px; }
 .dim { color: var(--text-dim); }
 
-@media (max-width: 1200px) {
-  .editor { grid-template-columns: 180px minmax(0, 1fr); }
-  .studio-rail { grid-column: 1 / -1; position: static; max-height: none;
-    padding: 0 20px 24px; }
+@media (max-width: 1100px) {
+  .design-body { grid-template-columns: 1fr; }
+  .flow-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+  .fields-step { flex-direction: column; }
+  .sample-col { flex: 1 1 auto; max-width: none; width: 100%; }
+  .test-grid { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr; }
 }
 </style>

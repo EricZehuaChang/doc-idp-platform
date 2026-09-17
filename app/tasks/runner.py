@@ -23,7 +23,7 @@ from app.integrations import webhooks
 from app.models import FileRecord, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import escalate_if_tables_missing, parse_document
-from app.skillengine.schema import SkillPackage
+from app.skillengine.schema import SkillPackage, SkillPackageLoose
 from app.storage import get_storage
 
 
@@ -80,7 +80,8 @@ async def _load_package(s, txn: Transaction) -> SkillPackage:
                SkillVersion.version == txn.skill_version))).scalar_one_or_none()
     if row is None:
         raise RuntimeError(f"skill version not found: {txn.skill_code} v{txn.skill_version}")
-    return SkillPackage(**row.package)
+    # loose read: stored rows must load even with unknown keys (§3.3)
+    return SkillPackageLoose(**row.package)
 
 
 async def parse_stage(file_id: str, parser_pin: str | None,
