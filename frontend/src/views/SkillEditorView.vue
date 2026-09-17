@@ -87,8 +87,7 @@
             <button v-for="n in flowNodes" :key="n.key" class="node"
                     :class="{ on: step === n.key, bad: n.bad }"
                     @click="goto(n.key)">
-              <span class="dot"></span>
-              <span class="lbl">{{ n.label }}</span>
+              <span class="lbl"><span class="dot"></span>{{ n.label }}</span>
               <span class="sub dim">{{ n.sub }}</span>
             </button>
           </nav>
@@ -111,7 +110,7 @@
               </label>
             </div>
 
-            <h4 class="sub-title">处理模式（图02–05）</h4>
+            <h4 class="sub-title">处理模式</h4>
             <div class="cards">
               <button class="mode-card" :class="{ on: pkg.processing_mode !== 'fast' }"
                       @click="setProcessingMode('balanced')">
@@ -318,7 +317,8 @@
 
           <!-- —— 字段提取 —— -->
           <section v-show="step === 'fields'" class="card-panel block step-panel fields-step">
-            <SamplePanel :skill-code="code" class="sample-col" />
+            <SamplePanel :skill-code="isNew ? undefined : code"
+                         class="sample-col" />
             <div class="fields-col">
               <div class="block-head">
                 <h3 class="block-title">字段配置</h3>
@@ -336,13 +336,15 @@
                 <button class="mini primary" @click="genModal = true">✨ 自动生成字段</button>
                 <details class="more-draft">
                   <summary class="mini btn-like">更多起草方式 ▾</summary>
-                  <div class="more-pop">
+                  <div class="more-pop" ref="morePopEl">
                     <label class="file-btn slim">
                       <input type="file" hidden @change="probe" :disabled="probing" />
                       <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
                     </label>
+                    <!-- #18: picking an item closes the popover (it used to stay
+                         open and cover the panel it had just revealed) -->
                     <button class="mini" :class="{ primary: textPanel }"
-                            @click="textPanel = !textPanel">📝 描述生成</button>
+                            @click="openTextPanel">📝 描述生成</button>
                     <label class="file-btn slim">
                       <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
                       <span class="btn-like">📊 表格导入</span>
@@ -429,8 +431,10 @@
                          ? '{doc_index}_{doc_type}_{original_name}{original_ext}'
                          : '{original_name}{original_ext}'"
                        @input="outQueuePreview" />
-                <div class="token-row">
-                  <button v-for="t in outTokens" :key="t" class="tok"
+                <div class="token-row" data-testid="out-tokens">
+                  <button v-for="t in outAvailableTokens" :key="t" class="tok"
+                          :class="{ on: outTokens.includes(t) }"
+                          :title="'插入 {' + t + '}'"
                           @click="insertToken(t)">{{ "{" + t + "}" }}</button>
                 </div>
                 <div class="out-preview" data-testid="out-preview">
@@ -782,6 +786,44 @@ const shortDate = (v?: string) =>
   v ? new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const splitCsv = (v: string) => v.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
 
+/** #14 (走查): the route view is reused between /skills/:code values, so every
+ *  piece of per-skill state must be reset on switch — otherwise the previous
+ *  skill's version note (实测: written into the NEW skill's v1) and Playground
+ *  results leak across skills. */
+/** #21: fields held by the categories of an advanced skill. */
+function catFieldCount(p: SkillPackage): number {
+  return (p.categories ?? []).reduce((n, c) => n + (c.fields?.length ?? 0), 0);
+}
+
+function resetPerSkillState() {
+  changelog.value = "";
+  step.value = "basic";
+  sampleStatus.value = {};
+  runBySample.value = {};
+  pgDocs.value = [];
+  pgFiles.value = [];
+  pgHistory.value = [];
+  pgDetail.value = null;
+  pgCurrent.value = null;
+  pgCurrentRun.value = null;
+  pgCurrentTxnId.value = null;
+  pgRunStatus.value = "";
+  pgRunDuration.value = null;
+  pgTimeoutNote.value = "";
+  pgSelected.value = [];
+  pgResultTab.value = "all";
+  pgActiveField.value = null;
+  pgActiveBox.value = null;
+  pgStagePages.value = [];
+  pgStageResult.value = {};
+  dryRuns.value = [];
+  undoStack.value = [];
+  draftText.value = "";
+  textPanel.value = false;
+  if (pgTimer) { clearInterval(pgTimer); pgTimer = null; }
+  pgPolling.value = false;
+}
+
 async function load(version?: number) {
   if (isNew.value) {
     pkg.value = blankPkg();
@@ -802,7 +844,12 @@ async function load(version?: number) {
     changelog.value = d.versions.find((v) => v.version === d.selected_version)?.changelog ?? "";
   } catch (e) { toast.error(e); }
 }
-watch(() => props.code, () => load(), { immediate: true });
+watch(() => props.code, (_code, prev) => {
+  // #14: reset only on a real switch — the immediate (first) call runs during
+  // setup, before the Playground refs below are initialised.
+  if (prev !== undefined) resetPerSkillState();
+  load();
+}, { immediate: true });
 function selectVersion(v: number) { load(v); }
 
 function goto(k: string) {
@@ -843,7 +890,8 @@ const outPatternInput = ref<HTMLInputElement>();
 const outPreview = ref<{ ok: boolean; preview: string; appended_ext: boolean }>(
   { ok: true, preview: "", appended_ext: false });
 const outErrors = ref<{ message: string }[]>([]);
-const outTokens = ref<string[]>([]);
+const outTokens = ref<string[]>([]);          // variables the rule uses
+const outAvailableTokens = ref<string[]>([]); // D4: every usable variable
 let outPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 
 function outSampleData(): Record<string, unknown> {
@@ -870,16 +918,47 @@ async function outRunPreview() {
   const pattern = /\{original_ext\}/.test(raw) || /\{data\./.test(raw)
     ? raw : raw + "{original_ext}";
   try {
-    const sampleData = outSampleData();
+    // #13/D4: the server composes the available-variable list and resolves the
+    // sample values (its latest Playground run, else a ‹field› placeholder),
+    // so the frontend never invents either.
     const r = await api.namingPreview({
-      pattern, searchable_pdf: p.output.searchable_pdf,
-      sample: { original_name: "示例扫描件.pdf", original_ext: ".pdf",
-                doc_type: "发票", doc_index: 2, data: sampleData } });
+      pattern, action: p.output.action ?? "rename",
+      searchable_pdf: p.output.searchable_pdf,
+      fields: outScalarFieldNames(),
+      sample_id: pgSelected.value[0],
+      sample: { original_name: outSampleName(), original_ext: ".pdf",
+                doc_type: p.skill_mode === "advanced"
+                  ? (p.categories?.[0]?.doc_type ?? "") : "",
+                doc_index: p.output.action === "split" ? 2 : undefined,
+                data: outSampleData() } });
     outPreview.value = { ok: r.ok, preview: r.preview,
                          appended_ext: r.appended_ext };
     outErrors.value = r.errors;
     outTokens.value = r.tokens;
+    outAvailableTokens.value = r.available_tokens ?? r.tokens;
   } catch { /* preview failures never block editing */ }
+}
+
+/** #13/D4: every scalar field the naming rule may reference — top-level plus
+ *  (advanced) each category's, since a category field can be referenced too. */
+function outScalarFieldNames(): string[] {
+  const p = pkg.value;
+  if (!p) return [];
+  const names: string[] = [];
+  const push = (f: { name?: string; type?: string }) => {
+    if (f?.name && f.type !== "table" && !names.includes(f.name)) {
+      names.push(f.name);
+    }
+  };
+  (p.fields ?? []).forEach(push);
+  (p.categories ?? []).forEach((c) => (c.fields ?? []).forEach(push));
+  return names;
+}
+
+/** the sample name shown in the preview: the selected sample when there is one */
+function outSampleName(): string {
+  const s = pgSamples.value.find((x) => x.id === pgSelected.value[0]);
+  return s?.file_name ?? "示例扫描件.pdf";
 }
 
 function insertToken(t: string) {
@@ -899,6 +978,8 @@ function insertToken(t: string) {
 
 watch(() => pkg.value?.output?.naming_rule, outQueuePreview);
 watch(() => pkg.value?.output?.searchable_pdf, outQueuePreview);
+watch(() => pkg.value?.output?.action, outQueuePreview);
+watch(() => pgSelected.value[0], outQueuePreview);
 // entering the step (or loading a package) seeds tokens + preview once
 watch(() => [step.value, pkg.value?.skill_code], ([st]) => {
   if (st === "output") outQueuePreview();
@@ -1323,15 +1404,25 @@ const flowNodes = computed(() => {
   const badCats = p.skill_mode === "advanced"
     && !(p.categories ?? []).some((c) => c.is_other);
   return [
-    { key: "basic" as const, label: "基础",
-      sub: p.review_policy.mode === "never" ? "无需复核" : "复核模式已配置",
-      bad: false },
+    (() => {   // #27: say what is actually configured, not "已配置"
+      const m = p.review_policy.mode;
+      const th = p.review_policy.confidence_threshold;
+      const sub = m === "never" ? "无需复核"
+        : m === "always" ? "全部复核"
+          : `${th ?? 2} 分以下复核（默认）`;
+      return { key: "basic" as const, label: "基础", sub, bad: false };
+    })(),
     ...(p.skill_mode === "advanced"
       ? [{ key: "classify" as const, label: "文档分类",
-           sub: `${(p.categories ?? []).length} 个类别`, bad: badCats }]
+           sub: `${(p.categories ?? []).length} 个类别${catFieldCount(p) ? ` / ${catFieldCount(p)} 个字段` : ""}`,
+           bad: badCats }]
       : []),
     { key: "fields" as const, label: "字段提取",
-      sub: `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
+      // #21: an advanced skill keeps its fields inside the categories, so the
+      // subtitle must count those (it used to read "0 个字段")
+      sub: p.skill_mode === "advanced"
+        ? `${(p.categories ?? []).length} 个类别 / ${catFieldCount(p)} 个字段`
+        : `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
       bad: badFields },
     (() => {   // 9.15 WP6 (图18-20): subtitle counts enabled output items
       const o = p.output;
@@ -1544,7 +1635,14 @@ async function probe(ev: Event) {
   finally { probing.value = false; (ev.target as HTMLInputElement).value = ""; }
 }
 const textPanel = ref(false);
+const morePopEl = ref<HTMLDetailsElement>();
 const draftText = ref("");
+
+/** #18: choose a drafting method and collapse the dropdown behind it. */
+function openTextPanel() {
+  textPanel.value = !textPanel.value;
+  if (morePopEl.value) morePopEl.value.open = false;
+}
 const drafting = ref(false);
 async function draftFromText() {
   if (!draftText.value.trim()) return;
@@ -1702,10 +1800,11 @@ async function goldenCheck() {
   background: var(--bg-panel); padding: 9px 12px; cursor: pointer; text-align: left; }
 .node:hover { border-color: var(--accent); }
 .node.on { border-color: var(--accent); background: var(--bg-raised); }
-.node .dot { width: 8px; height: 8px; border-radius: 50%;
-  background: var(--border); position: absolute; }
+.node .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--border); }
 .node .lbl { font-weight: 700; font-size: 13.5px; display: flex; gap: 6px;
   align-items: center; }
+.node.on .dot { background: var(--accent); }   /* #17: current step reads */
 .node.on .lbl { color: var(--accent); }
 .node .sub { font-size: 11.5px; }
 .node.bad .lbl::after { content: "●"; color: var(--red); font-size: 10px; }
@@ -1740,7 +1839,20 @@ async function goldenCheck() {
 .thr select, .adv-settings select { max-width: 100%; }
 
 /* fields step */
-.fields-step { display: flex; gap: 14px; align-items: flex-start; }
+/* #11 (走查): this rule sits BEFORE the generic `.block{flex-direction:column}`
+   below, so the sample panel ended up stacked on top (320px tall) and the field
+   list half width. Same specificity + later source order = the column rule won;
+   with two classes it now wins where the layout is side-by-side. */
+.fields-step.block { display: flex; flex-direction: row; gap: 14px;
+  align-items: flex-start; }
+.fields-step > .sample-col { flex: 0 0 320px; width: 320px; max-width: 320px;
+  align-self: stretch; height: auto; max-height: none; }
+.fields-step > .sample-col .sample-panel { max-width: none; height: auto;
+  max-height: 100%; }
+/* #11: the sample list scrolls instead of being clipped at a fixed height */
+.fields-step .sp-list { max-height: min(46vh, 420px); }
+.fields-step > .fields-col { flex: 1 1 auto; min-width: 0; display: flex;
+  flex-direction: column; gap: 8px; }
 .sample-col { flex: 0 0 320px; }
 .fields-col { flex: 1; min-width: 0; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
@@ -1765,7 +1877,7 @@ async function goldenCheck() {
   background: var(--bg-raised); font-size: 13px; }
 .more-menu .more-pop button { border: 0; background: none; text-align: left;
   padding: 6px 8px; cursor: pointer; border-radius: 6px; font-size: 13px; }
-.more-menu .more-pop button:hover { background: var(--bg-hover, rgba(0,0,0,.05)); }
+.more-menu .more-pop button:hover { background: var(--bg-hover); }
 .more-menu .more-pop button.danger { color: var(--red); }
 .mini { padding: 2px 10px; font-size: 12px; }
 .file-btn .btn-like:hover { border-color: var(--accent); }
@@ -1911,21 +2023,56 @@ async function goldenCheck() {
 .out-actions .mode-card { flex: 1; min-width: 0; }
 .out-actions .mode-card:disabled { opacity: .5; cursor: not-allowed; }
 .token-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.token-row .tok { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line);
+.token-row .tok { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border);
   border-radius: 10px; background: transparent; cursor: pointer; }
 .token-row .tok:hover { border-color: var(--accent); }
 .out-preview { margin: 6px 0 10px; font-size: 13px; }
-.out-preview code { background: var(--bg-soft, #f5f5f7); padding: 2px 6px;
-  border-radius: 4px; }
+.out-preview code { background: var(--bg-soft); color: var(--text);
+  padding: 2px 6px; border-radius: 4px; }
+.chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+.pg-arts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pg-art .ghost { font-size: 12px; padding: 2px 8px; }
+.pg-result { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pg-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pg-doc { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.pg-doc-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+  flex-wrap: wrap; }
+.pg-doc table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.pg-doc td { padding: 4px 6px; border-bottom: 1px solid var(--border);
+  word-break: break-all; }
+.pg-doc tr:last-child td { border-bottom: 0; }
+.pg-modal { width: 100%; }
+.pg-modal table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pg-modal thead th { text-align: left; padding: 8px 10px; color: var(--text-dim);
+  font-size: 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.pg-modal tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; }
+.pg-modal tbody tr:hover { background: rgba(240, 180, 41, 0.06); }
+.pg-hist-row { cursor: pointer; }
+.pg-detail { list-style: none; margin: 0 0 10px; padding: 0; }
+.pg-detail li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.pg-detail code { font-size: 11px; }
+
+/* —— 9.15 WP6 output step —— */
+.out-actions { display: flex; gap: 10px; margin-top: 10px; }
+.out-actions .mode-card { flex: 1; min-width: 0; }
+.out-actions .mode-card:disabled { opacity: .5; cursor: not-allowed; }
+.token-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.token-row .tok { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border);
+  border-radius: 10px; background: transparent; cursor: pointer; }
+.token-row .tok:hover { border-color: var(--accent); }
+.out-preview { margin: 6px 0 10px; font-size: 13px; }
+.out-preview code { background: var(--bg-soft); color: var(--text);
+  padding: 2px 6px; border-radius: 4px; }
 .chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
 .pg-arts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pg-art .ghost { font-size: 12px; padding: 2px 8px; }
 .art-dropdown { position: relative; }
 .art-dropdown summary { cursor: pointer; list-style: none; padding: 6px 10px;
-  border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
 .art-dropdown ul { position: absolute; z-index: 30; top: 100%; left: 0;
   min-width: 280px; margin: 4px 0 0; padding: 6px; list-style: none;
-  background: var(--panel, #fff); border: 1px solid var(--line);
+  background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
 .art-dropdown li { display: flex; align-items: center; gap: 8px; padding: 4px 6px;
   font-size: 13px; }
@@ -1935,7 +2082,8 @@ async function goldenCheck() {
 @media (max-width: 1100px) {
   .design-body { grid-template-columns: 1fr; }
   .flow-rail { position: static; flex-direction: row; flex-wrap: wrap; }
-  .fields-step { flex-direction: column; }
+  .fields-step.block { flex-direction: column; }
+  .fields-step > .sample-col { flex: 1 1 auto; width: auto; max-width: none; }
   .sample-col { flex: 1 1 auto; max-width: none; width: 100%; }
   .test-grid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }

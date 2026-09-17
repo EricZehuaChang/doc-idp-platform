@@ -13,6 +13,13 @@
   --red: #e5534b;
   --blue: #58a6ff;
   --radius: 10px;
+  /* #25 (走查): aliases the components referenced but nobody defined — in the
+     dark theme the fallbacks (#fff / #f5f5f7 / currentColor) were unreadable */
+  --bg-hover: rgba(240, 180, 41, 0.10);
+  --bg-soft: #202b3d;
+  --danger: #e5534b;
+  --line: var(--border);
+  --panel: var(--bg-panel);
 }
 * { box-sizing: border-box; }
 body {
@@ -115,3 +122,19 @@ select {
   margin-top: 14px; }
 .modal .lbl { display: block; margin: 10px 0 4px; font-size: 13px;
   color: var(--text-dim); }
+
+/* —— 产出文件下拉 (走查 #10): the review action bar sits at the BOTTOM of the
+   page, so the panel opens upward and floats — it must not reflow the bar —— */
+.art-dropdown { position: relative; }
+.art-dropdown summary { cursor: pointer; list-style: none; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  background: var(--bg-raised); }
+.art-dropdown summary::-webkit-details-marker { display: none; }
+.art-dropdown ul { position: absolute; z-index: 40; bottom: calc(100% + 4px);
+  left: 0; min-width: 300px; margin: 0; padding: 6px; list-style: none;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45); }
+.art-dropdown li { display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; font-size: 13px; }
+.art-dropdown .art-name { flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }

@@ -30,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import DocStage from "./DocStage.vue";
 import { toast } from "../toast";
@@ -48,14 +48,43 @@ const activeName = ref("");
 const pages = ref<PageDim[]>([]);
 const parseError = ref<string | null>(null);
 const uploading = ref(false);
+/** ids uploaded while the skill code was still empty (D6) */
+const pendingIds = ref<string[]>([]);
 
 const fileUrl = ref("");
 
 async function load() {
-  try { samples.value = (await api.studioSamples()).samples; }
-  catch (e) { toast.error(e); }
+  // #20 (走查): the panel used to list every sample of the tenant and load
+  // only once on mount. It now asks for THIS skill's samples and reloads when
+  // the editor switches skill or a sample is uploaded.
+  try {
+    samples.value = (await api.studioSamples(props.skillCode || undefined)).samples;
+    if (activeId.value && !samples.value.some((s) => s.id === activeId.value)) {
+      activeId.value = "";
+      fileUrl.value = "";
+      pages.value = [];
+    }
+  } catch (e) { toast.error(e); }
 }
 onMounted(load);
+watch(() => props.skillCode, async (code, prev) => {
+  if (code === prev) return;
+  await load();
+  // D6: samples uploaded while creating a skill were unassigned — once the
+  // skill exists, adopt this session's uploads into it.
+  if (code && !prev) await adoptUnassigned();
+});
+
+/** D6 (#20): claim the session's unassigned uploads for the new skill code. */
+async function adoptUnassigned() {
+  const mine = pendingIds.value;
+  if (!mine.length) return;
+  try {
+    for (const id of mine) await api.studioAdoptSample(id, props.skillCode!);
+    pendingIds.value = [];
+    await load();
+  } catch { /* adoption is best-effort; the sample stays unassigned */ }
+}
 
 async function select(s: SampleRow) {
   activeId.value = s.id;
@@ -72,6 +101,7 @@ async function upload(ev: Event) {
   uploading.value = true;
   try {
     const r = await api.studioUploadSample(file, props.skillCode);
+    if (!props.skillCode) pendingIds.value.push(r.id);   // adopt after create
     toast.ok("样本已上传");
     pages.value = r.pages;
     parseError.value = r.parse_error;
@@ -106,10 +136,10 @@ async function removeSample(id: string) {
   overflow: auto; }
 .sp-list li { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
   border-radius: 6px; cursor: pointer; font-size: 13px; }
-.sp-list li.on, .sp-list li:hover { background: var(--bg-hover, rgba(0,0,0,.05)); }
+.sp-list li.on, .sp-list li:hover { background: var(--bg-hover); }
 .sp-list li.none { cursor: default; }
 .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.del { border: 0; background: none; color: var(--danger, #c0392b); cursor: pointer; }
+.del { border: 0; background: none; color: var(--red); cursor: pointer; }
 .sp-stage { height: 420px; }
 .sp-warn { font-size: 12px; }
 </style>

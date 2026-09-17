@@ -620,6 +620,9 @@ export const api = {
       page_no: number; width: number; height: number }[];
       parse_error: string | null }>("/api/v1/studio/samples", f);
   },
+  studioAdoptSample: (id: string, skillCode: string) =>
+    req<{ id: string; skill_code: string }>(
+      "PATCH", `/api/v1/studio/samples/${id}`, { skill_code: skillCode }),
   studioSamples: (skillCode?: string) =>
     req<{ samples: { id: string; file_name: string; skill_code: string | null;
                      created_at: string }[] }>(
@@ -649,11 +652,15 @@ export const api = {
           file_id: string | null; transaction_status: string | null }>(
       "GET", `/api/v1/studio/runs/${runId}`),
   namingPreview: (payload: { pattern: string; searchable_pdf: boolean;
+                             action?: string; fields?: string[];
+                             sample_id?: string;
                              sample?: Record<string, unknown> }) =>
     req<{ ok: boolean; preview: string; appended_ext: boolean;
           normalized_pattern: string;
           errors: { path: string; token: string; message: string }[];
-          tokens: string[] }>("POST", "/api/v1/studio/naming-preview", payload),
+          tokens: string[]; available_tokens?: string[];
+          field_names?: string[]; sample_source?: string }>(
+      "POST", "/api/v1/studio/naming-preview", payload),
   fileArtifacts: (fileId: string) =>
     req<{ artifacts: Artifact[] }>("GET", `/api/v1/files/${fileId}/artifacts`),
   txnArtifacts: (txnId: string) =>

@@ -7,7 +7,7 @@
   <Teleport to="body">
     <div v-if="open" ref="menuEl" class="rowmenu" role="menu" :style="pos">
       <button v-for="(it, i) in items" :key="it.key" role="menuitem" type="button"
-              class="rowmenu-item" :class="{ danger: it.danger, focus: i === cursor }"
+              class="rowmenu-item" :class="{ 'is-danger': it.danger, focus: i === cursor }"
               @click.stop="pick(it)" @mousemove="cursor = i">
         {{ it.label }}
       </button>
@@ -134,5 +134,10 @@ onUnmounted(() => {
   border-radius: 5px; padding: 7px 10px; font-size: 12.5px; color: var(--text);
   cursor: pointer; white-space: nowrap; }
 .rowmenu-item:hover, .rowmenu-item.focus { background: rgba(240, 180, 41, 0.10); }
-.rowmenu-item.danger { color: var(--red); }
+/* #15 (走查): `button.danger` from the global sheet painted a red background
+   under this red text, so 「删除」 was invisible. A distinct class keeps the
+   transparent item background and the usual hover/focus highlight. */
+.rowmenu-item.is-danger { color: var(--red); background: transparent; }
+.rowmenu-item.is-danger:hover, .rowmenu-item.is-danger.focus {
+  background: rgba(229, 83, 75, 0.12); }
 </style>

@@ -111,5 +111,5 @@ textarea { width: 100%; margin: 8px 0; }
 .suggest-list li:last-child { border-bottom: 0; }
 .ex { margin-left: auto; color: var(--text-dim, #888);
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.err { color: var(--danger, #c0392b); }
+.err { color: var(--danger); }
 </style>

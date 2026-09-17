@@ -2,7 +2,7 @@
   <div class="wrap">
     <h1>我的 API Key</h1>
     <p class="dim">
-      为 Windows 客户端（Agent）创建受限凭据：只能提交任务、查状态、读取自己提交的文档。
+      创建受限凭据，供 Agent 或集成客户端使用：只能提交任务、查询状态、读取自己提交的文档。
       完整 Key 仅在创建时显示一次。</p>
 
     <div class="panel">
@@ -34,7 +34,7 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="dim empty">还没有 Key。创建后把它填进 Windows 客户端的「服务器设置」。</p>
+      <p v-else class="dim empty">还没有 Key。创建后把它填进 Agent 或集成客户端的连接设置。</p>
     </div>
   </div>
 </template>
@@ -93,7 +93,7 @@ h1 { font-size: 20px; margin-bottom: 6px; }
 .name-in { width: 220px; }
 .skills-in { flex: 1; min-width: 240px; }
 .fresh-key { border: 1px solid var(--accent); border-radius: 8px;
-  padding: 12px 16px; margin: 8px 0 14px; background: var(--bg-hover, rgba(0,0,0,.03)); }
+  padding: 12px 16px; margin: 8px 0 14px; background: var(--bg-hover); }
 .key-line { display: flex; align-items: center; gap: 10px; }
 .key-line code { flex: 1; word-break: break-all; font-size: 14px; }
 .empty { padding: 12px 0; }

@@ -92,6 +92,28 @@ async def upload_sample(file: UploadFile = File(...),
                 "created_at": row.created_at.isoformat()}
 
 
+@router.patch("/samples/{sample_id}")
+async def adopt_sample(sample_id: str, payload: dict):
+    """D6 (#20): assign an existing sample to a skill code. Used right after a
+    new skill is created, so samples uploaded on the 新建 page stop being
+    orphaned (they were uploaded with skill_code empty on purpose)."""
+    require_role("operator")()
+    tenant = current_tenant()
+    code = str(payload.get("skill_code") or "").strip()
+    if not code:
+        raise HTTPException(422, detail={"code": "skill_code_required",
+                                         "message": "缺少 skill_code"})
+    sf = session_factory()
+    async with sf() as s:
+        row = await _own_sample(s, sample_id)
+        skill = await s.get(Skill, code)
+        if skill is None or skill.tenant_id != tenant:
+            raise HTTPException(404, "skill not found")
+        row.skill_code = code
+        await s.commit()
+        return {"id": row.id, "skill_code": row.skill_code}
+
+
 @router.get("/samples")
 async def list_samples(skill_code: str | None = None):
     require_role("operator")()

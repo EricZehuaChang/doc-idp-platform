@@ -239,7 +239,10 @@ async def import_preview(zip_file: UploadFile = File(...),
                       "status": skill.get("status"),
                       "mode": pkg.skill_mode,
                       "processing_mode": pkg.processing_mode,
-                      "field_count": len(pkg.fields),
+                      # #21: advanced skills keep their fields in the
+                      # categories — counting only the top level reported 0
+                      "field_count": len(pkg.fields) + sum(
+                          len(c.fields or []) for c in (pkg.categories or [])),
                       "category_count": len(pkg.categories or [])},
             "conflicts": conflicts,
             "missing_channels": missing_channels,

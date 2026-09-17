@@ -537,7 +537,7 @@ async function importYaml(ev: Event) {
 .pkg-modal { width: 560px; max-width: 92vw; max-height: 84vh; overflow: auto;
   display: flex; flex-direction: column; gap: 10px; }
 .pkg-sec { display: flex; flex-direction: column; gap: 6px;
-  border-top: 1px solid var(--line); padding-top: 8px; }
+  border-top: 1px solid var(--border); padding-top: 8px; }
 .pkg-row { display: flex; align-items: center; justify-content: space-between;
   gap: 10px; font-size: 13px; }
 .pkg-row select { max-width: 260px; }
