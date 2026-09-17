@@ -12,7 +12,7 @@ use SkillPackageLoose which tolerates extra keys and future versions.
 """
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 
 class FieldOutputFormat(BaseModel):
@@ -99,10 +99,13 @@ class OutputConfig(BaseModel):
     naming_rule: str = ""
     searchable_pdf: bool = False
 
+    _normalized_off: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def _normalize(self):
         if self.enabled and self.action == "off":
             self.enabled = False
+            self._normalized_off = True
         return self
 
 

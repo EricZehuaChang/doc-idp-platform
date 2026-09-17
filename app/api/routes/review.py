@@ -301,6 +301,9 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             applied.append(e.field)
         f.result = result
         await s.commit()
+    if applied:                        # 9.15 WP6: artifact provenance revision
+        f.result_revision = (f.result_revision or 0) + 1
+        await s.commit()
     return {"file_id": file_id, "corrected_fields": applied}
 
 
@@ -347,4 +350,7 @@ async def _decide(file_id: str, new_status: str, actor: str, comment: str) -> di
     from app.integrations import webhooks
     await webhooks.fire(tenant, f"file.{new_status}",
                         {"file_id": file_id, "status": new_status, "by": actor})
+    if new_status == "passed":        # 9.15 WP6: artifacts (re)generate on pass
+        from app.tasks.output_stage import output_stage
+        await output_stage(file_id)
     return {"file_id": file_id, "status": new_status, "verified_by": actor}

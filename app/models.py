@@ -240,6 +240,33 @@ class StudioRun(Base):
                                                          nullable=True)
 
 
+class FileArtifact(Base):
+    """9.15 WP6 (R13): one output file of one document. Safety: the stored
+    key is built from ids only — the display name never touches the path.
+    Unique (file_id, source_revision, config_hash, doc_index) makes reruns
+    idempotent; a newer revision replaces the older artifact rows."""
+    __tablename__ = "file_artifacts"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.id"), index=True)
+    doc_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_revision: Mapped[int] = mapped_column(Integer, default=0)
+    config_hash: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(String(16), default="rename")  # rename|split
+    display_name: Mapped[str] = mapped_column(String(500), default="")
+    storage_key: Mapped[str] = mapped_column(String(1000), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|ready|error
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    searchable: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __table_args__ = (
+        Index("ux_file_artifacts_rev", "file_id", "source_revision",
+              "config_hash", "doc_index", unique=True),
+    )
+
+
 class Correction(Base):
     """Human correction log — the accuracy-proxy data behind the skill quality
     dashboard (PM item #1). Written on every field edit during verification."""

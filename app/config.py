@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     # platform vision channel for fast mode on scans; empty -> tenants without
     # a vision-capable custom channel fall back to the default OCR route
     fast_vision_provider: str = ""
+    # 9.15 WP6: timezone for {date}/{time} in output naming rules
+    output_tz: str = "Asia/Shanghai"
 
     # seal/signature detection (design 2026-08-07): per-host overrides for the
     # detectors.yaml model locations — air_gapped pre-seeds absolute paths,

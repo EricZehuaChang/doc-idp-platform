@@ -407,6 +407,9 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
     await shadow_meter(tenant_id=tenant, file_id=file_id, pages=pages, usage=usage)
     await webhooks.fire(tenant, f"file.{new_status}",
                         {"file_id": file_id, "status": new_status, "pages": pages})
+    if new_status == "completed":      # 9.15 WP6: artifacts generate on completion
+        from app.tasks.output_stage import output_stage
+        await output_stage(file_id)
 
 
 async def _fan_out_children(file_id: str, udr: UDR,

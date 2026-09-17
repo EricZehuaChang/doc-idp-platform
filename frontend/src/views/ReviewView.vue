@@ -164,6 +164,20 @@
         <button class="ghost" :disabled="!activeItem"
                 title="导出当前单据识别结果（JSON：字段值与明细行，不含引擎元数据）"
                 @click="exportResult('json')">导出 JSON</button>
+        <details v-if="artifacts.length" class="art-dropdown"
+                 data-testid="art-dropdown">
+          <summary>产出文件（{{ artifacts.length }}）</summary>
+          <ul>
+            <li v-for="a in artifacts" :key="a.artifact_id"
+                :title="a.error ?? ''">
+              <span class="art-name">{{ a.name }}</span>
+              <span class="dim">{{ a.size != null ? Math.round(a.size / 1024) + " KB" : "" }}
+                {{ a.status === "error" ? "失败" : a.searchable ? "可检索" : "" }}</span>
+              <button v-if="a.status === 'ready'" class="ghost"
+                      @click="api.artifactDownload(a.artifact_id, a.name)">下载</button>
+            </li>
+          </ul>
+        </details>
         <button class="ghost" :disabled="!activeItem"
                 title="导出当前单据识别结果（Markdown 表格，便于阅读与转贴）"
                 @click="exportResult('md')">导出 MD</button>
@@ -206,7 +220,8 @@
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
-import { api, fetchBlob, type DetectResult, type FieldCell, type RegionOverlay,
+import { api, fetchBlob, type Artifact, type DetectResult, type FieldCell,
+         type RegionOverlay,
          type ReviewItem, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -614,6 +629,15 @@ watch(detail, (v) => {
   if (!valid || !activeFileId.value) activeFileId.value = v.active_file_id;
 }, { immediate: true });
 watch(activeItem, (v) => { if (v) syncFromDetail(); }, { immediate: true });
+
+// —— 9.15 WP6: output artifacts of the open file (名称/大小/状态/下载) ——
+const artifacts = ref<Artifact[]>([]);
+watch(activeItem, async (v) => {
+  artifacts.value = [];
+  if (!v) return;
+  try { artifacts.value = (await api.fileArtifacts(v.file_id)).artifacts; }
+  catch { /* artifacts are optional; never block the review page */ }
+}, { immediate: true });
 watch(edits, saveDraft, { deep: true });
 
 // —— navigation destination, one source of truth (WP3): the browse arrows and

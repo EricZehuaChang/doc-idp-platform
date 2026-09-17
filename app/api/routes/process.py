@@ -447,6 +447,21 @@ async def transaction_documents(transaction_id: str):
         files = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id)
             .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
+        # 9.15 WP6: artifacts for every file of the txn (incl. failure reasons)
+        from app.models import FileArtifact
+        artifacts_by_file: dict[str, list[dict]] = {}
+        if files:
+            art_rows = (await s.execute(
+                select(FileArtifact)
+                .where(FileArtifact.tenant_id == tenant,
+                       FileArtifact.file_id.in_([f.id for f in files]),
+                       FileArtifact.status != "pending")
+                .order_by(FileArtifact.created_at))).scalars().all()
+            for a in art_rows:
+                artifacts_by_file.setdefault(a.file_id, []).append({
+                    "artifact_id": a.id, "name": a.display_name,
+                    "status": a.status, "error": a.error, "size": a.size,
+                    "searchable": a.searchable})
         roots = [f for f in files if f.parent_file_id is None]
         children_by_parent: dict[str, list[FileRecord]] = {}
         for f in files:
@@ -508,7 +523,7 @@ async def transaction_documents(transaction_id: str):
                         "data": _clean_data(k),
                         "review_fields": _review_fields(k.result or {}),
                         "metrics": (k.document_meta or {}).get("metrics"),
-                        "artifacts": []})
+                        "artifacts": artifacts_by_file.get(k.id, [])})
                 return docs
             pages = list(range(1, (f.page_count or 0) + 1))
             return [{
@@ -522,7 +537,7 @@ async def transaction_documents(transaction_id: str):
                 "data": _clean_data(f),
                 "review_fields": _review_fields(f.result or {}),
                 "metrics": (f.document_meta or {}).get("metrics"),
-                "artifacts": []}]
+                "artifacts": artifacts_by_file.get(f.id, [])}]
 
         def _clean_data(f: FileRecord):
             result = f.result

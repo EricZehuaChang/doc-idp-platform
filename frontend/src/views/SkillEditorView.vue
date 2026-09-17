@@ -391,12 +391,63 @@
             </div>
           </section>
 
-          <!-- —— 文件产出（WP6 上线前保持诚实占位） —— -->
-          <section v-show="step === 'output'" class="card-panel block step-panel">
+          <!-- —— 文件产出（9.15 WP6，图18-20） —— -->
+          <section v-show="step === 'output'" class="card-panel block step-panel"
+                   data-testid="output-step">
             <h3 class="block-title">文件产出</h3>
-            <p class="dim">
-              产出文件（按命名规则重命名、按文档拆分、可检索 PDF）随「文件产出」批次开放，
-              当前版本一律不改变上传原件。已配置的下载开关不会丢失。</p>
+            <label class="chk">
+              <input type="checkbox" data-testid="out-enabled"
+                     :checked="pkg!.output?.enabled" @change="toggleOutput($event)" />
+              允许下载文档
+            </label>
+            <template v-if="pkg!.output?.enabled">
+              <div class="out-actions">
+                <button class="mode-card" data-testid="out-rename"
+                        :class="{ on: pkg!.output?.action === 'rename' }"
+                        :disabled="false"
+                        @click="setOutputAction('rename')">
+                  <b>重命名原始文档</b>
+                  <span class="dim">整个原件按命名规则产出 1 个文件</span>
+                </button>
+                <button class="mode-card" data-testid="out-split"
+                        :class="{ on: pkg!.output?.action === 'split' }"
+                        :disabled="!splitAvailable"
+                        :title="splitAvailable ? '' :
+                          '拆分下载仅在高级模式且文件包含多份文档时可用'"
+                        @click="setOutputAction('split')">
+                  <b>拆分为子文档</b>
+                  <span class="dim">{{ splitAvailable
+                    ? "每份子文档按命名规则单独产出" :
+                    "拆分下载仅在文件包含多份文档时可用" }}</span>
+                </button>
+              </div>
+              <template v-if="pkg!.output?.action !== 'off'">
+                <label class="lbl">命名规则</label>
+                <input ref="outPatternInput" v-model="pkg!.output!.naming_rule"
+                       data-testid="out-pattern" class="txt"
+                       :placeholder="pkg!.output?.action === 'split'
+                         ? '{doc_index}_{doc_type}_{original_name}{original_ext}'
+                         : '{original_name}{original_ext}'"
+                       @input="outQueuePreview" />
+                <div class="token-row">
+                  <button v-for="t in outTokens" :key="t" class="tok"
+                          @click="insertToken(t)">{{ "{" + t + "}" }}</button>
+                </div>
+                <div class="out-preview" data-testid="out-preview">
+                  <span class="dim">预览：</span>
+                  <code v-if="outPreview.ok">{{ outPreview.preview }}</code>
+                  <span v-else class="err-text">{{ outErrors[0]?.message }}</span>
+                  <span v-if="outPreview.appended_ext" class="dim">
+                    （已自动补 {original_ext}）</span>
+                </div>
+                <label class="chk">
+                  <input type="checkbox" data-testid="out-searchable"
+                         :checked="pkg!.output?.searchable_pdf"
+                         @change="pkg!.output!.searchable_pdf = ($event.target as HTMLInputElement).checked" />
+                  转换为可检索 PDF（电子原件原样输出；扫描件/图片叠加隐藏文字层）
+                </label>
+              </template>
+            </template>
           </section>
         </div>
       </template>
@@ -462,6 +513,16 @@
                     </tbody>
                   </table>
                   <p v-else-if="doc.extraction_status !== 'not_requested'" class="dim">（无结果）</p>
+                  <div v-if="doc.artifacts?.length" class="pg-arts"
+                       data-testid="pg-arts">
+                    <span v-for="a in doc.artifacts" :key="a.artifact_id"
+                          class="pg-art" :title="a.error ?? ''">
+                      <button v-if="a.status === 'ready'" class="ghost"
+                              @click="api.artifactDownload(a.artifact_id, a.name)">
+                        ⤓ {{ a.name }}</button>
+                      <span v-else class="dim">{{ a.name }}（失败：{{ a.error }}）</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -577,7 +638,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
-import { api, downloadFile, type CategorySpec, type DryRunEntry, type FieldCell,
+import { api, downloadFile, type Artifact, type CategorySpec,
+         type DryRunEntry, type FieldCell,
          type FieldSpec, type SkillPackage, type TxnDocument } from "../api";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
@@ -664,6 +726,98 @@ function goto(k: string) {
 // —— 处理模式 (9.15 WP5, 图02–05): switching to fast keeps the saved review /
 // advanced config intact (greyed but not wiped); switching back restores it ——
 const fastMaxPages = 5;   // mirror of IDP_FAST_MAX_PAGES default (server enforces)
+// —— 9.15 WP6: output step (图18-20) ——
+const splitAvailable = computed(() => {
+  const p = pkg.value;
+  return !!p && p.skill_mode === "advanced"
+    && (p.document_layout ?? "mixed") !== "single";
+});
+
+function setOutputAction(a: "rename" | "split") {
+  const p = pkg.value;
+  if (!p?.output) return;
+  if (!p.output.enabled) p.output.enabled = true;   // clicking an action enables
+  p.output.action = a;
+  if (!p.output.naming_rule) {
+    p.output.naming_rule = a === "split"
+      ? "{doc_index}_{doc_type}_{original_name}{original_ext}"
+      : "{original_name}{original_ext}";
+  }
+}
+
+function toggleOutput(e: Event) {
+  const p = pkg.value;
+  if (!p?.output) return;
+  const on = (e.target as HTMLInputElement).checked;
+  p.output.enabled = on;
+  if (on && p.output.action === "off") setOutputAction("rename");
+}
+
+const outPatternInput = ref<HTMLInputElement>();
+const outPreview = ref<{ ok: boolean; preview: string; appended_ext: boolean }>(
+  { ok: true, preview: "", appended_ext: false });
+const outErrors = ref<{ message: string }[]>([]);
+const outTokens = ref<string[]>([]);
+let outPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+
+function outSampleData(): Record<string, unknown> {
+  // prefer the latest Playground result (§WP6), else blank placeholders
+  const d = pgDocs.value?.[0]?.data;
+  if (Array.isArray(d)) return {};
+  if (d && typeof d === "object") return d as Record<string, unknown>;
+  return {};
+}
+
+function outQueuePreview() {
+  if (outPreviewTimer) clearTimeout(outPreviewTimer);
+  outPreviewTimer = setTimeout(outRunPreview, 300);
+}
+
+async function outRunPreview() {
+  const p = pkg.value;
+  if (!p?.output) return;
+  const rule = p.output.naming_rule ||
+    (p.output.action === "split"
+      ? "{doc_index}_{doc_type}_{original_name}{original_ext}"
+      : "{original_name}{original_ext}");
+  const raw = (outPatternInput.value?.value ?? rule);
+  const pattern = /\{original_ext\}/.test(raw) || /\{data\./.test(raw)
+    ? raw : raw + "{original_ext}";
+  try {
+    const sampleData = outSampleData();
+    const r = await api.namingPreview({
+      pattern, searchable_pdf: p.output.searchable_pdf,
+      sample: { original_name: "示例扫描件.pdf", original_ext: ".pdf",
+                doc_type: "发票", doc_index: 2, data: sampleData } });
+    outPreview.value = { ok: r.ok, preview: r.preview,
+                         appended_ext: r.appended_ext };
+    outErrors.value = r.errors;
+    outTokens.value = r.tokens;
+  } catch { /* preview failures never block editing */ }
+}
+
+function insertToken(t: string) {
+  const el = outPatternInput.value;
+  const p = pkg.value;
+  if (!p?.output) return;
+  const tag = `{${t}}`;
+  if (!el) { p.output.naming_rule += tag; return; }
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? start;
+  el.value = el.value.slice(0, start) + tag + el.value.slice(end);
+  p.output.naming_rule = el.value;
+  el.focus();
+  el.setSelectionRange(start + tag.length, start + tag.length);
+  outQueuePreview();
+}
+
+watch(() => pkg.value?.output?.naming_rule, outQueuePreview);
+watch(() => pkg.value?.output?.searchable_pdf, outQueuePreview);
+// entering the step (or loading a package) seeds tokens + preview once
+watch(() => [step.value, pkg.value?.skill_code], ([st]) => {
+  if (st === "output") outQueuePreview();
+});
+
 function setProcessingMode(m: "balanced" | "fast") {
   const p = pkg.value;
   if (!p || m === p.processing_mode) return;
@@ -906,7 +1060,16 @@ const flowNodes = computed(() => {
     { key: "fields" as const, label: "字段提取",
       sub: `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
       bad: badFields },
-    { key: "output" as const, label: "文件产出", sub: "未开启下载", bad: false },
+    (() => {   // 9.15 WP6 (图18-20): subtitle counts enabled output items
+      const o = p.output;
+      if (!o?.enabled || o.action === "off") {
+        return { key: "output" as const, label: "文件产出",
+                 sub: "未开启下载", bad: false };
+      }
+      const n = 1 + (o.searchable_pdf ? 1 : 0);   // an action + maybe searchable
+      return { key: "output" as const, label: "文件产出",
+               sub: `已开启 ${n} 项`, bad: false };
+    })(),
   ];
 });
 
@@ -1014,8 +1177,10 @@ async function save() {
       toast.ok("技能已创建（v1 草稿）");
       router.push(`/skills/${pkg.value.skill_code}`);
     } else if (selectedStatus.value === "draft" && selectedVersion.value) {
-      await api.skillSaveDraft(props.code, selectedVersion.value, outbound(), changelog.value);
+      const r = await api.skillSaveDraft(props.code, selectedVersion.value,
+                                         outbound(), changelog.value);
       toast.ok(`v${selectedVersion.value} 草稿已保存（未新增版本）`);
+      for (const w of r.warnings ?? []) toast.ok(w);
       await load(selectedVersion.value);
     } else {
       const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
@@ -1427,6 +1592,32 @@ async function goldenCheck() {
 .pg-detail { list-style: none; margin: 0 0 10px; padding: 0; }
 .pg-detail li { padding: 4px 0; border-bottom: 1px solid var(--border); }
 .pg-detail code { font-size: 11px; }
+
+/* —— 9.15 WP6 output step —— */
+.out-actions { display: flex; gap: 10px; margin-top: 10px; }
+.out-actions .mode-card { flex: 1; min-width: 0; }
+.out-actions .mode-card:disabled { opacity: .5; cursor: not-allowed; }
+.token-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.token-row .tok { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line);
+  border-radius: 10px; background: transparent; cursor: pointer; }
+.token-row .tok:hover { border-color: var(--accent); }
+.out-preview { margin: 6px 0 10px; font-size: 13px; }
+.out-preview code { background: var(--bg-soft, #f5f5f7); padding: 2px 6px;
+  border-radius: 4px; }
+.chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+.pg-arts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pg-art .ghost { font-size: 12px; padding: 2px 8px; }
+.art-dropdown { position: relative; }
+.art-dropdown summary { cursor: pointer; list-style: none; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.art-dropdown ul { position: absolute; z-index: 30; top: 100%; left: 0;
+  min-width: 280px; margin: 4px 0 0; padding: 6px; list-style: none;
+  background: var(--panel, #fff); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
+.art-dropdown li { display: flex; align-items: center; gap: 8px; padding: 4px 6px;
+  font-size: 13px; }
+.art-dropdown .art-name { flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1100px) {
   .design-body { grid-template-columns: 1fr; }

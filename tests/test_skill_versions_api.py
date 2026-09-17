@@ -45,7 +45,7 @@ async def test_save_updates_draft_in_place_and_keeps_the_version_note(tmp_path, 
                                 json={"package": _pkg(), "changelog": f"第一版（改{i}）"})
                 assert r.status_code == 200, r.text
                 assert r.json() == {"skill_code": "verspec", "version": 1,
-                                    "status": "draft"}
+                                    "status": "draft", "warnings": []}
             d = (await c.get("/api/v1/skills/verspec")).json()
             assert [v["version"] for v in d["versions"]] == [1]
             # the note the user typed is on the version they were editing

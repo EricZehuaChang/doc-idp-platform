@@ -389,3 +389,32 @@ async def run_detail(run_id: str):
         out["transaction_status"] = txn.status if txn else None
         out["transaction_error"] = None   # file-level errors live on files
     return out
+
+
+@router.post("/naming-preview")
+async def naming_preview(payload: dict):
+    """Server-side naming preview (§WP6: the ONLY implementation — the editor
+    calls this 300ms after the last keystroke). `sample` values prefer the
+    latest Playground run of a sample; the editor falls back to placeholders."""
+    from app.extraction import naming
+    from app.config import get_settings
+    pattern = str(payload.get("pattern") or "")
+    errors = naming.validate_pattern(pattern)
+    tokens = naming.tokens_of(pattern)
+    normalized, appended = naming.ensure_extension(pattern)
+    sample = payload.get("sample") or {}
+    data = sample.get("data") or {}
+    clean = {k: (v.get("$value") if isinstance(v, dict) else v)
+             for k, v in data.items()} if isinstance(data, dict) else {}
+    preview, r_errs = naming.render(
+        pattern,
+        original_name=str(sample.get("original_name") or "sample.pdf"),
+        original_ext=str(sample.get("original_ext") or ".pdf"),
+        output_is_pdf=bool(payload.get("searchable_pdf")),
+        doc_type=sample.get("doc_type"),
+        doc_index=sample.get("doc_index"),
+        data=clean if isinstance(clean, dict) else {},
+        output_tz=get_settings().output_tz)
+    return {"ok": not errors and not r_errs, "preview": preview,
+            "appended_ext": appended, "normalized_pattern": normalized,
+            "errors": errors + r_errs, "tokens": tokens}

@@ -390,7 +390,12 @@ async def update_draft(skill_code: str, version: int, payload: DraftUpdate):
         skill.name = payload.package.name or skill.name
         _touch(skill)
         await s.commit()
-    return {"skill_code": skill_code, "version": version, "status": "draft"}
+    # 9.15 WP6: report silent normalizations (download on but no action picked)
+    warnings = []
+    if payload.package.output._normalized_off:
+        warnings.append("已开启下载但未选择动作，下载开关已恢复为关闭")
+    return {"skill_code": skill_code, "version": version, "status": "draft",
+            "warnings": warnings}
 
 
 # a transaction whose pipeline has not finished still reloads its package by

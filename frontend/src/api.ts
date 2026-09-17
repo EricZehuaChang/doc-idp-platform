@@ -176,7 +176,7 @@ export interface TxnDocument {
   data: Record<string, unknown> | unknown[] | null;
   review_fields: string[];
   metrics: Record<string, number | string> | null;
-  artifacts: unknown[];
+  artifacts: Artifact[];
 }
 export interface TxnDocuments {
   transaction_id: string; purpose: string; status: string;
@@ -223,6 +223,13 @@ export interface CategorySpec {
   additional_rules: string;
   output_shape: "object" | "list";
   skill_ref: SkillRef | null;
+}
+export interface Artifact {
+  artifact_id: string; file_id: string; doc_index: number | null;
+  action: "rename" | "split"; name: string;
+  status: "ready" | "error" | "pending"; error: string | null;
+  size: number | null; sha256: string; searchable: boolean;
+  created_at: string;
 }
 export interface OutputConfig {
   enabled: boolean; action: "off" | "rename" | "split";
@@ -485,7 +492,7 @@ export const api = {
   /** Save into the draft being edited. "保存" must not mint a version — only
    *  「新建版本」and publishing move the version pointer (P04). */
   skillSaveDraft: (code: string, version: number, pkg: SkillPackage, changelog = "") =>
-    req<{ version: number; status: string }>(
+    req<{ version: number; status: string; warnings?: string[] }>(
       "PUT", `/api/v1/skills/${code}/versions/${version}`,
       { package: pkg, changelog }),
   skillOptions: () => req<SkillOptions>("GET", "/api/v1/skills/model-options"),
@@ -609,6 +616,18 @@ export const api = {
           status: string; duration_ms: number | null; transaction_id: string;
           file_id: string | null; transaction_status: string | null }>(
       "GET", `/api/v1/studio/runs/${runId}`),
+  namingPreview: (payload: { pattern: string; searchable_pdf: boolean;
+                             sample?: Record<string, unknown> }) =>
+    req<{ ok: boolean; preview: string; appended_ext: boolean;
+          normalized_pattern: string;
+          errors: { path: string; token: string; message: string }[];
+          tokens: string[] }>("POST", "/api/v1/studio/naming-preview", payload),
+  fileArtifacts: (fileId: string) =>
+    req<{ artifacts: Artifact[] }>("GET", `/api/v1/files/${fileId}/artifacts`),
+  txnArtifacts: (txnId: string) =>
+    req<{ artifacts: Artifact[] }>("GET", `/api/v1/transactions/${txnId}/artifacts`),
+  artifactDownload: (id: string, name: string) =>
+    downloadFile(`/api/v1/artifacts/${id}/download`, name),
   txnDocuments: (txnId: string) =>
     req<TxnDocuments>("GET", `/api/v1/transactions/${txnId}/documents`),
   referenceSkills: (exclude?: string) =>
