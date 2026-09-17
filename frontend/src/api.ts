@@ -103,7 +103,7 @@ export interface QueueItem {
 }
 
 export interface FieldCell {
-  $value: string; $confidence: number;
+  $value: string; /** null = 极速模式未评分 */ $confidence: number | null;
   $bbox: number[]; $pages: number | string;
   inferred?: boolean; $reasoning?: string; $corrected?: boolean;
   $rule_failures?: string[];
@@ -167,6 +167,22 @@ export interface UploadLimits {
 export interface SubmitResult {
   transaction_id: string;
   files: { file_id: string; original_filename: string }[];
+}
+export interface TxnDocument {
+  file_id: string; doc_index: number | null; doc_type: string | null;
+  category_id: string | null; handler: string | null;
+  source_pages: number[]; page_range: string;
+  extraction_status: string | null; error: string | null;
+  data: Record<string, unknown> | unknown[] | null;
+  review_fields: string[];
+  metrics: Record<string, number | string> | null;
+  artifacts: unknown[];
+}
+export interface TxnDocuments {
+  transaction_id: string; purpose: string; status: string;
+  skill_code: string; skill_version: number;
+  files: { file_id: string; file_name: string; status: string;
+           page_count: number | null; documents: TxnDocument[] }[];
 }
 export interface TxnStatus {
   transaction_id: string; status: string; skill_code: string; skill_version: number;
@@ -570,6 +586,31 @@ export const api = {
                      created_at: string }[] }>(
       "GET", `/api/v1/studio/samples${skillCode ? `?skill_code=${skillCode}` : ""}`),
   studioDeleteSample: (id: string) => req("DELETE", `/api/v1/studio/samples/${id}`),
+  // —— 9.15 WP5: Playground test runs (§3.5 documents view) ——
+  studioCreateRun: (payload: { skill_code: string; version?: number;
+                               sample_ids: string[] }) =>
+    req<{ transaction_id: string;
+          runs: { run_id: string; sample_id: string; file_id: string | null;
+                  status: string }[] }>("POST", "/api/v1/studio/runs", payload),
+  studioRuns: (params: { skill_code?: string; sample_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.skill_code) q.set("skill_code", params.skill_code);
+    if (params.sample_id) q.set("sample_id", params.sample_id);
+    const qs = q.toString();
+    return req<{ runs: { run_id: string; skill_code: string; version: number;
+                         sample_id: string; transaction_id: string;
+                         file_id: string | null; status: string;
+                         processing_mode: string; duration_ms: number | null;
+                         created_by: string; created_at: string }[] }>(
+      "GET", `/api/v1/studio/runs${qs ? `?${qs}` : ""}`);
+  },
+  studioRun: (runId: string) =>
+    req<{ run_id: string; version: number; processing_mode: string;
+          status: string; duration_ms: number | null; transaction_id: string;
+          file_id: string | null; transaction_status: string | null }>(
+      "GET", `/api/v1/studio/runs/${runId}`),
+  txnDocuments: (txnId: string) =>
+    req<TxnDocuments>("GET", `/api/v1/transactions/${txnId}/documents`),
   referenceSkills: (exclude?: string) =>
     req<{ skills: { skill_code: string; name: string; published_version: number;
                      field_count: number;

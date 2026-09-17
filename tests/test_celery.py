@@ -61,7 +61,7 @@ def test_eager_canvas_end_to_end(tmp_path, monkeypatch):
     import app.tasks.runner as runner_mod
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
     monkeypatch.setattr(runner_mod, "extract",
-                        lambda udr, pkg: ({"invoice_no": {"$value": "INV-1", "$confidence": 3,
+                        lambda udr, pkg, **kw: ({"invoice_no": {"$value": "INV-1", "$confidence": 3,
                                                           "$bbox": [1, 2, 3, 4], "$pages": [1]}},
                                           {"prompt_tokens": 10, "completion_tokens": 5}, False))
 
@@ -144,7 +144,7 @@ def test_eager_advanced_mode_fans_out_children(tmp_path, monkeypatch):
     import app.tasks.runner as runner_mod
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: UDR_SAMPLE)
     monkeypatch.setattr(runner_mod, "extract",
-                        lambda udr, pkg: ({"invoice_no": {"$value": "INV-1", "$confidence": 3,
+                        lambda udr, pkg, **kw: ({"invoice_no": {"$value": "INV-1", "$confidence": 3,
                                                           "$bbox": [1, 2, 3, 4], "$pages": [1]}},
                                           {"prompt_tokens": 10, "completion_tokens": 5}, False))
 

@@ -101,7 +101,8 @@ def _images_for(unit: UDR, page_images: dict[int, str] | None) -> list[str]:
 
 def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
                  transport=None,
-                 page_images: dict[int, str] | None = None
+                 page_images: dict[int, str] | None = None,
+                 single_call: bool = False
                  ) -> tuple[dict, dict, list[str]]:
     """Model call with page-map/table-reduce for long multi-page outputs.
 
@@ -110,7 +111,7 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
     images. Text-only channels must never receive image parts."""
     # Entity-list tables are document-wide de-duplicated sweeps, not layout
     # detail tables.  Keep them whole so page boundaries do not duplicate hits.
-    page_map = len(udr.pages) > 1 and any(
+    page_map = (not single_call) and len(udr.pages) > 1 and any(
         f.type == "table" and not f.entity_list for f in pkg.fields)
     units = [_page_udr(udr, page) for page in udr.pages] if page_map else [udr]
     parts: list[dict] = []
@@ -194,19 +195,26 @@ def _locate_rows(rows: list, spec, udr: UDR) -> list:
 
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
             provider_override: str | None = None,
-            page_images: dict[int, str] | None = None) -> tuple[dict, dict, bool]:
+            page_images: dict[int, str] | None = None,
+            fast: bool = False) -> tuple[dict, dict, bool]:
     """Returns (result, usage, needs_review). Resilience: extractor -> fallback
     chain with cooldown (M1 acceptance hit exactly this failure mode).
     Challenger arbitration (§5.3 model channel): a second model re-extracts and
-    disagreements are forced into human review."""
+    disagreements are forced into human review.
+
+    `fast=True` (9.15 WP5 极速模式): one single model call for the whole file
+    (no per-page split & merge), no challenger, no cell scoring — the result
+    contract carries $confidence=None/$bbox=[]/$pages="" ("未评分", never a
+    fabricated high score); rule failures still surface as $rule_failures."""
     chain = _provider_chain(pkg, provider_override)
     raw, usage, providers_used = _raw_extract(
-        udr, pkg, chain, transport=transport, page_images=page_images)
+        udr, pkg, chain, transport=transport, page_images=page_images,
+        single_call=fast)
 
     # challenger pass (skipped for dry-run overrides: they compare providers
     # explicitly). Best-effort: an unavailable challenger never fails the file.
     challenger_raw: dict | None = None
-    challenger = pkg.model_binding.challenger
+    challenger = None if fast else pkg.model_binding.challenger
     if challenger and not provider_override and challenger not in providers_used:
         try:
             challenger_raw, ch_usage, _ = _raw_extract(
@@ -233,7 +241,8 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         raw_val = raw.get(f.name)
         if f.type == "table":
             rows = raw_val if isinstance(raw_val, list) else []
-            rows = _locate_rows(rows, f, udr)
+            if not fast:
+                rows = _locate_rows(rows, f, udr)   # fast mode: no bbox scoring
             result[f.name] = formatting.format_table_rows(rows, f)
             continue
         reasoning = None
@@ -242,12 +251,31 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
             reasoning = str(raw_val.get("reasoning") or "")
         else:
             value = "" if raw_val is None else str(raw_val)
+        if fast:
+            # 未评分契约 (§WP5): confidence None — readers must render "未评分";
+            # fabricating a number would fake quality the pipeline never measured
+            cell: dict[str, object] = {"$value": value, "$confidence": None,
+                                       "$bbox": [], "$pages": ""}
+            if f.mode == "inferred":
+                cell["inferred"] = True
+                cell["$reasoning"] = reasoning or ""
+            if f.name in rule_failures:
+                cell["$rule_failures"] = rule_failures[f.name]
+            formatted, fmt_err = formatting.format_value(f, value)
+            if fmt_err is None:
+                if formatted != value:
+                    cell["$raw"] = value
+                    cell["$value"] = formatted
+            else:
+                cell["$format_error"] = fmt_err
+            result[f.name] = cell
+            continue
         score, page, bbox = conf.score_field(
             value=value, udr=udr,
             rule_failed=f.name in rule_failures,
             inferred=(f.mode == "inferred"),
             has_reasoning=bool(reasoning))
-        cell: dict[str, object] = {
+        cell = {
             "$value": value, "$confidence": score,
             "$bbox": bbox or [], "$pages": page or "",
         }

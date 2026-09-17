@@ -14,7 +14,7 @@ from sqlalchemy import JSON, Boolean, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, session_factory
-from app.models import _uuid
+from app.models import FileRecord, Transaction, _uuid
 
 log = logging.getLogger("idp.webhooks")
 
@@ -38,8 +38,23 @@ def _sign(secret: str, body: bytes) -> str:
 
 async def fire(tenant_id: str, event: str, payload: dict,
                transport: httpx.AsyncBaseTransport | None = None) -> None:
-    """Deliver event to all matching hooks. Never raises."""
+    """Deliver event to all matching hooks. Never raises.
+
+    9.15 WP5 (§3.9): purpose=test transactions never reach webhooks — the
+    transaction is resolved from the payload (transaction_id, or via file_id)
+    and test events are dropped silently."""
+    txn_id = payload.get("transaction_id")
     sf = session_factory()
+    async with sf() as s:
+        if not txn_id and payload.get("file_id"):
+            f = await s.get(FileRecord, payload["file_id"])
+            if f is not None:
+                txn = await s.get(Transaction, f.transaction_id)
+                txn_id = txn.id if txn else None
+        if txn_id:
+            txn = await s.get(Transaction, txn_id)
+            if txn is not None and txn.purpose == "test":
+                return
     async with sf() as s:
         hooks = (await s.execute(
             select(Webhook).where(Webhook.tenant_id == tenant_id,

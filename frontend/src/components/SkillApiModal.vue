@@ -33,7 +33,7 @@
         <p class="dim schema-head">结果字段结构（每个字段是一个对象）：</p>
         <pre>{{ SCHEMA }}</pre>
         <ul class="legend dim">
-          <li><code>$confidence</code> 0-3 置信分级：3=原文精确定位；&lt;2 会进人工校验</li>
+          <li><code>$confidence</code> 0-3 置信分级：3=原文精确定位；&lt;2 会进人工校验；极速模式返回 null（未评分，无定位）</li>
           <li><code>$bbox</code>/<code>$pages</code> 字段在原件中的位置（校验界面高亮同源）</li>
           <li><code>inferred: true</code> 为模型推断值，附 <code>$reasoning</code> 理由</li>
           <li>明细表字段的值是行对象数组</li>
@@ -102,7 +102,7 @@ const curlHook = computed(() => `curl -X POST ${base}/api/v1/webhooks \\
 
 const SCHEMA = `"invoice_no": {
   "$value": "INV-2026-001",   // 抽取值
-  "$confidence": 3,           // 0-3 置信
+  "$confidence": 3,           // 0-3 置信；极速模式为 null
   "$bbox": [413, 265, 616, 274],
   "$pages": 1
 }`;

@@ -111,22 +111,45 @@
               </label>
             </div>
 
-            <h4 class="sub-title">人工复核模式</h4>
+            <h4 class="sub-title">处理模式（图02–05）</h4>
             <div class="cards">
-              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'never' }"
+              <button class="mode-card" :class="{ on: pkg.processing_mode !== 'fast' }"
+                      @click="setProcessingMode('balanced')">
+                <strong>均衡</strong>
+                <span class="dim">逐页定位与置信评分，支持复核与挑战者模型</span></button>
+              <button class="mode-card" :class="{ on: pkg.processing_mode === 'fast' }"
+                      data-testid="fast-mode-card"
+                      @click="setProcessingMode('fast')">
+                <strong>极速</strong>
+                <span class="dim">适用于页数较少、追求速度的文档，不支持复核；
+                  单页上限 {{ fastMaxPages }} 页</span></button>
+            </div>
+            <p v-if="pkg.processing_mode === 'fast'" class="dim adv-note" data-testid="fast-note">
+              极速模式：结果不带定位与置信评分（显示「未评分」），不进入人工复核；
+              校验器照常运行。已保存的复核与高级配置会保留，切回「均衡」后恢复。</p>
+
+            <h4 class="sub-title">人工复核模式</h4>
+            <div class="cards" :class="{ disabled: pkg.processing_mode === 'fast' }">
+              <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
+                      :class="{ on: pkg.review_policy.mode === 'never' }"
                       @click="pkg.review_policy.mode = 'never'">
                 <strong>无需人工复核</strong>
                 <span class="dim">识别结果直接通过，不停留审单</span></button>
-              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'auto' }"
+              <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
+                      :class="{ on: pkg.review_policy.mode === 'auto' }"
                       @click="pkg.review_policy.mode = 'auto'">
                 <strong>低置信度时复核</strong>
                 <span class="dim">低于阈值的字段进入审单</span></button>
-              <button class="mode-card" :class="{ on: pkg.review_policy.mode === 'always' }"
+              <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
+                      :class="{ on: pkg.review_policy.mode === 'always' }"
                       @click="pkg.review_policy.mode = 'always'">
                 <strong>始终需要复核</strong>
                 <span class="dim">每份文档都进审单</span></button>
             </div>
-            <label v-if="pkg.review_policy.mode === 'auto'" class="thr">
+            <p v-if="pkg.processing_mode === 'fast'" class="dim">
+              极速模式不支持人工复核。</p>
+            <label v-if="pkg.review_policy.mode === 'auto' && pkg.processing_mode !== 'fast'"
+                   class="thr">
               置信阈值（低于则人审）
               <select v-model.number="pkg.review_policy.confidence_threshold">
                 <option :value="1">1</option><option :value="2">2</option>
@@ -134,12 +157,14 @@
               </select></label>
 
             <h4 class="sub-title">技能模式</h4>
-            <div class="cards">
-              <button class="mode-card" :class="{ on: pkg.skill_mode !== 'advanced' }"
+            <div class="cards" :class="{ disabled: pkg.processing_mode === 'fast' }">
+              <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
+                      :class="{ on: pkg.skill_mode !== 'advanced' }"
                       @click="pkg.skill_mode = 'standard'">
                 <strong>标准</strong>
                 <span class="dim">一份文档、一组字段，适合大多数单据</span></button>
-              <button class="mode-card" :class="{ on: pkg.skill_mode === 'advanced' }"
+              <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
+                      :class="{ on: pkg.skill_mode === 'advanced' }"
                       @click="pkg.skill_mode = 'advanced'">
                 <strong>高级</strong>
                 <span class="dim">一份文件多种单据，先分类再提取</span></button>
@@ -379,8 +404,106 @@
       <!-- —— 测试 tab：试运行 + 金样本回归（Playground 将在极速模式批次替换试运行） —— -->
       <template v-else>
         <div class="test-grid">
+          <!-- —— 9.15 WP5 Playground (图21) —— -->
+          <section v-if="!isNew" class="card-panel block playground" data-testid="playground">
+            <h3 class="block-title">Playground（测试运行）</h3>
+            <p class="dim">勾选样本运行当前定义（含未发布草稿）；测试任务不会进入任务列表、统计、
+              数据柜、审单队列，也不会触发 webhook。</p>
+            <div class="pg-grid">
+              <div class="pg-samples">
+                <input v-model="pgSearch" placeholder="搜索样本…" />
+                <label class="file-btn"><input type="file" hidden @change="pgUpload" />
+                  <span class="btn-like">上传样本</span></label>
+                <ul class="pg-list">
+                  <li v-for="s in pgFilteredSamples" :key="s.id">
+                    <label>
+                      <input type="checkbox" :value="s.id" v-model="pgSelected" />
+                      <span>{{ s.file_name }}</span>
+                      <small v-if="pgStatus(s.id)" class="dim">{{ pgStatus(s.id) }}</small>
+                    </label>
+                  </li>
+                  <li v-if="!pgFilteredSamples.length" class="dim">还没有样本</li>
+                </ul>
+                <button class="primary" data-testid="pg-run" :disabled="!pgSelected.length || pgPolling"
+                        @click="pgRun">运行测试（{{ pgSelected.length }}）</button>
+              </div>
+              <div class="pg-result">
+                <div class="pg-top">
+                  <strong v-if="pgCurrent">{{ pgCurrent.file_name }}</strong>
+                  <span v-if="pgCurrent" class="chip" :class="`chip-${pgCurrent.status}`">{{ pgCurrent.status }}</span>
+                  <span v-if="pgDuration" class="dim">{{ pgDuration }} ms</span>
+                  <button class="btn-like" @click="pgHistoryOpen = true; pgLoadHistory()" data-testid="pg-history">运行历史</button>
+                  <button v-if="pgCurrentRun" class="btn-like" @click="pgDetailOpen = true">详情</button>
+                </div>
+                <p v-if="pgFast" class="dim">极速模式不提供定位高亮；结果不带置信评分（未评分）。</p>
+                <p v-if="!pgDocs.length" class="dim">运行后在这里查看提取结果。</p>
+                <div v-for="doc in pgDocs" :key="`${doc.file_id}-${doc.doc_index}`" class="pg-doc">
+                  <div class="pg-doc-head">
+                    <strong>文档 {{ doc.doc_index }}</strong>
+                    <span v-if="doc.doc_type" class="chip">{{ doc.doc_type }}</span>
+                    <span class="dim">第 {{ doc.page_range }} 页</span>
+                    <span v-if="doc.extraction_status === 'not_requested'" class="dim">
+                      仅分类，没有需要校验的字段</span>
+                  </div>
+                  <table v-if="doc.data && !Array.isArray(doc.data) && Object.keys(doc.data).length">
+                    <tbody>
+                      <tr v-for="(v, k) in (doc.data as Record<string, unknown>)" :key="k">
+                        <td class="dim">{{ k }}
+                          <span v-if="doc.review_fields.includes(String(k))" class="badge-r">待复核</span></td>
+                        <td>{{ typeof v === "object" ? JSON.stringify(v) : (v || "—") }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <table v-else-if="Array.isArray(doc.data) && doc.data.length">
+                    <tbody>
+                      <tr v-for="(row, i) in doc.data" :key="i">
+                        <td>{{ JSON.stringify(row) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p v-else-if="doc.extraction_status !== 'not_requested'" class="dim">（无结果）</p>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="pgHistoryOpen" class="modal-mask" @click.self="pgHistoryOpen = false">
+              <div class="modal pg-modal">
+                <h4>运行历史</h4>
+                <table v-if="pgHistory.length">
+                  <thead><tr><th>样本</th><th>版本</th><th>状态</th><th>耗时</th><th>发起人</th><th>时间</th></tr></thead>
+                  <tbody>
+                    <tr v-for="r in pgHistory" :key="r.run_id" class="pg-hist-row"
+                        @click="pgLoadRun(r.run_id)">
+                      <td>{{ pgSampleName(r.sample_id) }}</td><td>v{{ r.version }}</td>
+                      <td>{{ r.status }}</td>
+                      <td>{{ r.duration_ms ?? "—" }}</td><td>{{ r.created_by }}</td>
+                      <td class="dim">{{ r.created_at.slice(0, 19).replace("T", " ") }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p v-else class="dim">还没有运行记录。</p>
+                <button @click="pgHistoryOpen = false">关闭</button>
+              </div>
+            </div>
+
+            <div v-if="pgDetailOpen && pgDetail" class="modal-mask" @click.self="pgDetailOpen = false">
+              <div class="modal pg-modal" data-testid="pg-detail">
+                <h4>运行详情（图22）</h4>
+                <ul class="pg-detail">
+                  <li>技能版本：<strong>v{{ pgDetail.version }}</strong></li>
+                  <li>处理模式：{{ pgDetail.processing_mode === "fast" ? "极速" : "均衡" }}</li>
+                  <li>状态：{{ pgDetail.status }}</li>
+                  <li>耗时：{{ pgDetail.duration_ms ?? "—" }} ms</li>
+                  <li>Transaction ID：<code>{{ pgDetail.transaction_id }}</code></li>
+                  <li>File ID：<code>{{ pgDetail.file_id }}</code></li>
+                </ul>
+                <button @click="pgDetailOpen = false">关闭</button>
+              </div>
+            </div>
+          </section>
+
           <section class="card-panel block">
-            <h3 class="block-title">试运行（dry-run）</h3>
+            <h3 class="block-title">模型对比（多模型并排试运行）</h3>
             <p class="dim">当前定义在一份样本上试跑，可多模型并排对比。</p>
             <input v-model="dryProviders" list="dl-providers"
                    placeholder="模型列表，逗号分隔；空=默认" />
@@ -400,7 +523,7 @@
                     <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
                       <td class="dim">{{ name }}</td>
                       <td>{{ cell.$value || "—" }}</td>
-                      <td><span class="conf">c{{ cell.$confidence }}</span></td>
+                      <td><span class="conf">{{ cell.$confidence === null ? "未评分" : `c${cell.$confidence}` }}</span></td>
                     </tr>
                   </tbody>
                 </table>
@@ -455,7 +578,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type CategorySpec, type DryRunEntry, type FieldCell,
-         type FieldSpec, type SkillPackage } from "../api";
+         type FieldSpec, type SkillPackage, type TxnDocument } from "../api";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
 import GenerateFieldsModal from "../components/GenerateFieldsModal.vue";
@@ -538,6 +661,25 @@ function goto(k: string) {
   step.value = k as typeof step.value;
 }
 
+// —— 处理模式 (9.15 WP5, 图02–05): switching to fast keeps the saved review /
+// advanced config intact (greyed but not wiped); switching back restores it ——
+const fastMaxPages = 5;   // mirror of IDP_FAST_MAX_PAGES default (server enforces)
+function setProcessingMode(m: "balanced" | "fast") {
+  const p = pkg.value;
+  if (!p || m === p.processing_mode) return;
+  if (m === "fast") {
+    const topFields = (p.fields ?? []).length > 0;
+    if (p.skill_mode === "advanced" && !topFields) {
+      toast.error("请先切换到标准提取并配置字段（fast_mode_requires_standard_fields）");
+      return;
+    }
+    if (p.skill_mode === "advanced" && topFields) {
+      toast.ok("极速模式将按标准字段提取，高级分类配置已保留但不生效");
+    }
+  }
+  p.processing_mode = m;
+}
+
 // —— 文档分类 (R08, 图06–11): categories live on the package; Other is a fixed
 // sentinel at the bottom (doc_type stays "Other") ——
 const refSkills = ref<{ skill_code: string; name: string; published_version: number;
@@ -597,6 +739,154 @@ function refVersions(c: CategorySpec): number[] {
 }
 function refFields(c: CategorySpec) {
   return refMeta(c)?.fields ?? [];
+}
+
+// —— Playground (9.15 WP5, 图21): sample test runs against the current draft ——
+interface PgSample { id: string; file_name: string; skill_code: string | null; created_at: string }
+const pgSamples = ref<PgSample[]>([]);
+const pgSearch = ref("");
+const pgSelected = ref<string[]>([]);
+const pgPolling = ref(false);
+const pgHistoryOpen = ref(false);
+const pgDetailOpen = ref(false);
+const pgHistory = ref<{ run_id: string; sample_id: string; version: number;
+                        status: string; duration_ms: number | null;
+                        created_by: string; created_at: string }[]>([]);
+const pgDetail = ref<{ version: number; processing_mode: string; status: string;
+                       duration_ms: number | null; transaction_id: string;
+                       file_id: string | null } | null>(null);
+const pgDocs = ref<TxnDocument[]>([]);
+const pgCurrent = ref<{ file_id: string; file_name: string; status: string } | null>(null);
+const pgCurrentRun = ref<string | null>(null);
+const pgCurrentMode = ref<string>("balanced");
+const runBySample = ref<Record<string, { runId: string; txnId: string }>>({});
+let pgTimer: ReturnType<typeof setInterval> | null = null;
+const pgFast = computed(() => pgCurrentMode.value === "fast");
+const pgDuration = computed(() => {
+  if (!pgDocs.value.length) return null;
+  const totals = pgDocs.value.map((d) => d.metrics?.total_ms).filter(Boolean);
+  return totals.length ? Math.max(...(totals as number[])) : null;
+});
+const pgFilteredSamples = computed(() => pgSamples.value.filter(
+  (s) => !pgSearch.value || s.file_name.toLowerCase().includes(pgSearch.value.toLowerCase())));
+
+const sampleStatus = ref<Record<string, string>>({});
+function pgStatus(sampleId: string): string {
+  return sampleStatus.value[sampleId] ?? "";
+}
+
+watch([tab, props.code], async ([t]) => {
+  if (t !== "test" || pgSamples.value.length) return;
+  try {
+    pgSamples.value = (await api.studioSamples(props.code)).samples;
+  } catch { /* samples panel degrades to empty */ }
+}, { immediate: true });
+
+async function pgUpload(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files?.length) return;
+  try {
+    await api.studioUploadSample(input.files[0], props.code);
+    pgSamples.value = (await api.studioSamples(props.code)).samples;
+    toast.ok("样本已上传");
+  } catch (err) {
+    toast.error(`样本上传失败：${err instanceof Error ? err.message : err}`);
+  }
+  input.value = "";
+}
+
+async function pgRun() {
+  if (!pgSelected.value.length) return;
+  try {
+    const r = await api.studioCreateRun({ skill_code: props.code ?? "",
+                                         sample_ids: pgSelected.value });
+    for (const run of r.runs) {
+      runBySample.value[run.sample_id] = { runId: run.run_id, txnId: r.transaction_id };
+      sampleStatus.value[run.sample_id] = "运行中…";
+    }
+    pgPollTransaction(r.transaction_id);
+  } catch (err) {
+    toast.error(`运行失败：${err instanceof Error ? err.message : err}`);
+  }
+}
+
+function pgPollTransaction(txnId: string) {
+  pgPolling.value = true;
+  if (pgTimer) clearInterval(pgTimer);
+  pgTimer = setInterval(async () => {
+    try {
+      const st = await api.txnStatus(txnId);
+      const root = st.files[0];
+      if (root) {
+        pgCurrent.value = { file_id: root.file_id, file_name: root.file_name,
+                            status: root.status };
+        const active = root.children?.length ? root.children[0] : root;
+        if (active) {
+          pgCurrent.value = { file_id: active.file_id, file_name: root.file_name,
+                              status: active.status };
+        }
+      }
+      const terminal = st.files.every((f) =>
+        ["completed", "passed", "error", "rejected"].includes(f.status));
+      if (terminal) {
+        if (pgTimer) clearInterval(pgTimer);
+        pgTimer = null;
+        pgPolling.value = false;
+        for (const [sid, r] of Object.entries(runBySample.value)) {
+          if (r.txnId === txnId) {
+            sampleStatus.value[sid] = st.files.every((f) => f.status === "error")
+              ? "失败" : "完成";
+          }
+        }
+        await pgLoadDocuments(txnId);
+        pgLoadHistory();
+      }
+    } catch {
+      if (pgTimer) clearInterval(pgTimer);
+      pgTimer = null;
+      pgPolling.value = false;
+    }
+  }, 2000);
+}
+
+async function pgLoadDocuments(txnId: string) {
+  try {
+    const d = await api.txnDocuments(txnId);
+    pgDocs.value = d.files.flatMap((f) => f.documents);
+    pgCurrentMode.value =
+      pgDocs.value.some((x) => x.metrics?.parse_route === "vision") ? "fast" : pgCurrentMode.value;
+  } catch { /* keep previous view */ }
+}
+
+async function pgLoadHistory() {
+  try {
+    pgHistory.value = (await api.studioRuns({ skill_code: props.code })).runs;
+  } catch { /* history is best-effort */ }
+}
+
+function pgSampleName(id: string): string {
+  return pgSamples.value.find((s) => s.id === id)?.file_name ?? id;
+}
+
+async function pgLoadRun(runId: string) {
+  pgHistoryOpen.value = false;
+  try {
+    const d = await api.studioRun(runId);
+    pgDetail.value = d;
+    pgCurrentRun.value = runId;
+    pgCurrentMode.value = d.processing_mode;
+    pgDetailOpen.value = true;
+    await pgLoadDocuments(d.transaction_id);
+    const st = await api.txnStatus(d.transaction_id);
+    const root = st.files[0];
+    if (root) {
+      const active = root.children?.length ? root.children[0] : root;
+      pgCurrent.value = { file_id: active?.file_id ?? root.file_id,
+                          file_name: root.file_name, status: active?.status ?? root.status };
+    }
+  } catch (err) {
+    toast.error(`载入运行失败：${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // —— flow rail: nodes with live subtitles; bad dots from light client checks ——
@@ -1113,6 +1403,30 @@ async function goldenCheck() {
 .cat-rules { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
   color: var(--text-dim); }
 .add-cat { border-style: dashed; }
+
+.cards.disabled { opacity: .55; pointer-events: none; }
+.playground .pg-grid { display: grid; grid-template-columns: 240px 1fr; gap: 14px; }
+.pg-samples { display: flex; flex-direction: column; gap: 8px; }
+.pg-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 8px; }
+.pg-list li label { display: flex; gap: 6px; padding: 6px 10px; align-items: center;
+  cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; }
+.pg-list li:last-child label { border-bottom: 0; }
+.pg-list li.dim { padding: 8px 10px; }
+.pg-result { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pg-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pg-doc { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.pg-doc-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+  flex-wrap: wrap; }
+.pg-doc table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.pg-doc td { padding: 4px 6px; border-bottom: 1px solid var(--border);
+  word-break: break-all; }
+.pg-doc tr:last-child td { border-bottom: 0; }
+.pg-modal { max-width: 720px; width: 92%; }
+.pg-hist-row { cursor: pointer; }
+.pg-detail { list-style: none; margin: 0 0 10px; padding: 0; }
+.pg-detail li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.pg-detail code { font-size: 11px; }
 
 @media (max-width: 1100px) {
   .design-body { grid-template-columns: 1fr; }

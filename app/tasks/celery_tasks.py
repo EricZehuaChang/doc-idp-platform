@@ -46,7 +46,9 @@ def run_transaction(transaction_id: str, tenant: str) -> None:
     q = parse_queue_for(pkg.parser)
     expects_tables = runner.skill_expects_tables(pkg, deps)
     header = [
-        chain(parse_file.si(fid, pkg.parser, tenant, expects_tables).set(queue=q),
+        chain(parse_file.si(fid, pkg.parser, tenant, expects_tables,
+                            getattr(pkg, "processing_mode", "balanced")
+                            ).set(queue=q),
               extract_file.si(fid, pkg_dict, tenant, deps_dict))
         for fid in file_ids
     ]
@@ -55,11 +57,14 @@ def run_transaction(transaction_id: str, tenant: str) -> None:
 
 @celery_app.task(name="idp.parse_file")
 def parse_file(file_id: str, parser_pin: str | None, tenant: str,
-               expects_tables: bool = False) -> str:
-    # expects_tables defaults False so messages queued by an older publisher
-    # still deserialize; they just skip the table-escalation rule once.
+               expects_tables: bool = False,
+               processing_mode: str = "balanced") -> str:
+    # expects_tables/processing_mode default to the old shape so messages
+    # queued by an older publisher still deserialize (they just take the
+    # balanced route once).
     try:
-        _run(tenant, runner.parse_stage(file_id, parser_pin, expects_tables))
+        _run(tenant, runner.parse_stage(file_id, parser_pin, expects_tables,
+                                        processing_mode))
     except Exception as e:
         log.exception("parse failed for %s", file_id)
         _run(tenant, runner.mark_error(file_id, str(e)[:500]))

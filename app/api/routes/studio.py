@@ -9,15 +9,17 @@ import json
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.db import session_factory
 from app.skillengine.schema import SkillPackageLoose
-from app.models import Skill, SkillVersion, StudioSample
+from app.models import (FileRecord, Skill, SkillVersion, StudioRun,
+                        StudioSample, Transaction)
 from app.parsers.router import UPLOAD_SUFFIXES, parse_document
 from app.storage import get_storage
+from app.tasks import runner
 from app.skillengine import studio
 from app.tenancy import current_actor, current_tenant, require_role
 
@@ -233,3 +235,157 @@ async def reference_skills(exclude: str | None = None):
                                    for f in pkg.fields],
                         "updated_at": skill.updated_at})
     return {"skills": out}
+
+
+# —— 9.15 WP5 Playground (R14, 图21) ——
+
+
+class RunRequest(BaseModel):
+    skill_code: str
+    version: int | None = None      # None = latest row of any status (draft ok)
+    sample_ids: list[str]
+
+
+def _run_view(r: StudioRun) -> dict:
+    return {"run_id": r.id, "skill_code": r.skill_code,
+            "version": r.skill_version, "sample_id": r.sample_id,
+            "transaction_id": r.transaction_id, "file_id": r.file_id,
+            "status": r.status, "processing_mode": r.processing_mode,
+            "duration_ms": r.duration_ms, "created_by": r.created_by,
+            "created_at": r.created_at.isoformat(),
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None}
+
+
+def _package_hash(package: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(package, sort_keys=True,
+                                     ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+@router.post("/runs", status_code=202)
+async def create_run(payload: RunRequest,
+                     _: None = Depends(require_role("operator"))):
+    """Run a sample against a skill version (drafts included, 图21 运行).
+
+    The transaction is purpose=test with the click-time package frozen into
+    the execution snapshot — later draft edits never rewrite run history.
+    Sample originals are copied under the new transaction (lifecycle decoupled).
+    Billing follows decision B3 (default: test runs bill like production)."""
+    if not (1 <= len(payload.sample_ids) <= 10):
+        raise HTTPException(400, detail={
+            "code": "validation_failed",
+            "message": "每次运行选择 1–10 个样本"})
+    tenant = current_tenant()
+    actor = current_actor()
+    sf = session_factory()
+    async with sf() as s:
+        skill = await s.get(Skill, payload.skill_code)
+        if skill is None or skill.tenant_id != tenant or skill.state != "active":
+            raise HTTPException(404, detail={"code": "skill_not_found",
+                                             "message": "技能不存在"})
+        versions = (await s.execute(
+            select(SkillVersion).where(
+                SkillVersion.skill_code == payload.skill_code)
+            .order_by(SkillVersion.version.desc()))).scalars().all()
+        if payload.version is not None:
+            ver = next((v for v in versions
+                        if v.version == payload.version), None)
+        else:
+            ver = versions[0] if versions else None
+        if ver is None:
+            raise HTTPException(404, detail={"code": "version_not_found",
+                                             "message": "技能版本不存在"})
+        if not ver.package:
+            raise HTTPException(409, detail={
+                "code": "validation_failed",
+                "message": "该版本还没有可运行的内容"})
+        pkg = SkillPackageLoose(**ver.package)
+        if (getattr(pkg, "processing_mode", "balanced") == "fast"
+                and getattr(pkg, "skill_mode", "standard") == "advanced"):
+            raise HTTPException(422, detail={
+                "code": "validation_failed",
+                "message": "极速模式不支持高级提取，请先切换为标准提取"})
+
+        samples = []
+        for sid in payload.sample_ids:
+            row = await s.get(StudioSample, sid)
+            if row is None or row.tenant_id != tenant:
+                raise HTTPException(404, detail={"code": "sample_not_found",
+                                                 "message": f"样本不存在: {sid}"})
+            samples.append(row)
+
+        from app import references
+        txn = Transaction(tenant_id=tenant, skill_code=payload.skill_code,
+                          skill_version=ver.version, purpose="test",
+                          initiator_type="user", initiator_id=actor["name"],
+                          initiator_label=actor["name"],
+                          initiator_user_id=actor.get("user_id"))
+        s.add(txn)
+        await s.flush()
+        try:
+            txn.execution_snapshot = await references.build_execution_snapshot(
+                s, tenant, payload.skill_code, ver.version)
+        except references.ReferenceUnavailable as e:
+            raise HTTPException(409, detail={
+                "code": "reference_unavailable",
+                "message": f"技能引用的依赖不存在：{e.skill_code}"
+                           + (f" v{e.version}" if e.version else "")})
+        ph = _package_hash(ver.package)
+
+        runs: list[dict] = []
+        st = get_storage()
+        for sample in samples:
+            blob = st.read_bytes(sample.storage_key)
+            file_key = st.put_bytes(
+                f"files/{tenant}/{txn.id}/{sample.file_name}", blob)
+            f = FileRecord(tenant_id=tenant, transaction_id=txn.id,
+                           file_name=sample.file_name, storage_path=file_key,
+                           status="queued")
+            s.add(f)
+            await s.flush()
+            run = StudioRun(
+                tenant_id=tenant, skill_code=payload.skill_code,
+                skill_version=ver.version, sample_id=sample.id,
+                transaction_id=txn.id, file_id=f.id, package_hash=ph,
+                created_by=actor["name"], status="queued",
+                processing_mode=getattr(pkg, "processing_mode", "balanced"))
+            s.add(run)
+            await s.flush()
+            runs.append(_run_view(run))
+        await s.commit()
+    txn_id = txn.id
+    runner.submit(txn_id)   # dispatch seam: sync call, inprocess/celery inside
+    return {"transaction_id": txn_id, "runs": runs}
+
+
+@router.get("/runs")
+async def list_runs(skill_code: str | None = None, sample_id: str | None = None):
+    """Playground run history (图21 运行历史): newest first, 200 max."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        q = (select(StudioRun).where(StudioRun.tenant_id == tenant)
+             .order_by(StudioRun.created_at.desc()).limit(200))
+        if skill_code:
+            q = q.where(StudioRun.skill_code == skill_code)
+        if sample_id:
+            q = q.where(StudioRun.sample_id == sample_id)
+        rows = (await s.execute(q)).scalars().all()
+    return {"runs": [_run_view(r) for r in rows]}
+
+
+@router.get("/runs/{run_id}")
+async def run_detail(run_id: str):
+    """Run detail (图22): version, mode, duration, transaction + file ids."""
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        r = await s.get(StudioRun, run_id)
+        if r is None or r.tenant_id != tenant:
+            raise HTTPException(404, detail={"code": "run_not_found",
+                                             "message": "运行记录不存在"})
+        txn = await s.get(Transaction, r.transaction_id)
+        out = _run_view(r)
+        out["transaction_status"] = txn.status if txn else None
+        out["transaction_error"] = None   # file-level errors live on files
+    return out

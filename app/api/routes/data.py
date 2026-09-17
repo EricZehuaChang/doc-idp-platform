@@ -92,7 +92,9 @@ async def list_files(status: str | None = None, q: str | None = None,
                 .outerjoin(Skill, and_(Skill.code == Transaction.skill_code,
                                        Skill.tenant_id == FileRecord.tenant_id))
                 .where(FileRecord.tenant_id == tenant,
-                       FileRecord.parent_file_id.is_(None)))
+                       FileRecord.parent_file_id.is_(None),
+                       # 9.15 WP5 (§3.9): Playground test runs stay out of the ledger
+                       Transaction.purpose != "test"))
         conds = []
         if skill_code:
             conds.append(Transaction.skill_code == skill_code)
@@ -199,8 +201,12 @@ async def home_stats():
             .where(CreditLedger.tenant_id == tenant,
                    CreditLedger.kind == "shadow_meter"))).scalar_one()
 
-        records = (await s.execute(
-            select(FileRecord).where(FileRecord.tenant_id == tenant))).scalars().all()
+        # §3.9: Playground test runs stay out of the home metrics
+        rows = (await s.execute(
+            select(FileRecord, Transaction.purpose)
+            .join(Transaction, FileRecord.transaction_id == Transaction.id)
+            .where(FileRecord.tenant_id == tenant))).all()
+        records = [f for f, purpose in rows if purpose != "test"]
         roots = [f for f in records if f.parent_file_id is None]
         children_by_parent: dict[str, list[FileRecord]] = {}
         for child in records:
@@ -244,6 +250,7 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
             .where(FileRecord.tenant_id == current_tenant(),
                    Transaction.skill_code == skill_code,
+                   Transaction.purpose != "test",   # §3.9
                    FileRecord.status.in_(_DONE))
             .order_by(FileRecord.created_at.desc())
             .limit(min(limit, 1000)))).all()
@@ -334,7 +341,8 @@ async def skill_stats():
             select(Transaction.skill_code, FileRecord.status,
                    func.count(FileRecord.id))
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == tenant)
+            .where(FileRecord.tenant_id == tenant,
+                   Transaction.purpose != "test")   # §3.9
             .group_by(Transaction.skill_code, FileRecord.status))).all()
         corr = (await s.execute(
             select(Correction.skill_code, Correction.field,

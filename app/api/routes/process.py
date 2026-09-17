@@ -18,8 +18,10 @@ from sqlalchemy.exc import IntegrityError
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
 from app import references
+from app.config import get_settings
 from app.db import session_factory
 from app.models import FileRecord, Skill, SkillVersion, Transaction
+from app.skillengine.schema import SkillPackageLoose
 from app.storage import get_storage
 from app.tasks import runner
 from app.tenancy import current_actor, current_tenant
@@ -278,6 +280,17 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
                 "message": "同一 Idempotency-Key 已用于不同内容的请求，"
                            "请更换 Key 或去掉该请求头"})
 
+        # 9.15 WP5: fast-mode page cap at submit (§WP5) — estimate via the
+        # existing billing heuristic; the parse stage re-checks with real pages
+        pkg_probe = SkillPackageLoose(**(ver.package or {}))
+        if getattr(pkg_probe, "processing_mode", "balanced") == "fast":
+            cap = get_settings().fast_max_pages
+            for name, blob in blobs:
+                if billing.estimate_pages(blob, Path(name).suffix) > cap:
+                    raise HTTPException(422, detail={
+                        "code": "fast_mode_page_limit",
+                        "message": f"文件 {name} 预计超过极速模式 {cap} 页上限，"
+                                   "请改用均衡模式"})
         # billing gate (§12.2): live mode freezes estimated pages x rate inside
         # this same DB transaction — a 402 rolls everything back. Owner Root
         # (unlimited) skips the money gate but stays metered and audited (§12.7).
@@ -399,6 +412,140 @@ async def preview(file_id: str):
                         headers=immutable)
 
 
+@router.get("/transactions/{transaction_id}/documents")
+async def transaction_documents(transaction_id: str):
+    """9.15 WP5 (§3.5): per-root-file document view with clean data.
+
+    - Standard mode: the root file itself is doc_index=1 (doc_type null,
+      source_pages = all pages).
+    - Advanced mode: one document per child (document_meta drives the shape).
+    - `data` carries clean values ($value scalars, $-less table rows; List
+      mode renders the records array); `review_fields` is computed HERE so the
+      frontend never re-derives runner decisions.
+    - Access: production -> tenant users, agent keys only their own tasks;
+      test -> operator+ only, agent keys always 404 (§3.9)."""
+    from app.api.routes.docmeta import document_view, page_range
+    tenant = current_tenant()
+    actor = current_actor()
+    sf = session_factory()
+    async with sf() as s:
+        txn = await s.get(Transaction, transaction_id)
+        if txn is None or txn.tenant_id != tenant:
+            raise HTTPException(404, "transaction not found")
+        is_agent = actor.get("key_type") == "agent"
+        if txn.purpose == "test":
+            if is_agent:
+                raise HTTPException(404, "transaction not found")
+            from app.tenancy import has_role
+            if not has_role("operator"):
+                raise HTTPException(403, detail={
+                    "code": "role_required",
+                    "message": "测试任务仅对 operator 及以上开放"})
+        elif is_agent and txn.initiator_id != actor.get("name"):
+            raise HTTPException(404, "transaction not found")
+
+        files = (await s.execute(
+            select(FileRecord).where(FileRecord.transaction_id == transaction_id)
+            .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
+        roots = [f for f in files if f.parent_file_id is None]
+        children_by_parent: dict[str, list[FileRecord]] = {}
+        for f in files:
+            if f.parent_file_id:
+                children_by_parent.setdefault(f.parent_file_id, []).append(f)
+
+        snapshot_pkg = None
+        if txn.execution_snapshot:
+            snapshot_pkg = txn.execution_snapshot.get("package") or {}
+        else:
+            # legacy rows (pre-WP4): fall back to the version row like the runner
+            ver = (await s.execute(
+                select(SkillVersion).where(
+                    SkillVersion.skill_code == txn.skill_code,
+                    SkillVersion.version == txn.skill_version))).scalars().first()
+            snapshot_pkg = (ver.package or {}) if ver else {}
+        threshold = 2
+        output_shape = "object"
+        if snapshot_pkg:
+            output_shape = snapshot_pkg.get("output_shape") or "object"
+            rp = snapshot_pkg.get("review_policy") or {}
+            threshold = int(rp.get("confidence_threshold") or 2)
+
+        def _clean(v):
+            if isinstance(v, dict):
+                return v.get("$value")
+            if isinstance(v, list):
+                return [{k: cv for k, cv in r.items() if not k.startswith("$")}
+                        if isinstance(r, dict) else r for r in v]
+            return v
+
+        def _review_fields(result: dict) -> list[str]:
+            names = []
+            for name, cell in (result or {}).items():
+                if not isinstance(cell, dict) or cell.get("$confidence") is None:
+                    continue   # fast mode: unscored -> nothing is "pending"
+                if (cell.get("$confidence", 3) < threshold
+                        or cell.get("$rule_failures")
+                        or cell.get("$format_error")):
+                    names.append(name)
+            return names
+
+        def _documents(f: FileRecord) -> list[dict]:
+            kids = children_by_parent.get(f.id)
+            if kids:
+                docs = []
+                for k in kids:
+                    view = document_view(k) or {}
+                    docs.append({
+                        "file_id": k.id, "doc_index": view.get("doc_index"),
+                        "doc_type": view.get("doc_type"),
+                        "category_id": view.get("category_id"),
+                        "handler": view.get("handler"),
+                        "source_pages": view.get("source_pages") or [],
+                        "page_range": view.get("page_range") or page_range(
+                            view.get("source_pages") or []),
+                        "extraction_status": view.get("extraction_status"),
+                        "error": k.error or None,
+                        "data": _clean_data(k),
+                        "review_fields": _review_fields(k.result or {}),
+                        "metrics": (k.document_meta or {}).get("metrics"),
+                        "artifacts": []})
+                return docs
+            pages = list(range(1, (f.page_count or 0) + 1))
+            return [{
+                "file_id": f.id, "doc_index": 1, "doc_type": None,
+                "category_id": None, "handler": None,
+                "source_pages": pages, "page_range": page_range(pages),
+                "extraction_status": "completed" if f.status in
+                                     ("completed", "passed") else
+                                     ("failed" if f.status == "error" else "processing"),
+                "error": f.error or None,
+                "data": _clean_data(f),
+                "review_fields": _review_fields(f.result or {}),
+                "metrics": (f.document_meta or {}).get("metrics"),
+                "artifacts": []}]
+
+        def _clean_data(f: FileRecord):
+            result = f.result
+            if result is None:
+                return None
+            if output_shape == "list":
+                rows = result.get("records")
+                if not isinstance(rows, list):
+                    return []
+                return [{k: cv for k, cv in r.items() if not k.startswith("$")}
+                        if isinstance(r, dict) else r for r in rows]
+            return {k: _clean(v) for k, v in result.items()}
+
+        return {
+            "transaction_id": txn.id, "purpose": txn.purpose,
+            "status": txn.status, "skill_code": txn.skill_code,
+            "skill_version": txn.skill_version,
+            "files": [{
+                "file_id": f.id, "file_name": f.file_name,
+                "status": f.status, "page_count": f.page_count,
+                "documents": _documents(f)} for f in roots]}
+
+
 @router.get("/status/{transaction_id}")
 async def status(transaction_id: str, include_confidence_flag: bool = True):
     tenant = current_tenant()
@@ -406,6 +553,10 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
     async with sf() as s:
         txn = await s.get(Transaction, transaction_id)
         if txn is None or txn.tenant_id != tenant:   # cross-tenant probe -> 404 (§11.2 CI case)
+            raise HTTPException(404, "transaction not found")
+        actor = current_actor()
+        if actor.get("key_type") == "agent" and txn.purpose == "test":
+            # §3.9: Playground test runs are invisible to agent keys
             raise HTTPException(404, "transaction not found")
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id))).scalars().all()

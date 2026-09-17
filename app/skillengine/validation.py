@@ -63,6 +63,13 @@ def validate_package(pkg: SkillPackage, stage: str = "save",
     errors: list[dict] = []
     warnings: list[str] = []
 
+    # 9.15 WP5: fast mode executes as standard extraction — no categories,
+    # no classification (editor greys the cards; this is the API-side gate)
+    if pkg.processing_mode == "fast" and pkg.skill_mode == "advanced":
+        errors.append({"path": "processing_mode",
+                       "code": "fast_mode_advanced_conflict",
+                       "message": "极速模式不支持高级提取，请先切换为标准提取"})
+
     # skill code shape — enforced for new (v2) packages only; legacy v1 codes
     # keep loading untouched
     if pkg.schema_version >= 2 and not _CODE_RE.match(pkg.skill_code or ""):

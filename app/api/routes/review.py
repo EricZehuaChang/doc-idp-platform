@@ -83,7 +83,8 @@ async def queue(skill_code: str | None = None, assignee: str | None = None,
         q = (select(FileRecord, Transaction.skill_code)
              .join(Transaction, FileRecord.transaction_id == Transaction.id)
              .where(FileRecord.tenant_id == current_tenant(),
-                    FileRecord.status == "pending_verification")
+                    FileRecord.status == "pending_verification",
+                    Transaction.purpose != "test")   # 9.15 WP5 (§3.9)
              .order_by(FileRecord.created_at))
         if skill_code:
             q = q.where(Transaction.skill_code == skill_code)

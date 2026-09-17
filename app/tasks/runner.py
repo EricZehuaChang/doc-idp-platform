@@ -22,7 +22,7 @@ from app.extraction.classifier import ClassificationError, plan_documents
 from app.extraction.pipeline import extract
 from app.integrations import webhooks
 from app.models import FileRecord, SkillVersion, Transaction
-from app.parsers.base import UDR
+from app.parsers.base import Page, UDR
 from app.parsers.router import escalate_if_tables_missing, parse_document
 from app.skillengine.effective import category_subpackage
 from app.skillengine.schema import SkillPackage, SkillPackageLoose
@@ -70,7 +70,9 @@ async def process_transaction(transaction_id: str) -> None:
     async def _one(file_id: str) -> None:
         async with sem:
             try:
-                await parse_stage(file_id, pkg.parser, skill_expects_tables(pkg, deps))
+                await parse_stage(file_id, pkg.parser,
+                                  skill_expects_tables(pkg, deps),
+                                  getattr(pkg, "processing_mode", "balanced"))
                 await extract_stage(file_id, pkg, deps)
             except Exception as e:
                 log.exception("file %s failed", file_id)
@@ -112,33 +114,111 @@ async def _load_package(s, txn: Transaction) -> tuple[SkillPackage, dict]:
     return SkillPackageLoose(**row.package), {}
 
 
+def _fast_vision_provider(tenant: str) -> str | None:
+    """9.15 WP5: vision channel for fast mode on scans — the platform setting
+    wins; otherwise a tenant custom channel with vision=true (first match)."""
+    settings = get_settings()
+    if settings.fast_vision_provider:
+        return settings.fast_vision_provider
+    from app.extraction import custom_providers
+    for name in custom_providers.names(tenant):
+        if (custom_providers.get(tenant, name) or {}).get("vision"):
+            return name
+    return None
+
+
+async def _fast_parse(path: str, tenant: str) -> tuple[UDR, dict[int, str] | None, str]:
+    """Fast-mode parse route (§WP5 表): electronic PDF -> pinned pdfplumber
+    (skips the JVM first pass); image/scan -> vision channel with a minimal
+    UDR + page rasters, else the default OCR route with a metric note;
+    Office/OFD -> the existing parser. Returns (udr, page_images, route)."""
+    from app.parsers import raster
+    from app.parsers.router import parse_document
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf" and await asyncio.to_thread(raster.has_text_layer, path):
+        return await asyncio.to_thread(parse_document, path, "pdfplumber"), None, "pdfplumber_pinned"
+    vision = _fast_vision_provider(tenant)
+    if vision and (suffix in {".pdf"} or suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}):
+        if suffix == ".pdf":
+            sizes = raster.pdf_page_sizes(path, get_settings().fast_max_pages)
+            images = await asyncio.to_thread(
+                raster.pdf_pages_to_images, path, get_settings().fast_max_pages)
+        else:
+            w, h = await asyncio.to_thread(raster.image_size, path)
+            sizes = [(float(w), float(h))]
+            images = {1: await asyncio.to_thread(raster.image_to_data_uri, path)}
+        if images:
+            pages = [Page(page_no=i, width=w, height=h, blocks=[], markdown="")
+                     for i, (w, h) in enumerate(sizes, start=1)]
+            udr = UDR(pages=pages, full_markdown="", parser="vision_fast", lang="")
+            return udr, images, "vision"
+    udr = await asyncio.to_thread(parse_document, path, None)
+    return udr, None, "ocr_fallback"
+
+
 async def parse_stage(file_id: str, parser_pin: str | None,
-                      expects_tables: bool = False) -> None:
+                      expects_tables: bool = False,
+                      processing_mode: str = "balanced") -> None:
     """Stage 1: document -> UDR persisted on disk + page_count in DB.
 
     expects_tables (default False keeps old queued Celery messages valid):
     when the skill declares table fields and the free structured parse found
     no tables, re-parse via the scan-tier engine (router escalation rule).
-    A pinned parser is an explicit operator choice and is never overridden."""
+    A pinned parser is an explicit operator choice and is never overridden.
+    `processing_mode="fast"` (9.15 WP5) takes the fast parse route and never
+    escalates to OCR for tables (fast mode does no table upgrade)."""
     sf = session_factory()
+    t0 = datetime.now(timezone.utc)
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
+        tenant = f.tenant_id
+        created = f.created_at
+        if created.tzinfo is None:            # legacy rows stored naive UTC
+            created = created.replace(tzinfo=timezone.utc)
+        queue_ms = int((t0 - created).total_seconds() * 1000)
         f.status = "processing"
         await s.commit()
         path = get_storage().local_path(f.storage_path)
 
-    # blocking parse runs in a worker thread (async app stays responsive)
-    udr = await asyncio.to_thread(parse_document, path, parser_pin)
-    if expects_tables and not parser_pin:
-        udr = await asyncio.to_thread(escalate_if_tables_missing, path, udr)
+    fast = processing_mode == "fast"
+    images: dict[int, str] | None = None
+    route = ""
+    if fast:
+        udr, images, route = await _fast_parse(path, tenant)
+        # fast page cap (§WP5): same code as the submit-time estimate check
+        if len(udr.pages) > get_settings().fast_max_pages:
+            await mark_error(file_id,
+                             f"fast_mode_page_limit: {len(udr.pages)} pages "
+                             f"exceeds the fast-mode cap of "
+                             f"{get_settings().fast_max_pages}; use the "
+                             "balanced processing mode")
+            return
+    else:
+        # blocking parse runs in a worker thread (async app stays responsive)
+        udr = await asyncio.to_thread(parse_document, path, parser_pin)
+        if expects_tables and not parser_pin:
+            udr = await asyncio.to_thread(escalate_if_tables_missing, path, udr)
 
     udr_key = get_storage().put_bytes(
         f"udr/{file_id}.json", udr.model_dump_json().encode("utf-8"))
+    images_key = None
+    if images:
+        images_key = get_storage().put_bytes(
+            f"udr/{file_id}.images.json",
+            json.dumps(images, ensure_ascii=False).encode("utf-8"))
 
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         f.page_count = len(udr.pages)
         f.udr_path = udr_key
+        f.images_path = images_key
+        meta = dict(f.document_meta or {})
+        parse_ms = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
+        metrics = {"queue_ms": queue_ms, "parse_ms": parse_ms}
+        if route:
+            metrics["parse_route"] = route   # ocr_fallback shows up in the bench report
+        meta["metrics"] = metrics
+        f.document_meta = meta
         await s.commit()
 
 
@@ -155,6 +235,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
     - v1/standard: the legacy page classifier may fan a bundle out; unchanged.
     The parent ends in status "split" in both paths."""
     sf = session_factory()
+    fast = getattr(pkg, "processing_mode", "balanced") == "fast"
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         if f is None or f.status == "error" or not f.udr_path:
@@ -169,12 +250,20 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
         await custom_providers.warm(s, tenant)
 
     udr = UDR.model_validate_json(get_storage().read_bytes(udr_path))
+    page_images: dict[int, str] | None = None
+    if getattr(f, "images_path", None):
+        raw_images = json.loads(get_storage().read_bytes(f.images_path))
+        # JSON object keys are strings — page numbers must come back as ints
+        page_images = {int(k): v for k, v in raw_images.items()}
 
-    advanced = getattr(pkg, "skill_mode", "standard") == "advanced"
+    advanced = (getattr(pkg, "skill_mode", "standard") == "advanced"
+                and not fast)   # fast mode executes as standard (§WP5)
+    classify_ms: int | None = None
     if not is_child and not already_split and advanced:
         # 重投幂等: a split parent keeps its children — never classify again
         cats = [c.model_dump() if hasattr(c, "model_dump") else dict(c)
                 for c in (pkg.categories or [])]
+        _c0 = datetime.now(timezone.utc)
         try:
             plan, class_usage = await asyncio.to_thread(
                 plan_documents, udr, cats,
@@ -186,6 +275,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
             # error rows bill nothing (settle counts result-bearing rows only)
             await mark_error(file_id, f"classification_failed: {e}")
             return
+        classify_ms = int((datetime.now(timezone.utc) - _c0).total_seconds() * 1000)
         meta = await _fan_out_children(file_id, udr, plan, pkg, deps or {})
         await shadow_meter(tenant_id=tenant, file_id=file_id,
                            pages=0, usage=class_usage)   # classification tokens
@@ -216,7 +306,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
         return
 
     # children never re-split (bounded recursion); "off" kills the feature
-    if (not is_child and not already_split and not advanced
+    if (not is_child and not already_split and not advanced and not fast
             and get_settings().multi_doc_split == "auto" and len(udr.pages) >= 2):
         from app.extraction.splitter import classify_pages
         groups, split_usage = await asyncio.to_thread(classify_pages, udr)
@@ -244,7 +334,8 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
             await asyncio.gather(*(_child(c["child_id"], c["subpkg"])
                                    for c in meta["children"]))
             return
-    await _extract_one(file_id, udr, pkg, deps or {})
+    await _extract_one(file_id, udr, pkg, deps or {}, fast=fast,
+                       page_images=page_images, classify_ms=classify_ms)
 
 
 async def _complete_classify_only(file_id: str) -> None:
@@ -268,13 +359,21 @@ async def _complete_classify_only(file_id: str) -> None:
 
 
 async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
-                       deps: dict) -> None:
+                       deps: dict, fast: bool = False,
+                       page_images: dict[int, str] | None = None,
+                       classify_ms: int | None = None) -> None:
     """Single-document extraction + persistence + billing + webhook."""
     sf = session_factory()
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         tenant = f.tenant_id
-    result, usage, needs_review = await asyncio.to_thread(extract, udr, pkg)
+        meta = dict(f.document_meta or {})
+    _x0 = datetime.now(timezone.utc)
+    result, usage, needs_review = await asyncio.to_thread(
+        extract, udr, pkg, page_images=page_images, fast=fast)
+    if fast:
+        # 极速模式 executes as standard: no review, no scoring (§WP5)
+        needs_review = False
 
     new_status = "pending_verification" if needs_review else "completed"
     async with sf() as s:
@@ -286,6 +385,22 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         f.processed_at = datetime.now(timezone.utc)   # per-doc speed figure (§task ledger)
         meta = dict(f.document_meta or {})
         meta["extraction_status"] = "completed"
+        if fast:
+            # 未评分契约 + bench data source (§3.9 document_meta.metrics)
+            meta["processing_mode"] = "fast"
+            meta["scored"] = False
+        extract_ms = int((datetime.now(timezone.utc) - _x0).total_seconds() * 1000)
+        metrics = dict(meta.get("metrics") or {})
+        metrics.update(extract_ms=extract_ms,
+                       pages=f.page_count,
+                       provider_used=str(usage.get("provider_used") or ""))
+        if classify_ms is not None:
+            metrics["classify_ms"] = classify_ms
+        # queue/parse already landed in parse_stage
+        total = sum(v for k, v in metrics.items()
+                    if k.endswith("_ms") and isinstance(v, (int, float)))
+        metrics["total_ms"] = total
+        meta["metrics"] = metrics
         f.document_meta = meta
         await s.commit()
         pages = f.page_count

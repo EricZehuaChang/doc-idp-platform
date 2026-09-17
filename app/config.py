@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     multi_doc_split: str = "auto"
     # 9.15 WP4: concurrent extraction of sibling documents in one advanced file
     doc_concurrency: int = 4
+    # 9.15 WP5 fast mode: page cap per file (submit-time estimate AND post-parse)
+    fast_max_pages: int = 5
+    # platform vision channel for fast mode on scans; empty -> tenants without
+    # a vision-capable custom channel fall back to the default OCR route
+    fast_vision_provider: str = ""
 
     # seal/signature detection (design 2026-08-07): per-host overrides for the
     # detectors.yaml model locations — air_gapped pre-seeds absolute paths,

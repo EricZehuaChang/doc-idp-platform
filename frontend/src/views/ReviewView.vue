@@ -104,9 +104,9 @@
           <div class="field-head">
             <span class="fname">{{ f.name }}</span>
             <span v-if="f.cell.inferred" class="badge-inferred">参考结果</span>
-            <span v-if="f.cell.$confidence < 2" class="badge-r">R</span>
+            <span v-if="f.cell.$confidence !== null && f.cell.$confidence < 2" class="badge-r">R</span>
             <span v-if="pendingBoxes[f.name]" class="badge-box" title="已重画定位框，待保存">▣</span>
-            <span class="conf dim">c{{ f.cell.$confidence }}</span>
+            <span class="conf dim">{{ f.cell.$confidence === null ? "未评分" : `c${f.cell.$confidence}` }}</span>
           </div>
           <textarea v-model="edits[f.name]" :disabled="!locked" rows="2" wrap="soft"
                     :ref="(el) => setInput(i, el as HTMLTextAreaElement)"
@@ -426,9 +426,9 @@ function cellHit(t: string, ri: number, col: string): CellHit | null {
 const hasHit = (t: string, ri: number, col: string) => !!cellHit(t, ri, col);
 
 const reviewCount = computed(() =>
-  scalarFields.value.filter((f) => f.cell.$confidence < 2).length);
+  scalarFields.value.filter((f) => f.cell.$confidence !== null && f.cell.$confidence < 2).length);
 const visibleFields = computed(() =>
-  tab.value === "review" ? scalarFields.value.filter((f) => f.cell.$confidence < 2)
+  tab.value === "review" ? scalarFields.value.filter((f) => f.cell.$confidence !== null && f.cell.$confidence < 2)
     : scalarFields.value);
 const dirty = computed(() =>
   Object.keys(edits.value).some((k) => edits.value[k] !== original.value[k])
@@ -696,7 +696,8 @@ function exportInput(): ResultExportInput | null {
     fields: scalarFields.value.map((f) => ({
       name: f.name,
       value: edits.value[f.name] ?? f.cell.$value ?? "",
-      confidence: edits.value[f.name] !== original.value[f.name] ? 3 : f.cell.$confidence,
+      confidence: edits.value[f.name] !== original.value[f.name]
+        ? 3 : f.cell.$confidence ?? 0,
     })),
     tables: tableNames.value.map((t) => ({ name: t, rows: tableEdits.value[t] ?? [] })),
   };

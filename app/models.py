@@ -157,6 +157,9 @@ class Transaction(Base):
     # package, resolved dependency packages (R10 pinned refs), effective mode.
     # NULL = legacy task, runner falls back to reading the version row.
     execution_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 9.15 WP5 (§3.9): production | test — test runs are excluded from the
+    # ledger surfaces (files/stats/cabinet/review-queue/webhooks/agent scope)
+    purpose: Mapped[str] = mapped_column(String(16), default="production")
     idem_principal: Mapped[str | None] = mapped_column(String(160), nullable=True)
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -194,6 +197,8 @@ class FileRecord(Base):
     document_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # bumped on every accepted review change of result (artifact provenance)
     result_revision: Mapped[int] = mapped_column(Integer, default=0)
+    # 9.15 WP5 fast mode: storage key of the vision page rasters (data URIs)
+    images_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     udr_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # UDR json storage key (or legacy absolute path)
     # when the processing pipeline finished with this file (result written or
     # failed): the per-document processing-speed figure on the task ledger.
@@ -210,6 +215,29 @@ class FileRecord(Base):
     cleanup_status: Mapped[str] = mapped_column(String(16), default="keep")  # data lifecycle (§4.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class StudioRun(Base):
+    """9.15 WP5 Playground: one test execution of one sample against one
+    skill version (drafts included). The transaction carries the frozen
+    click-time snapshot; later draft edits never rewrite run history."""
+    __tablename__ = "studio_runs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    skill_code: Mapped[str] = mapped_column(String(64), index=True)
+    skill_version: Mapped[int] = mapped_column(Integer)
+    sample_id: Mapped[str] = mapped_column(String(32), index=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id"),
+                                                index=True)
+    file_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    package_hash: Mapped[str] = mapped_column(String(64), default="")
+    created_by: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    processing_mode: Mapped[str] = mapped_column(String(16), default="balanced")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                         nullable=True)
 
 
 class Correction(Base):

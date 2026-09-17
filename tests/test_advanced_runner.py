@@ -58,7 +58,8 @@ class Env:
         await get_engine().dispose()
 
     async def seed_and_run(self, monkeypatch, plan=None, extract_fail_pages=(),
-                           classify_error=False):
+                           classify_error=False, extract_fake=None,
+                           parse_fake=None):
         """Returns (txn_id, files_by_name, fired_webhooks)."""
         from sqlalchemy import select
 
@@ -67,19 +68,25 @@ class Env:
         import app.extraction.classifier as classifier
         import app.tasks.runner as runner_mod
 
-        monkeypatch.setattr(runner_mod, "parse_document",
-                            lambda path, pinned=None: _udr(3))
+        if parse_fake is not None:
+            monkeypatch.setattr(runner_mod, "parse_document", parse_fake)
+        else:
+            monkeypatch.setattr(runner_mod, "parse_document",
+                                lambda path, pinned=None: _udr(3))
         # runner imported plan_documents by name: patch ITS reference
         results = {}
 
-        def fake_extract(udr, pkg, **kw):
-            key = udr.pages[0].blocks[0].text
-            if key in extract_fail_pages:
-                raise RuntimeError(f"boom on {key}")
-            return ({key: {"$value": key, "$confidence": 3, "$bbox": [1, 2, 3, 4],
-                           "$pages": 1}},
-                    {"prompt_tokens": 10, "completion_tokens": 5}, False)
-        monkeypatch.setattr(runner_mod, "extract", fake_extract)
+        if extract_fake is not None:
+            monkeypatch.setattr(runner_mod, "extract", extract_fake)
+        else:
+            def fake_extract(udr, pkg, **kw):
+                key = udr.pages[0].blocks[0].text
+                if key in extract_fail_pages:
+                    raise RuntimeError(f"boom on {key}")
+                return ({key: {"$value": key, "$confidence": 3,
+                               "$bbox": [1, 2, 3, 4], "$pages": 1}},
+                        {"prompt_tokens": 10, "completion_tokens": 5}, False)
+            monkeypatch.setattr(runner_mod, "extract", fake_extract)
 
         fired = []
 

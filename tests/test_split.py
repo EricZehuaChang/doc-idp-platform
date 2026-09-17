@@ -93,7 +93,7 @@ def test_end_to_end_split_flow(tmp_path, monkeypatch):
     import app.tasks.runner as runner_mod
     monkeypatch.setattr(runner_mod, "parse_document", lambda path, pinned=None: _udr3())
     monkeypatch.setattr(runner_mod, "extract",
-                        lambda udr, pkg: ({"invoice_no": {"$value": udr.pages[0].blocks[0].text,
+                        lambda udr, pkg, **kw: ({"invoice_no": {"$value": udr.pages[0].blocks[0].text,
                                                           "$confidence": 3, "$bbox": [1, 2, 3, 4],
                                                           "$pages": 1}},
                                           {"prompt_tokens": 10, "completion_tokens": 5}, False))
