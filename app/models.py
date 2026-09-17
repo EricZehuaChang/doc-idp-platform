@@ -97,6 +97,11 @@ class Skill(Base):
     kind: Mapped[str] = mapped_column(String(16), default="extract")  # extract|audit (§5.5)
     state: Mapped[str] = mapped_column(String(16), default="active")  # active|disabled|deleted
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # last lifecycle touch (create/save-draft/new-version/publish/delete-version/
+    # enable-disable/delete/restore/import) — the roster's "最近更新" sort key.
+    # Never derived from version rows: historical edit times are not fabricated.
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=_now, nullable=False)
 
 
 class SkillVersion(Base):

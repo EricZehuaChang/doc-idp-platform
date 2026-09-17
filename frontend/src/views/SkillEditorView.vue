@@ -41,9 +41,8 @@
                           ? '当前发布版本不可删除——提交都按它跑；请先发布其它版本'
                           : '只删除当前这一个版本，技能与其它版本不受影响'"
                   @click="removeVersion">删除当前版本</button>
-          <button v-if="!isNew" class="danger"
-                  title="删除整个技能（全部版本进存档，可在技能中心恢复）"
-                  @click="removeSkill">删除技能</button>
+          <!-- 9.15 R18: 「删除技能」入口已从编辑器移除——技能级删除统一走
+               技能列表行上的「⋯」菜单，避免编辑器里两个危险按钮并排 -->
           <router-link to="/skills"><button class="ghost">‹ 返回技能列表</button></router-link>
         </div>
       </div>
@@ -438,9 +437,9 @@ function comboClose(ev: FocusEvent) {
   delete el.dataset.typed;
 }
 
-/** 需求8: 「删除当前版本」和「删除技能」是两个动作，各自说清作用范围。
- *  版本删除作用于当前选中的这一个版本（草稿或已归档，2026-09-04 放宽）；
- *  技能删除进入可恢复的存档而不是永久抹掉。发布版本由服务端拒绝，按钮置灰。 */
+/** 需求8 / 2026-09-04 放宽：版本删除作用于当前选中的这一个版本（草稿或
+ *  已归档）；发布版本由服务端拒绝，按钮置灰。技能级删除已移出编辑器
+ *  （9.15 R18）：统一在技能列表的「⋯」菜单。 */
 async function removeVersion() {
   if (!selectedVersion.value) return;
   const ok = confirm(`确定删除 v${selectedVersion.value}（${verLabel(selectedStatus.value ?? "")}）？\n`
@@ -451,18 +450,6 @@ async function removeVersion() {
     await api.skillDeleteVersion(props.code, selectedVersion.value);
     toast.ok(`v${selectedVersion.value} 已删除`);
     await load();
-  } catch (e) { toast.error(e); }
-}
-async function removeSkill() {
-  const name = pkg.value?.name || props.code;
-  const n = versions.value.length;
-  const ok = confirm(`确定删除技能「${name}」？\n`
-    + `全部 ${n} 个版本将进入「已删除」存档，可在技能中心恢复；运行中任务不受影响。`);
-  if (!ok) return;
-  try {
-    await api.skillDelete(props.code);
-    toast.ok("技能已删除（可在技能中心「已删除」页签恢复）");
-    router.push("/skills");
   } catch (e) { toast.error(e); }
 }
 

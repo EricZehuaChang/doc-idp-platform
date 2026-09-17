@@ -12,11 +12,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
-from app.models import Correction, CreditAccount, CreditLedger, FileRecord, Transaction
+from app.models import Correction, CreditAccount, CreditLedger, FileRecord, Skill, Transaction
 from app.storage import get_storage
 from app.tenancy import current_tenant
 
@@ -83,8 +83,13 @@ async def list_files(status: str | None = None, q: str | None = None,
         raise HTTPException(400, "verify 只能是 verified / error / none")
     sf = session_factory()
     async with sf() as s:
-        base = (select(FileRecord, Transaction.skill_code)
+        # 9.15 R20: left-join the skill identity so the ledger can show its
+        # display name (fallback = code when the skill row is gone). Scoped to
+        # this tenant — Skill.code is a global PK, tenant_id is a plain column.
+        base = (select(FileRecord, Transaction.skill_code, Skill.name)
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
+                .outerjoin(Skill, and_(Skill.code == Transaction.skill_code,
+                                       Skill.tenant_id == FileRecord.tenant_id))
                 .where(FileRecord.tenant_id == tenant,
                        FileRecord.parent_file_id.is_(None)))
         conds = []
@@ -103,7 +108,8 @@ async def list_files(status: str | None = None, q: str | None = None,
             conds.append(FileRecord.page_count <= pages_max)
         if q and q.strip():
             conds.append(or_(FileRecord.file_name.ilike(_like(q), escape="\\"),
-                             Transaction.skill_code.ilike(_like(q), escape="\\")))
+                             Transaction.skill_code.ilike(_like(q), escape="\\"),
+                             Skill.name.ilike(_like(q), escape="\\")))
         if lo is not None:
             conds.append(FileRecord.created_at >= lo)
         if hi is not None:
@@ -111,7 +117,7 @@ async def list_files(status: str | None = None, q: str | None = None,
         for c in conds:
             base = base.where(c)
         rows = (await s.execute(base.order_by(FileRecord.created_at.desc()))).all()
-        root_ids = [f.id for f, _ in rows]
+        root_ids = [f.id for f, _, _ in rows]
         children_by_parent: dict[str, list[FileRecord]] = {}
         if root_ids:
             children = (await s.execute(
@@ -123,7 +129,7 @@ async def list_files(status: str | None = None, q: str | None = None,
                 children_by_parent.setdefault(child.parent_file_id, []).append(child)
 
         all_data = []
-        for f, sc in rows:
+        for f, sc, sname in rows:
             children = children_by_parent.get(f.id, [])
             meta = task_summary(f, children)
             if status and meta["status"] != status:
@@ -155,6 +161,7 @@ async def list_files(status: str | None = None, q: str | None = None,
             all_data.append({
                 "file_id": f.id, "transaction_id": f.transaction_id,
                 "file_name": f.file_name, "skill_code": sc,
+                "skill_name": sname or sc,
                 "type": Path(f.file_name).suffix.lstrip(".").upper(),
                 "size": size, "page_count": f.page_count, "status": meta["status"],
                 "created_at": f.created_at.isoformat(),

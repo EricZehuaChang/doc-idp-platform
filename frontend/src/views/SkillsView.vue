@@ -29,6 +29,14 @@
         <span v-if="bucket === 'deleted'" class="dim hint">
           已删除的技能保留全部版本与历史，可一键恢复。</span>
       </div>
+      <!-- 9.15 R01/R02: instant search + 6-way sort, state lives in the URL -->
+      <div class="roster-bar">
+        <input class="search" v-model="q" type="search"
+               placeholder="搜索技能名称或代码" />
+        <select v-model="sort" class="sort" aria-label="排序方式">
+          <option v-for="o in SORTS" :key="o.key" :value="o.key">{{ o.label }}</option>
+        </select>
+      </div>
       <table v-if="items.length" class="data-table">
         <thead>
           <tr><th>技能代码</th><th>名称</th><th>简介</th><th>发布版本</th><th>状态</th><th class="th-act"></th></tr>
@@ -51,29 +59,20 @@
             </td>
             <td><span class="chip" :class="`chip-${s.state}`">
               {{ s.state === "active" ? "启用" : s.state === "deleted" ? "已删除" : "已停用" }}</span></td>
+            <!-- 9.15 R22: actions collapse into one ⋯ menu -->
             <td class="row-act" @click.stop>
-              <button v-if="s.state === 'active'" class="ghost slim"
-                      title="停用后列表置灰，不能再提交；已有任务不受影响"
-                      @click="toggle(s, 'disable')">停用</button>
-              <button v-if="s.state === 'disabled'" class="primary slim"
-                      title="恢复为可提交状态（占用套餐技能席位）"
-                      @click="toggle(s, 'enable')">启用</button>
-              <button v-if="s.state === 'deleted'" class="primary slim"
-                      title="恢复为启用状态，版本与历史都在"
-                      @click="restore(s)">恢复</button>
-              <button v-if="s.state !== 'deleted'" class="ghost slim"
-                      title="软删除：进入归档页签，版本与历史保留，可随时恢复"
-                      @click="del(s)">删除</button>
-              <router-link :to="`/skills/${s.skill_code}`">
-                <button class="ghost slim">编辑</button></router-link>
-              <button class="ghost slim"
-                      @click="downloadFile(api.skillExportUrl(s.skill_code),
-                                           `${s.skill_code}.yaml`)">导出</button>
+              <RowActionMenu :items="menuItems(s)" @select="onMenu(s, $event)" />
             </td>
           </tr>
         </tbody>
       </table>
       <Skeleton v-else-if="isLoading" :rows="5" />
+      <EmptyState v-else-if="q.trim()" title="未找到相关技能" glyph="🔍">
+        换个关键词试试，或清空搜索查看本页签全部技能。
+        <template #action>
+          <button @click="q = ''">清空搜索</button>
+        </template>
+      </EmptyState>
       <EmptyState v-else-if="bucket === 'deleted'" title="没有已删除的技能" glyph="🗄️">
         删除技能后它会出现在这里，版本与历史全部保留，可随时恢复。
       </EmptyState>
@@ -97,29 +96,91 @@
 
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { computed, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { api, downloadFile, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
+import RowActionMenu, { type RowMenuItem } from "../components/RowActionMenu.vue";
 import Skeleton from "../components/Skeleton.vue";
 import SkillTemplateGallery from "../components/SkillTemplateGallery.vue";
 import { toast } from "../toast";
 
+const route = useRoute();
 const router = useRouter();
 const qc = useQueryClient();
 const showGallery = ref(false);
-// lifecycle bucket (WP4): active roster / disabled / deleted archive
-const bucket = ref<"active" | "disabled" | "deleted">("active");
+
+// —— 9.15 R01/R02: search + sort, mirrored into the URL so refresh/back/share
+// reproduce the view; search and sort only ever apply inside the active bucket
+type SortKey = "name_asc" | "name_desc" | "updated_desc" | "updated_asc"
+  | "created_desc" | "created_asc";
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "updated_desc", label: "最近更新" },
+  { key: "updated_asc", label: "最早更新" },
+  { key: "created_desc", label: "最近创建" },
+  { key: "created_asc", label: "最早创建" },
+  { key: "name_asc", label: "名称 A→Z" },
+  { key: "name_desc", label: "名称 Z→A" },
+];
+const DEFAULT_SORT: SortKey = "updated_desc";
+
+const bucket = ref<"active" | "disabled" | "deleted">(
+  (["active", "disabled", "deleted"] as const).includes(route.query.bucket as any)
+    ? route.query.bucket as any : "active");
+const q = ref(String(route.query.q ?? ""));
+const sort = ref((SORTS.some((o) => o.key === route.query.sort)
+                  ? route.query.sort as SortKey : DEFAULT_SORT));
+
+watch([q, sort, bucket], () => {
+  const query: Record<string, string> = {};
+  if (q.value.trim()) query.q = q.value.trim();
+  if (sort.value !== DEFAULT_SORT) query.sort = sort.value;
+  if (bucket.value !== "active") query.bucket = bucket.value;
+  router.replace({ query });
+});
+
+// URL → state sync for in-SPA navigation (back/forward, deep links that land
+// on an already-mounted view); guarded so it cannot loop with the writer above
+watch(() => route.query.bucket, (v) => {
+  const val = (["active", "disabled", "deleted"] as const).includes(v as "active")
+    ? v as typeof bucket.value : "active";
+  if (val !== bucket.value) bucket.value = val;
+});
+watch(() => route.query.q, (v) => {
+  const val = String(v ?? "");
+  if (val !== q.value) q.value = val;
+});
+watch(() => route.query.sort, (v) => {
+  const val = SORTS.some((o) => o.key === v) ? v as SortKey : DEFAULT_SORT;
+  if (val !== sort.value) sort.value = val;
+});
+
 const { data, isLoading } = useQuery({
   queryKey: computed(() => ["skills", bucket.value]),
   queryFn: () => bucket.value === "deleted" ? api.skillsByState("deleted") : api.skills(),
 });
+const byName = (a: SkillInfo, b: SkillInfo) =>
+  a.name.localeCompare(b.name, "zh-Hans-CN", { numeric: true })
+  || a.skill_code.localeCompare(b.skill_code);
 const items = computed<SkillInfo[]>(() => {
   const rows = data.value ?? [];
-  return bucket.value === "deleted"
+  const inBucket = bucket.value === "deleted"
     ? rows
     : rows.filter((s) => s.state === bucket.value);
+  const kw = q.value.trim().toLowerCase();
+  const hits = kw
+    ? inBucket.filter((s) => s.name.toLowerCase().includes(kw)
+                        || s.skill_code.toLowerCase().includes(kw))
+    : inBucket;
+  const dir = sort.value.endsWith("_desc") ? -1 : 1;
+  const key = sort.value.startsWith("name") ? "name" : sort.value.startsWith("updated") ? "updated_at" : "created_at";
+  return [...hits].sort((a, b) => {
+    if (key === "name") return dir * byName(a, b);
+    const av = (a[key as "created_at" | "updated_at"] ?? "");
+    const bv = (b[key as "created_at" | "updated_at"] ?? "");
+    return dir * (av < bv ? -1 : av > bv ? 1 : byName(a, b));
+  });
 });
 
 // badge counts: one list call covers both roster buckets; the archive is cheap
@@ -140,6 +201,29 @@ const buckets = computed(() => [
   { key: "deleted" as const, label: "已删除",
     count: deletedData.value?.length ?? 0 },
 ]);
+
+// —— 9.15 R22: per-state menu items (删除二次确认沿用 del()) ——
+function menuItems(s: SkillInfo): RowMenuItem[] {
+  const common: RowMenuItem[] = [
+    { key: "edit", label: "编辑" },
+    { key: "export", label: "导出" },
+  ];
+  if (s.state === "active") {
+    return [...common, { key: "disable", label: "停用" }, { key: "delete", label: "删除", danger: true }];
+  }
+  if (s.state === "disabled") {
+    return [...common, { key: "enable", label: "启用" }, { key: "delete", label: "删除", danger: true }];
+  }
+  return [{ key: "restore", label: "恢复" }, { key: "edit", label: "编辑（查看）" }];
+}
+function onMenu(s: SkillInfo, key: string) {
+  if (key === "edit") router.push(`/skills/${s.skill_code}`);
+  else if (key === "export") downloadFile(api.skillExportUrl(s.skill_code), `${s.skill_code}.yaml`);
+  else if (key === "disable") toggle(s, "disable");
+  else if (key === "enable") toggle(s, "enable");
+  else if (key === "delete") del(s);
+  else if (key === "restore") restore(s);
+}
 
 async function toggle(s: SkillInfo, action: "disable" | "enable") {
   const verb = action === "disable" ? "停用" : "启用";
@@ -193,6 +277,9 @@ async function importYaml(ev: Event) {
 .tabs { display: flex; gap: 8px; align-items: center; padding: 12px 14px 0; }
 .tabs .badge-r { margin-left: 4px; }
 .tabs .hint { margin-left: auto; font-size: 12px; }
+.roster-bar { display: flex; gap: 10px; align-items: center; padding: 10px 14px 2px; }
+.roster-bar .search { max-width: 260px; }
+.roster-bar .sort { width: auto; font-size: 12.5px; }
 .file-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
   border-radius: 6px; padding: 6px 14px; cursor: pointer; display: inline-block; }
 .file-btn .btn-like:hover { border-color: var(--accent); }

@@ -358,3 +358,99 @@ async def test_skill_list_projects_description_with_source(tmp_path, monkeypatch
             rows = (await c.get("/api/v1/skills", params={"state": "active"})).json()
             nd = next(x for x in rows if x["skill_code"] == "nodesc")
             assert nd["description"] is None and nd["description_source"] is None
+
+
+async def test_updated_at_bumps_on_lifecycle_actions(tmp_path, monkeypatch):
+    """9.15 R02: the roster's 最近更新 sort key must advance on every lifecycle
+    mutation (save draft / publish / disable / enable / new + delete version),
+    and the roster must expose created_at/updated_at."""
+    import asyncio as _aio
+
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            stamps: list[str] = []
+
+            async def latest() -> str:
+                r = await c.get("/api/v1/skills")
+                row = next(x for x in r.json() if x["skill_code"] == "verspec")
+                assert row["created_at"] is not None and row["updated_at"]
+                stamps.append(row["updated_at"])
+                return row["updated_at"]
+
+            await c.post("/api/v1/skills", json={"package": _pkg(), "changelog": "第一版"})
+            t0 = await latest()
+            seq = [t0]
+            # save draft
+            await _aio.sleep(0.01)
+            await c.put("/api/v1/skills/verspec/versions/1", json={"package": _pkg()})
+            seq.append(await latest())
+            # publish
+            await _aio.sleep(0.01)
+            await c.post("/api/v1/skills/verspec/versions/1/publish")
+            seq.append(await latest())
+            # disable / enable
+            await _aio.sleep(0.01)
+            await c.patch("/api/v1/skills/verspec/state", json={"action": "disable"})
+            seq.append(await latest())
+            await _aio.sleep(0.01)
+            await c.patch("/api/v1/skills/verspec/state", json={"action": "enable"})
+            seq.append(await latest())
+            # new draft + delete that draft
+            await _aio.sleep(0.01)
+            await c.post("/api/v1/skills/verspec/versions", json={"package": _pkg()})
+            seq.append(await latest())
+            await _aio.sleep(0.01)
+            await c.delete("/api/v1/skills/verspec/versions/2")
+            seq.append(await latest())
+            assert all(b > a for a, b in zip(seq, seq[1:])), seq
+
+
+async def test_file_list_shows_skill_name_and_searches_it(tmp_path, monkeypatch):
+    """9.15 R20: the ledger projects the skill's display name (code fallback
+    when the skill row is gone), `q` matches names too, and deleted skills
+    stay searchable so历史 rows remain explainable."""
+    from datetime import datetime, timedelta, timezone as tz
+
+    from app.db import session_factory
+    from app.models import FileRecord, Skill, Transaction
+
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            now = datetime.now(tz.utc)
+            sf = session_factory()
+            async with sf() as s:
+                s.add(Skill(code="inv", tenant_id="default", name="徐工发票识别",
+                            state="active"))
+                s.add(Skill(code="old", tenant_id="default", name="退役报关单技能",
+                            state="deleted"))
+                for i, (skill, name) in enumerate([
+                        ("inv", "alpha.pdf"), ("old", "beta.pdf"), ("ghost", "gamma.pdf")]):
+                    s.add(Transaction(id=f"t{i}", tenant_id="default", skill_code=skill,
+                                      skill_version=1, status="completed"))
+                    s.add(FileRecord(id=f"f{i}", tenant_id="default",
+                                     transaction_id=f"t{i}", file_name=name,
+                                     storage_path=f"/tmp/{name}", status="completed",
+                                     page_count=1,
+                                     created_at=now - timedelta(minutes=i)))
+                await s.commit()
+
+            body = (await c.get("/api/v1/files", params={"q": "徐工"})).json()
+            assert body["total"] == 1
+            row = body["data"][0]
+            assert row["file_name"] == "alpha.pdf"
+            assert row["skill_name"] == "徐工发票识别"      # display name
+            assert row["skill_code"] == "inv"
+
+            # deleted skill's name still matches (its history stays explainable)
+            body = (await c.get("/api/v1/files", params={"q": "退役"})).json()
+            assert body["total"] == 1
+            assert body["data"][0]["skill_name"] == "退役报关单技能"
+
+            # no Skill row -> code fallback, nothing breaks
+            body = (await c.get("/api/v1/files", params={"q": "gamma"})).json()
+            assert body["total"] == 1
+            assert body["data"][0]["skill_name"] == "ghost"

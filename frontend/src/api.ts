@@ -124,6 +124,9 @@ export interface SkillInfo {
   skill_code: string; name: string; kind: string; state: string;
   /** highest published version, null = never published (cannot be submitted to) */
   published_version: number | null;
+  /** 9.15 R02: lifecycle stamps for the 最近更新 sort */
+  created_at?: string | null;
+  updated_at?: string | null;
   /** WP5 (P26-29): one-line description projected from SkillPackage — the
    *  published version's wording, or the newest draft's when never published */
   description?: string | null;
@@ -190,6 +193,8 @@ export interface HomeStats {
 }
 export interface FileRow {
   file_id: string; transaction_id: string; file_name: string; skill_code: string;
+  /** 9.15 R20: skill display name (falls back to the code server-side) */
+  skill_name?: string | null;
   type: string; size: number | null; page_count: number; status: string;
   created_at: string; updated_at: string | null; verified_by: string | null;
   error: string | null;

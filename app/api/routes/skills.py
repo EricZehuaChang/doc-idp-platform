@@ -4,6 +4,7 @@ check). All studio interactions are API-first — the M2 UI sits on these.
 """
 import asyncio
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -65,6 +66,12 @@ async def _parse_upload_kept(up: UploadFile, tenant: str,
 class SkillCreate(BaseModel):
     package: SkillPackage
     changelog: str = ""
+
+
+def _touch(skill: Skill) -> None:
+    """Stamp the roster's 最近更新 (9.15 R02). Called on every lifecycle
+    mutation; never derived from version rows so history stays honest."""
+    skill.updated_at = datetime.now(timezone.utc)
 
 
 @router.post("", status_code=201)
@@ -132,6 +139,8 @@ async def list_skills(state: str | None = None):
                           if text else None)
         return [{"skill_code": r.code, "name": r.name, "kind": r.kind, "state": r.state,
                  "published_version": pub.get(r.code),
+                 "created_at": r.created_at.isoformat() if r.created_at else None,
+                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
                  "description": desc.get(r.code, (None, None))[0],
                  "description_source": desc.get(r.code, (None, None))[1]}
                 for r in rows]
@@ -271,6 +280,7 @@ async def set_skill_state(skill_code: str, body: SkillStateBody):
         else:
             await _enforce_skill_seat(s, tenant)
             skill.state = "active"
+        _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.state_changed",
                        detail={"skill_code": skill_code, "state": skill.state}))
@@ -289,6 +299,7 @@ async def delete_skill(skill_code: str):
         if skill is None or skill.tenant_id != tenant:
             raise HTTPException(404, "skill not found")
         skill.state = "deleted"
+        _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.deleted",
                        detail={"skill_code": skill_code, "name": skill.name}))
@@ -311,6 +322,7 @@ async def restore_skill(skill_code: str):
             raise HTTPException(409, f"技能当前状态为 {skill.state}，无需恢复")
         await _enforce_skill_seat(s, tenant)   # a restored skill is a seat again
         skill.state = "active"
+        _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.restored", detail={"skill_code": skill_code}))
         await s.commit()
@@ -338,6 +350,7 @@ async def new_draft(skill_code: str, payload: DraftUpdate):
         s.add(SkillVersion(tenant_id=tenant, skill_code=skill_code, version=next_ver,
                            status="draft", package=payload.package.model_dump(),
                            changelog=payload.changelog))
+        _touch(skill)
         await s.commit()
     return {"skill_code": skill_code, "version": next_ver, "status": "draft"}
 
@@ -373,6 +386,7 @@ async def update_draft(skill_code: str, version: int, payload: DraftUpdate):
         if payload.changelog:
             row.changelog = payload.changelog
         skill.name = payload.package.name or skill.name
+        _touch(skill)
         await s.commit()
     return {"skill_code": skill_code, "version": version, "status": "draft"}
 
@@ -415,13 +429,14 @@ async def delete_version(skill_code: str, version: int):
             raise HTTPException(404, "version not found")
         if row.status == "published":
             raise HTTPException(409, f"v{version} 是当前发布版本，不可删除；"
-                                     "请先发布其它版本，或使用「删除技能」")
+                                     "请先发布其它版本，或到技能列表的「⋯」菜单删除技能")
         remaining = (await s.execute(
             select(func.count(SkillVersion.id))
             .where(SkillVersion.skill_code == skill_code,
                    SkillVersion.tenant_id == tenant))).scalar_one()
         if remaining <= 1:
-            raise HTTPException(409, "每个技能至少保留一个版本；要移除整个技能请使用「删除技能」")
+            raise HTTPException(409, "每个技能至少保留一个版本；要移除整个技能，"
+                                     "请到技能列表的「⋯」菜单删除技能")
         live = (await s.execute(
             select(func.count(Transaction.id))
             .where(Transaction.tenant_id == tenant,
@@ -431,6 +446,7 @@ async def delete_version(skill_code: str, version: int):
         if live:
             raise HTTPException(409, f"v{version} 还有 {live} 个任务在跑，等跑完再删")
         await s.delete(row)
+        _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.version_deleted",
                        detail={"skill_code": skill_code, "version": version}))
@@ -614,6 +630,7 @@ async def import_yaml(file: UploadFile = File(...)):
                 select(SkillVersion).where(SkillVersion.skill_code == pkg.skill_code)
                 .order_by(SkillVersion.version.desc()))).scalars().first()
             next_ver = (latest.version + 1) if latest else 1
+            _touch(skill)   # imported draft onto an existing skill (D5: unchanged behavior)
         s.add(SkillVersion(tenant_id=tenant, skill_code=pkg.skill_code,
                            version=next_ver, status="draft",
                            package=pkg.model_dump(), changelog="imported from YAML"))
@@ -703,6 +720,9 @@ async def publish(skill_code: str, version: int):
         for c in current:
             c.status = "archived"
         target.status = "published"
+        skill = await s.get(Skill, skill_code)
+        if skill is not None:
+            _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.published",
                        detail={"skill_code": skill_code, "version": version,

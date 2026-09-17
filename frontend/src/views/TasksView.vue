@@ -11,7 +11,7 @@
            once applied, so the table itself keeps a normal single header. -->
       <div class="bar">
         <input class="search" v-model="f.q" type="search"
-               placeholder="搜索文件名或技能代码…" @keyup.enter="applyNow" />
+               placeholder="搜索文件名、技能名称或代码…" @keyup.enter="applyNow" />
         <div class="chips">
           <span v-for="c in chips" :key="c.key" class="chip-f">
             {{ c.text }}
@@ -42,7 +42,11 @@
           <tbody v-if="rows.length">
             <tr v-for="r in rows" :key="r.file_id" @mouseenter="prefetch(r)">
               <td class="dim nowrap">{{ ts(r.created_at) }}</td>
-              <td>{{ r.skill_code }}</td>
+              <!-- 9.15 R20: display name first, code as the second small line -->
+              <td class="skill-cell" :title="r.skill_name || r.skill_code">
+                {{ r.skill_name || r.skill_code }}
+                <div class="code-sub">{{ r.skill_code }}</div>
+              </td>
               <td class="fname" :title="r.file_name">
                 {{ r.file_name }}
                 <span v-if="r.child_count" class="split-note">
@@ -120,7 +124,8 @@
           <select v-model="f.skill_code" size="8" class="listbox">
             <option value="">全部技能</option>
             <option v-for="s in skillList" :key="s.skill_code" :value="s.skill_code">
-              {{ s.name || s.skill_code }}</option>
+              {{ s.name || s.skill_code }}（{{ s.skill_code }}）{{ s.state === "deleted" ? " · 已删除" : "" }}
+            </option>
           </select>
         </template>
         <template v-else-if="openCol === 'file_name'">
@@ -330,7 +335,16 @@ const chips = computed(() => {
 });
 
 const { data: skillData } = useQuery({ queryKey: ["skills"], queryFn: api.skills });
-const skillList = computed<SkillInfo[]>(() => skillData.value ?? []);
+// 9.15 R20: the ledger keeps rows whose skill has since been deleted — the
+// filter must cover them too, or a visible value could never be selected.
+const { data: deletedSkillData } = useQuery({
+  queryKey: ["skills", "deleted"],
+  queryFn: () => api.skillsByState("deleted"),
+});
+const skillList = computed<SkillInfo[]>(() => [
+  ...(skillData.value ?? []),
+  ...(deletedSkillData.value ?? []),
+]);
 // the type list reads the upload capability contract — the same single source
 // of truth the upload page uses, so the two can never drift
 const { data: limits } = useQuery({ queryKey: ["formats"], queryFn: api.formats });
@@ -410,7 +424,17 @@ function speedTitle(r: FileRow): string {
 .chip-x:hover { color: var(--red); border-color: transparent; }
 .hint, .total-note { font-size: 12px; }
 .total-note { margin-left: auto; }
-.table-scroll { overflow-x: auto; }
+/* 9.15 R19: keep the whole table inside the viewport so its horizontal
+   scrollbar is always visible (it used to sit at the page bottom, below the
+   fold) and the header stays readable while scrolling both axes. */
+.table-scroll { overflow: auto; max-height: calc(100vh - 250px); }
+.table-scroll thead th { position: sticky; top: 0; background: var(--bg-panel);
+  z-index: 2; }
+/* 操作列 sticky 右侧：窄窗口横向滚动时「查看/Verify」始终可达 */
+.table-scroll .th-act { position: sticky; right: 0; background: var(--bg-panel);
+  z-index: 3; }
+.table-scroll .row-act { position: sticky; right: 0; background: var(--bg-panel);
+  box-shadow: inset 8px 0 8px -8px rgba(0, 0, 0, 0.35); }
 /* the filter affordance lives in the header cell itself — no extra row */
 .th-cell { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .fbtn { padding: 0 3px; font-size: 9px; line-height: 1.6; background: transparent;
@@ -420,6 +444,10 @@ function speedTitle(r: FileRow): string {
 .fbtn.on::after { content: "•"; font-size: 13px; line-height: 0; }
 .fbtn.open { color: var(--accent); background: var(--bg-raised); }
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 9.15 R20/R19: skill name capped so long names cannot push the table wide */
+.skill-cell { max-width: 170px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.code-sub { font-size: 10.5px; color: var(--text-dim); font-family: Consolas, monospace; }
 .split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
 .speed { font-size: 12px; color: var(--text); white-space: nowrap; }
 .nowrap { white-space: nowrap; }
