@@ -159,9 +159,16 @@ def package_from_yaml(text: str) -> SkillPackage:
 
 
 def draft_to_fields(draft: dict) -> list[FieldSpec]:
-    """Probe/text draft -> FieldSpec list (editor prefill)."""
+    """Probe/text draft -> FieldSpec list (editor prefill). Tolerant by
+    contract (#1): anything that is not `{"fields": [...]}` yields [] rather
+    than raising, because the shape comes from a model."""
+    if not isinstance(draft, dict):
+        return []
+    raw_fields = draft.get("fields")
+    if not isinstance(raw_fields, list):
+        return []
     fields = []
-    for f in draft.get("fields", []):
+    for f in raw_fields:
         if not isinstance(f, dict) or not f.get("name"):
             continue
         cols = [FieldSpec(name=str(c["name"]),
@@ -355,7 +362,11 @@ def generate_fields(sample_text: str, description: str,
          {"role": "user", "content": "\n\n".join(parts)}],
         _studio_chain(provider), transport=transport)
     draft = raw if isinstance(raw, dict) else {}
-    fields = draft_to_fields(draft.get("fields") if isinstance(draft, dict) else [])
+    # #1 fix (走查 P0): draft_to_fields takes the WHOLE draft dict — passing
+    # draft["fields"] (a list) raised AttributeError on every call. Malformed
+    # model output (non-dict / fields not a list / entries without name) must
+    # never reach the caller as a 500, so the shape check lives in the helper.
+    fields = draft_to_fields(draft)
     examples = {}
     for f in (draft.get("fields") or []):
         if isinstance(f, dict) and f.get("name"):

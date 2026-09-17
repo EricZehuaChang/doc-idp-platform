@@ -558,6 +558,10 @@ async def transaction_documents(transaction_id: str):
             "files": [{
                 "file_id": f.id, "file_name": f.file_name,
                 "status": f.status, "page_count": f.page_count,
+                # D3 (#8): file-level artifacts, new key only — rename produces
+                # ONE file for the whole original, so it hangs off the root and
+                # must be visible at file level, not only inside a document
+                "artifacts": artifacts_by_file.get(f.id, []),
                 "documents": _documents(f)} for f in roots]}
 
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
+from app.api.http_headers import content_disposition
 from app.db import session_factory
 from app.models import FileArtifact, FileRecord, Transaction
 from app.storage import get_storage
@@ -80,15 +81,6 @@ async def txn_artifacts(txn_id: str):
     return {"artifacts": [_view(a) for a in rows]}
 
 
-def _content_disposition(name: str) -> str:
-    """RFC 5987/6266 with an ASCII fallback; CR/LF can never appear (header
-    injection guard) — the name was also sanitised at generation time."""
-    safe = name.replace("\r", "").replace("\n", "")
-    fallback = "".join(ch if 32 <= ord(ch) < 128 and ch not in '"\\' else "_"
-                       for ch in safe) or "artifact"
-    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{safe}"
-
-
 @router.get("/artifacts/{artifact_id}/download")
 async def download(artifact_id: str):
     tenant = current_tenant()
@@ -115,5 +107,5 @@ async def download(artifact_id: str):
     from mimetypes import guess_type
     media = guess_type(name)[0] or "application/octet-stream"
     return StreamingResponse(_stream(), media_type=media, headers={
-        "Content-Disposition": _content_disposition(name),
+        "Content-Disposition": content_disposition(name),
         "Cache-Control": "no-store"})

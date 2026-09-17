@@ -150,7 +150,9 @@ async def _fast_parse(path: str, tenant: str) -> tuple[UDR, dict[int, str] | Non
         if images:
             pages = [Page(page_no=i, width=w, height=h, blocks=[], markdown="")
                      for i, (w, h) in enumerate(sizes, start=1)]
-            udr = UDR(pages=pages, full_markdown="", parser="vision_fast", lang="")
+            # #3 fix (走查 P0): UDR.lang is list[str]; lang="" raised a
+            # validation error for every image / scanned PDF on the vision route
+            udr = UDR(pages=pages, full_markdown="", parser="vision_fast", lang=[])
             return udr, images, "vision"
     udr = await asyncio.to_thread(parse_document, path, None)
     return udr, None, "ocr_fallback"
@@ -303,6 +305,7 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
         await asyncio.gather(*(_child(c["child_id"], c["subpkg"],
                                       c.get("classify_only", False))
                                for c in meta["children"]))
+        await _root_output_stage(file_id)
         return
 
     # children never re-split (bounded recursion); "off" kills the feature
@@ -333,14 +336,24 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
 
             await asyncio.gather(*(_child(c["child_id"], c["subpkg"])
                                    for c in meta["children"]))
+            await _root_output_stage(file_id)
             return
     await _extract_one(file_id, udr, pkg, deps or {}, fast=fast,
                        page_images=page_images, classify_ms=classify_ms)
 
 
+async def _root_output_stage(file_id: str) -> None:
+    """#8/D3: rename produces ONE file for the whole original, so it can only be
+    generated once every child has settled — i.e. after the fan-out gather."""
+    from app.tasks.output_stage import output_stage
+    await output_stage(file_id)
+
+
 async def _complete_classify_only(file_id: str) -> None:
     """classify_only document: no extraction requested (B4 default: pages still
-    bill) — result stays {}, status completed, webhook still fires."""
+    bill) — result stays {}, status completed, webhook still fires. It is a
+    finished document like any other, so the output stage runs for it too
+    (#4: 「仅分类」文档同样产出)."""
     sf = session_factory()
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
@@ -356,6 +369,8 @@ async def _complete_classify_only(file_id: str) -> None:
     await shadow_meter(tenant_id=tenant, file_id=file_id, pages=pages, usage={})
     await webhooks.fire(tenant, "file.completed",
                         {"file_id": file_id, "status": "completed", "pages": pages})
+    from app.tasks.output_stage import output_stage
+    await output_stage(file_id)
 
 
 async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,

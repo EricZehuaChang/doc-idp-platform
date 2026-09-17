@@ -324,9 +324,10 @@ async def cabinet_csv(skill_code: str, limit: int = 1000):
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
+    from app.api.http_headers import content_disposition
     return PlainTextResponse(buf.getvalue(), media_type="text/csv",
                              headers={"Content-Disposition":
-                                      f'attachment; filename="{skill_code}.csv"'})
+                                      content_disposition(f"{skill_code}.csv")})
 
 
 @router.get("/stats/skills")

@@ -300,9 +300,12 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             result[e.field] = cell
             applied.append(e.field)
         f.result = result
-        await s.commit()
-    if applied:                        # 9.15 WP6: artifact provenance revision
-        f.result_revision = (f.result_revision or 0) + 1
+        if applied:
+            # 9.15 WP6 provenance revision — must be written INSIDE this session
+            # (the earlier out-of-block version silently never persisted, so
+            # artifacts never regenerated after a correction; found by the
+            # FX1 end-to-end test for #4)
+            f.result_revision = (f.result_revision or 0) + 1
         await s.commit()
     return {"file_id": file_id, "corrected_fields": applied}
 
