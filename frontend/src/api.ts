@@ -182,7 +182,11 @@ export interface TxnDocuments {
   transaction_id: string; purpose: string; status: string;
   skill_code: string; skill_version: number;
   files: { file_id: string; file_name: string; status: string;
-           page_count: number | null; documents: TxnDocument[] }[];
+           page_count: number | null;
+           /** D3 (#8): file-level artifacts — rename produces ONE file for the
+            *  whole original, so it hangs off the root, not a document */
+           artifacts: Artifact[];
+           documents: TxnDocument[] }[];
 }
 export interface TxnStatus {
   transaction_id: string; status: string; skill_code: string; skill_version: number;

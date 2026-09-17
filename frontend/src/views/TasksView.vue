@@ -49,7 +49,8 @@
               </td>
               <!-- 9.15 R21: initiator snapshot; legacy rows render "—" -->
               <td class="initiator-cell" :title="initiatorTitle(r)">
-                <template v-if="r.initiator_label">{{ r.initiator_label }}</template>
+                <template v-if="r.initiator_label">{{
+                  whoLabel(r.initiator_label) }}</template>
                 <span v-else class="dim">—</span>
               </td>
               <td class="fname" :title="r.file_name">
@@ -181,7 +182,7 @@ import { api, fetchBlob, type FileRow, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
-import { STATUS_LABELS } from "../labels";
+import { STATUS_LABELS, initiatorLabel } from "../labels";
 
 const route = useRoute();
 const router = useRouter();
@@ -404,9 +405,10 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 // 9.15 R21: legacy rows (predating the initiator snapshot) show "—" with a
 // hint instead of a fabricated name
 function initiatorTitle(r: FileRow): string {
-  if (r.initiator_label) return `发起人：${r.initiator_label}`;
+  if (r.initiator_label) return `发起人：${whoLabel(r.initiator_label)}`;
   return "该任务早于发起人记录功能";
 }
+const whoLabel = initiatorLabel;
 
 // —— per-document processing speed (需求1) ——
 function fmtSeconds(sec: number): string {

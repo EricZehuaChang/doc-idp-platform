@@ -15,8 +15,8 @@
     </PageHeader>
 
     <!-- —— 9.15 WP7: import dialog (two-step, DropZone + passphrase) —— -->
-    <div v-if="importOpen" class="modal-mask" @click.self="importOpen = false">
-      <div class="modal pkg-modal" data-testid="import-modal">
+    <AppModal v-if="importOpen" @close="closeImport">
+      <div class="pkg-modal" data-testid="import-modal">
         <template v-if="!importPreview">
           <h4>导入加密技能包</h4>
           <DropZone accept=".zip" @add="onImportFiles" />
@@ -24,7 +24,7 @@
           <input v-model="importPass" class="txt" type="password"
                  placeholder="导出时生成的一次性口令" />
           <div class="modal-actions">
-            <button class="ghost" @click="importOpen = false">取消</button>
+            <button class="ghost" @click="closeImport">取消</button>
             <button class="primary" data-testid="import-parse"
                     :disabled="!importFile || !importPass" @click="parsePackage">
               解析</button>
@@ -84,18 +84,18 @@
             <input v-model="newCode" class="txt" data-testid="import-new-code" />
           </template>
           <div class="modal-actions">
-            <button class="ghost" @click="importOpen = false">取消</button>
+            <button class="ghost" @click="closeImport">取消</button>
             <button class="primary" data-testid="import-commit"
                     :disabled="conflict === 'overwrite' && !overwriteTarget"
                     @click="commitImport">确认导入</button>
           </div>
         </template>
       </div>
-    </div>
+    </AppModal>
 
     <!-- —— 9.15 WP7: export dialog (version pick + one-time passphrase) —— -->
-    <div v-if="exportOpen" class="modal-mask" @click.self="exportOpen = false">
-      <div class="modal pkg-modal" data-testid="export-modal">
+    <AppModal v-if="exportOpen" @close="closeExport">
+      <div class="pkg-modal" data-testid="export-modal">
         <template v-if="!exportResult">
           <h4>导出加密技能包</h4>
           <p class="dim">包含与不包含：技能定义与被引用包会打包；金样本、样本原件、
@@ -106,7 +106,7 @@
               {{ v.label }}</option>
           </select>
           <div class="modal-actions">
-            <button class="ghost" @click="exportOpen = false">取消</button>
+            <button class="ghost" @click="closeExport">取消</button>
             <button class="primary" data-testid="export-generate"
                     @click="doExport">生成加密包</button>
           </div>
@@ -121,10 +121,12 @@
             <button class="ghost" @click="copyPass">复制口令</button>
             <button class="primary" data-testid="export-download"
                     @click="downloadExport">下载 .zip</button>
+            <!-- #9: the dialog used to be unclosable after generating -->
+            <button data-testid="export-done" @click="closeExport">完成</button>
           </div>
         </template>
       </div>
-    </div>
+    </AppModal>
 
     <!-- gallery on demand; the empty state opens it by itself below -->
     <section v-if="showGallery && items.length" class="card-panel pad">
@@ -215,6 +217,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, downloadFile, type SkillInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
+import AppModal from "../components/AppModal.vue";
 import DropZone from "../components/DropZone.vue";
 import RowActionMenu, { type RowMenuItem } from "../components/RowActionMenu.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -371,6 +374,18 @@ function downloadExport() {
   a.download = r.file_name;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function closeExport() {
+  exportOpen.value = false;
+  exportResult.value = null;      // the one-time passphrase must not linger
+}
+
+function closeImport() {
+  importOpen.value = false;
+  importPreview.value = null;
+  importFile.value = null;
+  importPass.value = "";
 }
 
 async function copyPass() {

@@ -1,6 +1,6 @@
 <template>
-  <div class="modal-mask" @click.self="$emit('close')">
-    <div class="modal gen-modal">
+  <AppModal @close="$emit('close')">
+    <div class="gen-modal">
       <h3>✨ 自动生成字段</h3>
       <p class="dim">样本预标注 + 描述 二合一：字段范围以描述为准，字段名、类型和示例值参考样本。</p>
 
@@ -43,12 +43,13 @@
       </div>
       <p v-if="error" class="err">{{ error }}</p>
     </div>
-  </div>
+  </AppModal>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { api, type FieldSpec } from "../api";
+import AppModal from "./AppModal.vue";
 import { toast } from "../toast";
 
 const props = defineProps<{ skillCode?: string }>();
@@ -96,10 +97,6 @@ function apply() {
 </script>
 
 <style scoped>
-.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.4);
-  display: flex; align-items: center; justify-content: center; z-index: 200; }
-.modal { background: var(--bg-panel); border-radius: 10px; padding: 18px 20px;
-  width: 560px; max-height: 82vh; overflow: auto; }
 textarea { width: 100%; margin: 8px 0; }
 .row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
 .row select { flex: 1; }

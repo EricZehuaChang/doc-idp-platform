@@ -455,40 +455,108 @@
       <!-- —— 测试 tab：试运行 + 金样本回归（Playground 将在极速模式批次替换试运行） —— -->
       <template v-else>
         <div class="test-grid">
-          <!-- —— 9.15 WP5 Playground (图21) —— -->
+          <!-- —— 9.15 WP5 Playground (图21)；走查 #5/#12/#19/#26 修补 —— -->
           <section v-if="!isNew" class="card-panel block playground" data-testid="playground">
             <h3 class="block-title">Playground（测试运行）</h3>
             <p class="dim">勾选样本运行当前定义（含未发布草稿）；测试任务不会进入任务列表、统计、
               数据柜、审单队列，也不会触发 webhook。</p>
             <div class="pg-grid">
-              <div class="pg-samples">
-                <input v-model="pgSearch" placeholder="搜索样本…" />
-                <label class="file-btn"><input type="file" hidden @change="pgUpload" />
-                  <span class="btn-like">上传样本</span></label>
-                <ul class="pg-list">
-                  <li v-for="s in pgFilteredSamples" :key="s.id">
-                    <label>
-                      <input type="checkbox" :value="s.id" v-model="pgSelected" />
-                      <span>{{ s.file_name }}</span>
-                      <small v-if="pgStatus(s.id)" class="dim">{{ pgStatus(s.id) }}</small>
-                    </label>
-                  </li>
-                  <li v-if="!pgFilteredSamples.length" class="dim">还没有样本</li>
-                </ul>
-                <button class="primary" data-testid="pg-run" :disabled="!pgSelected.length || pgPolling"
-                        @click="pgRun">运行测试（{{ pgSelected.length }}）</button>
+              <div class="pg-left">
+                <div class="pg-samples">
+                  <input v-model="pgSearch" placeholder="搜索样本…" />
+                  <label class="file-btn"><input type="file" hidden @change="pgUpload" />
+                    <span class="btn-like">上传样本</span></label>
+                  <ul class="pg-list" data-testid="pg-samples">
+                    <li v-for="s in pgFilteredSamples" :key="s.id">
+                      <label>
+                        <input type="checkbox" :value="s.id" v-model="pgSelected" />
+                        <span class="pg-name">{{ s.file_name }}</span>
+                        <small v-if="pgStatus(s.id)" class="pg-state">{{ pgStatus(s.id) }}</small>
+                      </label>
+                    </li>
+                    <li v-if="!pgFilteredSamples.length" class="dim">还没有样本</li>
+                  </ul>
+                  <button class="primary" data-testid="pg-run"
+                          :disabled="!pgSelected.length || pgPolling" @click="pgRun">
+                    运行测试（{{ pgSelected.length }}）</button>
+                </div>
+                <!-- #26: switch between the files of one multi-sample run -->
+                <div v-if="pgFiles.length > 1" class="pg-files" data-testid="pg-files">
+                  <button v-for="f in pgFiles" :key="f.file_id" class="btn-like"
+                          :class="{ on: f.file_id === pgActiveFileId }"
+                          @click="pgSelectFile(f.file_id)">
+                    {{ f.file_name }}</button>
+                </div>
               </div>
-              <div class="pg-result">
+
+              <div class="pg-stage-col">
+                <!-- #26: page thumbnails + original preview (never for fast mode) -->
+                <div class="pg-stage" data-testid="pg-stage">
+                  <DocStage v-if="pgCurrent && pgStagePages.length && !pgFast"
+                            :src="api.downloadUrl(pgStageFileId!)"
+                            :file-name="pgCurrent.file_name" :pages="pgStagePages"
+                            :active-box="pgActiveBox" :active-page="pgActivePage"
+                            :annotate="false" :boxes="pgStageBoxes"
+                            :active-key="pgActiveField ?? undefined"
+                            @pick="pgPickField" />
+                  <p v-else class="dim pg-stage-hint">
+                    {{ !pgCurrent ? "运行后在这里查看原件与字段高亮"
+                       : (pgFast ? "极速模式不提供定位高亮"
+                                 : "原件加载中…") }}</p>
+                </div>
+              </div>
+
+              <div class="pg-result" data-testid="pg-result">
                 <div class="pg-top">
                   <strong v-if="pgCurrent">{{ pgCurrent.file_name }}</strong>
-                  <span v-if="pgCurrent" class="chip" :class="`chip-${pgCurrent.status}`">{{ pgCurrent.status }}</span>
-                  <span v-if="pgDuration" class="dim">{{ pgDuration }} ms</span>
-                  <button class="btn-like" @click="pgHistoryOpen = true; pgLoadHistory()" data-testid="pg-history">运行历史</button>
-                  <button v-if="pgCurrentRun" class="btn-like" @click="pgDetailOpen = true">详情</button>
+                  <span v-if="pgCurrent" class="chip" :class="`chip-${pgCurrent.status}`">
+                    {{ stLabel(pgCurrent.status) }}</span>
+                  <span v-if="pgRunStatus" class="chip" :class="`chip-${pgRunStatusChip}`"
+                        data-testid="pg-run-status">{{ runLabel(pgRunStatus) }}</span>
+                  <span v-if="pgDuration" class="dim" data-testid="pg-duration">
+                    {{ pgDuration }} ms</span>
+                  <button class="btn-like" :disabled="pgPolling || !pgCurrent"
+                          data-testid="pg-rerun-file" @click="pgRunCurrent">
+                    运行（当前文件）</button>
+                  <button class="btn-like" @click="pgHistoryOpen = true; pgLoadHistory()"
+                          data-testid="pg-history">运行历史</button>
+                  <button v-if="pgCurrentRun" class="btn-like"
+                          data-testid="pg-detail-btn" @click="pgDetailOpen = true">详情</button>
                 </div>
+                <p v-if="pgTimeoutNote" class="err-text" data-testid="pg-timeout">
+                  {{ pgTimeoutNote }}</p>
                 <p v-if="pgFast" class="dim">极速模式不提供定位高亮；结果不带置信评分（未评分）。</p>
-                <p v-if="!pgDocs.length" class="dim">运行后在这里查看提取结果。</p>
-                <div v-for="doc in pgDocs" :key="`${doc.file_id}-${doc.doc_index}`" class="pg-doc">
+                <div v-if="pgFileArtifacts.length" class="pg-arts" data-testid="pg-file-arts">
+                  <span v-for="a in pgFileArtifacts" :key="a.artifact_id"
+                        class="pg-art" :title="a.error ?? ''">
+                    <button v-if="a.status === 'ready'" class="ghost"
+                            @click="api.artifactDownload(a.artifact_id, a.name)">
+                      产出 ⤓ {{ a.name }}</button>
+                    <span v-else class="dim">{{ a.name }}（失败：{{ a.error }}）</span>
+                  </span>
+                </div>
+                <p v-if="!pgVisibleDocs.length" class="dim">运行后在这里查看提取结果。</p>
+
+                <div class="pg-result-head">
+                  <strong>提取结果 · 输出格式：json</strong>
+                  <span class="pg-tabs">
+                    <button class="btn-like" :disabled="!pgVisibleDocs.length"
+                            :class="{ on: pgResultTab === 'all' }"
+                            data-testid="pg-tab-all" @click="pgResultTab = 'all'">
+                      全部字段</button>
+                    <button class="btn-like" :disabled="!pgVisibleDocs.length"
+                            :class="{ on: pgResultTab === 'review' }"
+                            data-testid="pg-tab-review" @click="pgResultTab = 'review'">
+                      待复核（{{ pgReviewCount }}）</button>
+                  </span>
+                  <button class="btn-like" :disabled="!pgVisibleDocs.length"
+                          data-testid="pg-toggle-all"
+                          @click="pgExpandAll = !pgExpandAll">
+                    {{ pgExpandAll ? "全部收起" : "全部展开" }}</button>
+                </div>
+
+                <div v-for="doc in pgVisibleDocs" :key="`${doc.file_id}-${doc.doc_index}`"
+                     class="pg-doc">
                   <div class="pg-doc-head">
                     <strong>文档 {{ doc.doc_index }}</strong>
                     <span v-if="doc.doc_type" class="chip">{{ doc.doc_type }}</span>
@@ -496,25 +564,35 @@
                     <span v-if="doc.extraction_status === 'not_requested'" class="dim">
                       仅分类，没有需要校验的字段</span>
                   </div>
-                  <table v-if="doc.data && !Array.isArray(doc.data) && Object.keys(doc.data).length">
+                  <table v-if="pgRowsOf(doc).length" class="pg-fields">
                     <tbody>
-                      <tr v-for="(v, k) in (doc.data as Record<string, unknown>)" :key="k">
-                        <td class="dim">{{ k }}
-                          <span v-if="doc.review_fields.includes(String(k))" class="badge-r">待复核</span></td>
-                        <td>{{ typeof v === "object" ? JSON.stringify(v) : (v || "—") }}</td>
+                      <tr v-for="[k, v] in pgRowsOf(doc)" :key="k"
+                          :class="{ on: pgActiveField === String(k) }"
+                          @click="pgPickDocField(doc, String(k))">
+                        <td class="pg-field-name">{{ k }}
+                          <span v-if="doc.review_fields.includes(String(k))"
+                                class="badge-r">待复核</span></td>
+                        <td>
+                          <span v-if="pgIsTable(v)" class="pg-table-grid"
+                                :data-testid="`pg-table-${k}`">
+                            <span v-for="(row, ri) in pgTableRows(v)" :key="ri"
+                                  class="pg-table-row">
+                              <span v-for="(cv, ck) in row" :key="ck" class="pg-cell">
+                                <b class="dim">{{ ck }}</b>{{ cv === null || cv === "" ? "—" : cv }}
+                              </span>
+                            </span>
+                          </span>
+                          <span v-else-if="pgIsList(v)" class="pg-json">{{
+                            JSON.stringify(v) }}</span>
+                          <span v-else>{{ v === null || v === "" ? "—" : v }}</span>
+                        </td>
                       </tr>
                     </tbody>
                   </table>
-                  <table v-else-if="Array.isArray(doc.data) && doc.data.length">
-                    <tbody>
-                      <tr v-for="(row, i) in doc.data" :key="i">
-                        <td>{{ JSON.stringify(row) }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <p v-else-if="doc.extraction_status !== 'not_requested'" class="dim">（无结果）</p>
-                  <div v-if="doc.artifacts?.length" class="pg-arts"
-                       data-testid="pg-arts">
+                  <p v-else-if="doc.extraction_status !== 'not_requested' &&
+                                pgResultTab === 'all'" class="dim">（无结果）</p>
+                  <p v-else-if="pgResultTab === 'review'" class="dim">没有待复核字段</p>
+                  <div v-if="doc.artifacts?.length" class="pg-arts" data-testid="pg-arts">
                     <span v-for="a in doc.artifacts" :key="a.artifact_id"
                           class="pg-art" :title="a.error ?? ''">
                       <button v-if="a.status === 'ready'" class="ghost"
@@ -527,8 +605,8 @@
               </div>
             </div>
 
-            <div v-if="pgHistoryOpen" class="modal-mask" @click.self="pgHistoryOpen = false">
-              <div class="modal pg-modal">
+            <AppModal v-if="pgHistoryOpen" wide @close="pgHistoryOpen = false">
+              <div class="pg-modal" data-testid="pg-history-modal">
                 <h4>运行历史</h4>
                 <table v-if="pgHistory.length">
                   <thead><tr><th>样本</th><th>版本</th><th>状态</th><th>耗时</th><th>发起人</th><th>时间</th></tr></thead>
@@ -536,31 +614,36 @@
                     <tr v-for="r in pgHistory" :key="r.run_id" class="pg-hist-row"
                         @click="pgLoadRun(r.run_id)">
                       <td>{{ pgSampleName(r.sample_id) }}</td><td>v{{ r.version }}</td>
-                      <td>{{ r.status }}</td>
-                      <td>{{ r.duration_ms ?? "—" }}</td><td>{{ r.created_by }}</td>
+                      <td>{{ runLabel(r.status) }}</td>
+                      <td>{{ r.duration_ms ?? "—" }}</td>
+                      <td>{{ initiatorLabel(r.created_by) }}</td>
                       <td class="dim">{{ r.created_at.slice(0, 19).replace("T", " ") }}</td>
                     </tr>
                   </tbody>
                 </table>
                 <p v-else class="dim">还没有运行记录。</p>
-                <button @click="pgHistoryOpen = false">关闭</button>
+                <div class="modal-actions">
+                  <button @click="pgHistoryOpen = false">关闭</button>
+                </div>
               </div>
-            </div>
+            </AppModal>
 
-            <div v-if="pgDetailOpen && pgDetail" class="modal-mask" @click.self="pgDetailOpen = false">
-              <div class="modal pg-modal" data-testid="pg-detail">
-                <h4>运行详情（图22）</h4>
+            <AppModal v-if="pgDetailOpen && pgDetail" @close="pgDetailOpen = false">
+              <div class="pg-modal" data-testid="pg-detail">
+                <h4>运行详情</h4>
                 <ul class="pg-detail">
                   <li>技能版本：<strong>v{{ pgDetail.version }}</strong></li>
                   <li>处理模式：{{ pgDetail.processing_mode === "fast" ? "极速" : "均衡" }}</li>
-                  <li>状态：{{ pgDetail.status }}</li>
+                  <li>状态：{{ runLabel(pgDetail.status) }}</li>
                   <li>耗时：{{ pgDetail.duration_ms ?? "—" }} ms</li>
                   <li>Transaction ID：<code>{{ pgDetail.transaction_id }}</code></li>
                   <li>File ID：<code>{{ pgDetail.file_id }}</code></li>
                 </ul>
-                <button @click="pgDetailOpen = false">关闭</button>
+                <div class="modal-actions">
+                  <button @click="pgDetailOpen = false">关闭</button>
+                </div>
               </div>
-            </div>
+            </AppModal>
           </section>
 
           <section class="card-panel block">
@@ -641,13 +724,16 @@ import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type Artifact, type CategorySpec,
          type DryRunEntry, type FieldCell,
          type FieldSpec, type SkillPackage, type TxnDocument } from "../api";
+import AppModal from "../components/AppModal.vue";
+import DocStage from "../components/DocStage.vue";
 import FieldCard from "../components/FieldCard.vue";
 import FieldEditModal from "../components/FieldEditModal.vue";
 import GenerateFieldsModal from "../components/GenerateFieldsModal.vue";
 import SamplePanel from "../components/SamplePanel.vue";
 import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
-import { VERSION_LABELS } from "../labels";
+import { RUN_STATUS_LABELS, STATUS_LABELS, VERSION_LABELS,
+         initiatorLabel } from "../labels";
 import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";
 
@@ -910,17 +996,80 @@ const pgDetail = ref<{ version: number; processing_mode: string; status: string;
                        duration_ms: number | null; transaction_id: string;
                        file_id: string | null } | null>(null);
 const pgDocs = ref<TxnDocument[]>([]);
+const pgFiles = ref<{ file_id: string; file_name: string; status: string;
+                      artifacts: Artifact[];
+                      documents: TxnDocument[] }[]>([]);
 const pgCurrent = ref<{ file_id: string; file_name: string; status: string } | null>(null);
 const pgCurrentRun = ref<string | null>(null);
 const pgCurrentMode = ref<string>("balanced");
-const runBySample = ref<Record<string, { runId: string; txnId: string }>>({});
+const pgRunStatus = ref<string>("");          // D2 vocabulary, from the server
+const pgRunDuration = ref<number | null>(null);
+const pgTimeoutNote = ref<string>("");
+const pgCurrentTxnId = ref<string | null>(null);
+const pgResultTab = ref<"all" | "review">("all");
+const pgExpandAll = ref(true);
+const pgActiveField = ref<string | null>(null);
+const pgActiveBox = ref<number[] | null>(null);
+const pgActivePage = ref<number>(1);
+const pgStagePages = ref<{ page_no: number; width: number; height: number }[]>([]);
+const pgStageResult = ref<Record<string, unknown>>({});
+const runBySample = ref<Record<string, { runId: string; txnId: string; fileId?: string }>>({});
 let pgTimer: ReturnType<typeof setInterval> | null = null;
+let pgStartedAt = 0;
+const PG_POLL_LIMIT_MS = 10 * 60 * 1000;      // #5: poll cap, never forever
 const pgFast = computed(() => pgCurrentMode.value === "fast");
-const pgDuration = computed(() => {
-  if (!pgDocs.value.length) return null;
-  const totals = pgDocs.value.map((d) => d.metrics?.total_ms).filter(Boolean);
-  return totals.length ? Math.max(...(totals as number[])) : null;
+const pgActiveFileId = computed(() => pgCurrent.value?.file_id ?? null);
+const pgStageFileId = computed(() => pgActiveFileId.value);
+// D3 (#8): the run's own file-level artifacts (rename output lives here)
+const pgFileArtifacts = computed(() =>
+  pgFiles.value.find((f) => f.file_id === pgActiveFileId.value)?.artifacts ?? []);
+// #5: results belong to the SELECTED file (multi-sample runs share one txn)
+const pgVisibleDocs = computed(() => {
+  const fid = pgActiveFileId.value;
+  return fid ? pgDocs.value.filter((d) => d.file_id === fid) : pgDocs.value;
 });
+const pgReviewCount = computed(() =>
+  pgVisibleDocs.value.reduce((n, d) => n + (d.review_fields?.length ?? 0), 0));
+// duration comes from the server-derived run record so the top bar, the
+// history list and the detail dialog can never disagree (#6)
+const pgDuration = computed(() => pgRunDuration.value);
+const pgRunStatusChip = computed(() =>
+  pgRunStatus.value === "failed" ? "error"
+    : pgRunStatus.value === "completed" ? "completed"
+      : pgRunStatus.value === "needs_review" ? "pending_verification" : "processing");
+const pgStageBoxes = computed(() => {
+  const out: { key: string; label: string; page: number; bbox: number[] }[] = [];
+  for (const [k, v] of Object.entries(pgStageResult.value ?? {})) {
+    const cell = v as Record<string, unknown>;
+    const bbox = cell?.$bbox as number[] | undefined;
+    const page = cell?.$pages as string | undefined;
+    if (bbox?.length === 4 && page) {
+      out.push({ key: k, label: k, page: Number(page), bbox });
+    }
+  }
+  return out;
+});
+
+function stLabel(status: string): string { return STATUS_LABELS[status] ?? status; }
+function runLabel(status: string): string { return RUN_STATUS_LABELS[status] ?? status; }
+function pgIsTable(v: unknown): boolean {
+  return Array.isArray(v) && v.length > 0 && typeof v[0] === "object"
+    && !Array.isArray(v[0]);
+}
+function pgTableRows(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+}
+function pgIsList(v: unknown): boolean { return Array.isArray(v); }
+function pgRowsOf(doc: TxnDocument): [string, unknown][] {
+  const data = doc.data;
+  if (!data || Array.isArray(data)) return [];
+  const rows = Object.entries(data as Record<string, unknown>);
+  if (pgResultTab.value === "review") {
+    return rows.filter(([k]) => doc.review_fields.includes(String(k)));
+  }
+  if (!pgExpandAll.value) return rows.slice(0, 1);
+  return rows;
+}
 const pgFilteredSamples = computed(() => pgSamples.value.filter(
   (s) => !pgSearch.value || s.file_name.toLowerCase().includes(pgSearch.value.toLowerCase())));
 
@@ -966,50 +1115,174 @@ async function pgRun() {
 
 function pgPollTransaction(txnId: string) {
   pgPolling.value = true;
+  pgTimeoutNote.value = "";
+  pgStartedAt = Date.now();
   if (pgTimer) clearInterval(pgTimer);
   pgTimer = setInterval(async () => {
+    // #5: a test run never reaches the review queue, so `pending_verification`
+    // IS a finished state here; and the poll stops after 10 minutes instead of
+    // spinning forever with the results pane empty.
+    if (Date.now() - pgStartedAt > PG_POLL_LIMIT_MS) {
+      pgStopPolling();
+      pgTimeoutNote.value =
+        "运行超时（超过 10 分钟仍未结束），已停止轮询。请到「运行历史」查看，或稍后重试。";
+      return;
+    }
     try {
       const st = await api.txnStatus(txnId);
+      pgFiles.value = st.files.map((f) => ({
+        file_id: f.file_id, file_name: f.file_name, status: f.status,
+        artifacts: [], documents: [] }));
       const root = st.files[0];
       if (root) {
-        pgCurrent.value = { file_id: root.file_id, file_name: root.file_name,
-                            status: root.status };
-        const active = root.children?.length ? root.children[0] : root;
-        if (active) {
-          pgCurrent.value = { file_id: active.file_id, file_name: root.file_name,
-                              status: active.status };
-        }
+        // stage data (coordinates + page dims) for the selected/在跑 file
+        const target = pgCurrent.value?.file_id
+          && st.files.some((f) => f.file_id === pgCurrent.value!.file_id)
+          ? pgCurrent.value.file_id : root.file_id;
+        pgCurrent.value = { file_id: target,
+                            file_name: (st.files.find((f) => f.file_id === target)
+                                        ?? root).file_name,
+                            status: (st.files.find((f) => f.file_id === target)
+                                     ?? root).status };
       }
+      pgUpdateSampleStatuses(st.files, txnId);
       const terminal = st.files.every((f) =>
-        ["completed", "passed", "error", "rejected"].includes(f.status));
+        ["completed", "passed", "pending_verification", "error", "rejected", "split"]
+          .includes(f.status));
       if (terminal) {
-        if (pgTimer) clearInterval(pgTimer);
-        pgTimer = null;
-        pgPolling.value = false;
-        for (const [sid, r] of Object.entries(runBySample.value)) {
-          if (r.txnId === txnId) {
-            sampleStatus.value[sid] = st.files.every((f) => f.status === "error")
-              ? "失败" : "完成";
-          }
-        }
+        pgStopPolling();
         await pgLoadDocuments(txnId);
+        await pgLoadRunState(txnId);
         pgLoadHistory();
       }
     } catch {
-      if (pgTimer) clearInterval(pgTimer);
-      pgTimer = null;
-      pgPolling.value = false;
+      pgStopPolling();
     }
   }, 2000);
+}
+
+function pgStopPolling() {
+  if (pgTimer) clearInterval(pgTimer);
+  pgTimer = null;
+  pgPolling.value = false;      // #5: the run button is usable again
+}
+
+/** #5: per-sample state from that sample's OWN file, not the whole batch. */
+function pgUpdateSampleStatuses(files: { file_id: string; status: string }[],
+                                txnId: string) {
+  for (const [sid, r] of Object.entries(runBySample.value)) {
+    if (r.txnId !== txnId) continue;
+    const fileId = r.fileId
+      ?? files.find((f) => f.file_id !== pgCurrent.value?.file_id)?.file_id;
+    const f = files.find((x) => x.file_id === fileId) ?? files[0];
+    if (!f) continue;
+    r.fileId = f.file_id;
+    const reviews = pgDocsForFile(f.file_id).reduce(
+      (n, d) => n + (d.review_fields?.length ?? 0), 0);
+    sampleStatus.value[sid] =
+      f.status === "error" || f.status === "rejected" ? "失败"
+        : f.status === "pending_verification"
+          ? (reviews ? `完成（待复核 ${reviews}）` : "完成（待复核）")
+          : ["completed", "passed"].includes(f.status) ? "完成" : "运行中…";
+  }
+}
+
+function pgDocsForFile(fileId: string): TxnDocument[] {
+  return pgDocs.value.filter((d) => d.file_id === fileId);
+}
+
+function pgSelectFile(fileId: string) {
+  const f = pgFiles.value.find((x) => x.file_id === fileId);
+  if (!f) return;
+  pgCurrent.value = { file_id: f.file_id, file_name: f.file_name,
+                      status: f.status };
+  pgActiveField.value = null;
+  pgActiveBox.value = null;
+  void pgLoadStage(pgCurrentRun.value ? pgCurrentTxnId.value : null, fileId);
 }
 
 async function pgLoadDocuments(txnId: string) {
   try {
     const d = await api.txnDocuments(txnId);
+    pgCurrentTxnId.value = txnId;
+    pgFiles.value = d.files.map((f) => ({
+      file_id: f.file_id, file_name: f.file_name, status: f.status,
+      artifacts: f.artifacts ?? [], documents: f.documents }));
     pgDocs.value = d.files.flatMap((f) => f.documents);
+    if (!pgCurrent.value || !d.files.some((f) => f.file_id === pgCurrent.value!.file_id)) {
+      const first = d.files[0];
+      if (first) {
+        pgCurrent.value = { file_id: first.file_id, file_name: first.file_name,
+                            status: first.status };
+      }
+    }
+    const active = pgCurrent.value?.file_id;
+    for (const [sid, r] of Object.entries(runBySample.value)) {
+      if (r.txnId !== txnId || r.fileId) continue;
+      const f = d.files.find((x) => !Object.values(runBySample.value)
+        .some((o) => o !== r && o.fileId === x.file_id));
+      if (f) r.fileId = f.file_id;
+    }
+    pgUpdateSampleStatuses(d.files, txnId);
     pgCurrentMode.value =
       pgDocs.value.some((x) => x.metrics?.parse_route === "vision") ? "fast" : pgCurrentMode.value;
+    if (pgCurrent.value && !pgFast.value) await pgLoadStage(txnId, active);
   } catch { /* keep previous view */ }
+}
+
+/** #26: highlight needs the FULL result (with $bbox) and page dimensions —
+    /review carries both; the documents view stays a clean-value contract. */
+async function pgLoadStage(txnId: string | null, fileId: string | undefined) {
+  if (!fileId || pgFast.value) { pgStagePages.value = []; return; }
+  try {
+    const d = await api.detail(fileId);
+    pgStagePages.value = d.pages ?? [];
+    pgStageResult.value = (d.result ?? {}) as Record<string, unknown>;
+  } catch { pgStagePages.value = []; }
+}
+
+async function pgLoadRunState(txnId: string) {
+  const activeFile = pgCurrent.value?.file_id;
+  const entries = Object.values(runBySample.value)
+    .filter((r) => r.txnId === txnId);
+  const entry = entries.find((r) => r.fileId === activeFile) ?? entries[0];
+  const runId = entry?.runId ?? pgCurrentRun.value;
+  if (!runId) return;
+  try {
+    const d = await api.studioRun(runId);
+    pgCurrentRun.value = runId;
+    pgRunStatus.value = d.status;
+    pgRunDuration.value = d.duration_ms;
+    pgCurrentMode.value = d.processing_mode;
+  } catch { /* the run record is best-effort */ }
+}
+
+function pgPickField(key: string) {
+  pgActiveField.value = key;
+  const cell = pgStageResult.value?.[key] as Record<string, unknown> | undefined;
+  pgActiveBox.value = (cell?.$bbox as number[]) ?? null;
+  pgActivePage.value = Number(cell?.$pages ?? 1) || 1;
+}
+
+function pgPickDocField(doc: TxnDocument, key: string) {
+  pgActiveField.value = key;
+  const cell = pgStageResult.value?.[key] as Record<string, unknown> | undefined;
+  pgActiveBox.value = (cell?.$bbox as number[]) ?? null;
+  const page = Number(cell?.$pages ?? 1) || 1;
+  // 高级模式：子文档的页码映射回原件（source_pages）
+  const src = doc.source_pages ?? [];
+  pgActivePage.value = src.length >= page ? src[page - 1] : page;
+  if (!cell) pgActiveBox.value = null;
+}
+
+/** #26: 「运行」— re-run just the file on screen. */
+async function pgRunCurrent() {
+  const fileId = pgCurrent.value?.file_id;
+  const sid = Object.entries(runBySample.value)
+    .find(([, r]) => r.fileId === fileId)?.[0];
+  if (!sid) { toast.error("找不到该文件对应的样本，请直接勾选样本运行"); return; }
+  pgSelected.value = [sid];
+  await pgRun();
 }
 
 async function pgLoadHistory() {
@@ -1028,15 +1301,15 @@ async function pgLoadRun(runId: string) {
     const d = await api.studioRun(runId);
     pgDetail.value = d;
     pgCurrentRun.value = runId;
+    pgRunStatus.value = d.status;          // same source as the history row (#6)
+    pgRunDuration.value = d.duration_ms;
     pgCurrentMode.value = d.processing_mode;
     pgDetailOpen.value = true;
     await pgLoadDocuments(d.transaction_id);
-    const st = await api.txnStatus(d.transaction_id);
-    const root = st.files[0];
-    if (root) {
-      const active = root.children?.length ? root.children[0] : root;
-      pgCurrent.value = { file_id: active?.file_id ?? root.file_id,
-                          file_name: root.file_name, status: active?.status ?? root.status };
+    if (d.file_id) {
+      const f = pgFiles.value.find((x) => x.file_id === d.file_id);
+      if (f) pgCurrent.value = { file_id: f.file_id, file_name: f.file_name,
+                                status: f.status };
     }
   } catch (err) {
     toast.error(`载入运行失败：${err instanceof Error ? err.message : err}`);
@@ -1511,7 +1784,8 @@ async function goldenCheck() {
 .rules-fold textarea { width: 100%; margin-top: 8px; }
 
 /* test tab */
-.test-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+/* #12: the Playground owns the whole tab; 模型对比/金样本回归 stack below it */
+.test-grid { display: grid; grid-template-columns: 1fr; gap: 16px;
   align-items: start; }
 .block { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .runs { display: flex; flex-direction: column; gap: 10px; }
@@ -1570,7 +1844,40 @@ async function goldenCheck() {
 .add-cat { border-style: dashed; }
 
 .cards.disabled { opacity: .55; pointer-events: none; }
-.playground .pg-grid { display: grid; grid-template-columns: 240px 1fr; gap: 14px; }
+/* #26: samples | original preview | results */
+.playground .pg-grid { display: grid;
+  grid-template-columns: 250px minmax(320px, 1fr) minmax(360px, 1.2fr);
+  gap: 14px; align-items: start; }
+.pg-left { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pg-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.pg-files .btn-like.on { border-color: var(--accent); color: var(--accent); }
+.pg-stage-col { min-width: 0; }
+.pg-stage { height: 460px; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; }
+.pg-stage-hint { padding: 14px; }
+.pg-result-head { display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; }
+.pg-tabs { display: inline-flex; gap: 6px; }
+.pg-tabs .btn-like.on { border-color: var(--accent); color: var(--accent); }
+.pg-list .pg-name { flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.pg-list .pg-state { color: var(--text-dim); white-space: nowrap; }
+.pg-list label { min-width: 0; }
+/* #12: field names keep a readable column; table fields render as a grid */
+.pg-fields { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pg-fields td { padding: 5px 8px; border-bottom: 1px solid var(--border);
+  vertical-align: top; }
+.pg-fields tr.on { background: rgba(240, 180, 41, 0.08); }
+.pg-fields tr { cursor: pointer; }
+.pg-field-name { min-width: 150px; max-width: 220px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.pg-table-grid { display: flex; flex-direction: column; gap: 4px; }
+.pg-table-row { display: flex; flex-wrap: wrap; gap: 10px;
+  border-bottom: 1px dashed var(--border); padding-bottom: 3px; }
+.pg-cell { display: inline-flex; gap: 4px; align-items: baseline; }
+.pg-json { font-family: "JetBrains Mono", monospace; font-size: 12px;
+  word-break: break-all; }
+.err-text { color: var(--red); }
 .pg-samples { display: flex; flex-direction: column; gap: 8px; }
 .pg-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto;
   border: 1px solid var(--border); border-radius: 8px; }
@@ -1587,7 +1894,13 @@ async function goldenCheck() {
 .pg-doc td { padding: 4px 6px; border-bottom: 1px solid var(--border);
   word-break: break-all; }
 .pg-doc tr:last-child td { border-bottom: 0; }
-.pg-modal { max-width: 720px; width: 92%; }
+.pg-modal { width: 100%; }
+.pg-modal table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pg-modal thead th { text-align: left; padding: 8px 10px; color: var(--text-dim);
+  font-size: 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.pg-modal tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; }
+.pg-modal tbody tr:hover { background: rgba(240, 180, 41, 0.06); }
 .pg-hist-row { cursor: pointer; }
 .pg-detail { list-style: none; margin: 0 0 10px; padding: 0; }
 .pg-detail li { padding: 4px 0; border-bottom: 1px solid var(--border); }

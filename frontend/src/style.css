@@ -38,13 +38,19 @@ button.confirm { background: var(--green); color: #fff; border: none; font-weigh
 button.danger { background: var(--red); color: #fff; border: none; }
 button.ghost { background: transparent; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-input, textarea {
+input:not([type="checkbox"]):not([type="radio"]), textarea {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
   padding: 6px 10px;
   width: 100%;
+}
+/* #12 (走查): checkboxes/radios keep their intrinsic size — the old blanket
+   `input { width: 100% }` blew a checkbox up to 144px and squeezed the label */
+input[type="checkbox"], input[type="radio"] {
+  width: auto; min-width: 0; padding: 0; border: none; background: none;
+  flex: 0 0 auto;
 }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 select {
@@ -89,3 +95,23 @@ select {
   font-size: 11px; padding: 1px 6px;
 }
 .dim { color: var(--text-dim); }
+
+/* —— shared modal (9.15 走查 #9): fixed full-screen overlay, centred dialog,
+   internal scroll for long content; every dialog in the app uses these —— */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(8, 12, 20, 0.62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; z-index: 60;
+}
+.modal {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px;
+  width: 620px; max-width: 94vw; max-height: 86vh; overflow: auto;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.modal h4 { margin: 0 0 10px; }
+.modal-wide { width: 900px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 14px; }
+.modal .lbl { display: block; margin: 10px 0 4px; font-size: 13px;
+  color: var(--text-dim); }
