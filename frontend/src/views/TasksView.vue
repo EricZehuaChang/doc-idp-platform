@@ -24,7 +24,7 @@
       </div>
 
       <div class="table-scroll" ref="scrollEl">
-        <table class="data-table">
+        <table class="data-table ledger">
           <thead>
             <tr>
               <th v-for="col in COLUMNS" :key="col.key" :class="col.key === 'act' ? 'th-act' : ''">
@@ -41,7 +41,10 @@
           </thead>
           <tbody v-if="rows.length">
             <tr v-for="r in rows" :key="r.file_id" @mouseenter="prefetch(r)">
-              <td class="dim nowrap">{{ ts(r.created_at) }}</td>
+              <td class="dim nowrap">
+                <span class="stamp">{{ tsDate(r.created_at) }}</span>
+                <span class="stamp-time">{{ tsTime(r.created_at) }}</span>
+              </td>
               <!-- 9.15 R20: display name first, code as the second small line -->
               <td class="skill-cell" :title="r.skill_name || r.skill_code">
                 {{ r.skill_name || r.skill_code }}
@@ -72,7 +75,10 @@
                 <span v-else class="dim">—</span>
               </td>
               <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
-              <td class="dim nowrap">{{ ts(r.updated_at) }}</td>
+              <td class="dim nowrap">
+                <span class="stamp">{{ tsDate(r.updated_at) }}</span>
+                <span class="stamp-time">{{ tsTime(r.updated_at) }}</span>
+              </td>
               <td>
                 <span v-if="r.verified_by" class="dim">✓ {{ r.verified_by }}</span>
                 <span v-else-if="r.error" class="err" :title="r.error">⚠ 错误</span>
@@ -84,6 +90,10 @@
                   <button class="primary slim">Verify</button></router-link>
                 <router-link v-else :to="reviewLink(r.file_id)">
                   <button class="ghost slim">查看</button></router-link>
+                <!-- 2026-09-18 需求: 只有管理员能删除任务 -->
+                <button v-if="isAdmin" class="del slim" data-testid="task-delete"
+                        :title="`删除任务「${r.file_name}」`"
+                        @click.stop="askDelete(r)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -110,6 +120,39 @@
         <button :disabled="page >= totalPages" @click="page++">下一页</button>
       </div>
     </section>
+
+    <!-- 管理员删除任务：不可恢复，所以先摆清楚删的是哪一份、会删掉什么 -->
+    <AppModal v-if="delTarget" @close="closeDelete">
+      <div class="del-modal" data-testid="task-delete-modal">
+        <h4>删除任务</h4>
+        <p class="del-lead">
+          「{{ delTarget.file_name }}」将被<strong>永久删除</strong>，无法恢复。
+        </p>
+        <dl class="del-facts">
+          <dt>技能</dt>
+          <dd>{{ delTarget.skill_name || delTarget.skill_code }}
+            <span class="dim">（{{ delTarget.skill_code }}）</span></dd>
+          <dt>页数 / 类型</dt>
+          <dd>{{ delTarget.page_count }} 页 · {{ delTarget.type }}</dd>
+          <dt>上传时间</dt>
+          <dd>{{ ts(delTarget.created_at) }}</dd>
+          <dt v-if="delTarget.child_count">内含单据</dt>
+          <dd v-if="delTarget.child_count">
+            {{ delTarget.child_count }} 份（一并删除）</dd>
+        </dl>
+        <p class="del-scope dim">
+          删除范围：任务记录、识别结果与人工修正、原件与拆分文件、
+          已生成的产出文件。<template v-if="inFlight(delTarget)">
+            该任务仍在处理中，删除后它会停止处理并释放占用的额度。</template>
+        </p>
+        <div class="modal-actions">
+          <button class="ghost" data-testid="task-delete-cancel"
+                  @click="closeDelete">取消</button>
+          <button class="danger" data-testid="task-delete-confirm" :disabled="deleting"
+                  @click="confirmDelete">{{ deleting ? "删除中…" : "确认删除" }}</button>
+        </div>
+      </div>
+    </AppModal>
 
     <!-- Filter menus are teleported and position:fixed: the table scrolls
          horizontally, and an ancestor with overflow-x:auto also clips
@@ -179,10 +222,13 @@ import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, fetchBlob, type FileRow, type SkillInfo } from "../api";
+import AppModal from "../components/AppModal.vue";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { STATUS_LABELS, initiatorLabel } from "../labels";
+import { session } from "../session";
+import { toast } from "../toast";
 
 const route = useRoute();
 const router = useRouter();
@@ -357,13 +403,19 @@ const skillList = computed<SkillInfo[]>(() => [
 const { data: limits } = useQuery({ queryKey: ["formats"], queryFn: api.formats });
 const typeOptions = computed(() => limits.value?.extensions ?? []);
 
+/** One place for the ledger query so the delete flow can re-read the page it
+ *  just changed without duplicating the filter plumbing. */
+function filesPage(p: number, cond: Record<FilterKey, string>) {
+  return api.files(p, {
+    ...cond,
+    pages_min: cond.pages_min ? Number(cond.pages_min) : undefined,
+    pages_max: cond.pages_max ? Number(cond.pages_max) : undefined,
+  });
+}
+
 const { data: files, isLoading } = useQuery({
   queryKey: computed(() => ["files", page.value, applied.value]),
-  queryFn: () => api.files(page.value, {
-    ...applied.value,
-    pages_min: applied.value.pages_min ? Number(applied.value.pages_min) : undefined,
-    pages_max: applied.value.pages_max ? Number(applied.value.pages_max) : undefined,
-  }),
+  queryFn: () => filesPage(page.value, applied.value),
   refetchInterval: 8_000,
   placeholderData: (prev) => prev,
 });
@@ -376,6 +428,43 @@ function clearFilters() {
   applyNow();
 }
 function reload() { qc.invalidateQueries({ queryKey: ["files"] }); }
+
+// —— 2026-09-18: admin task deletion ——
+// The role gate is server-side (require_role("admin")); this only decides
+// whether the button is offered. auth-required=false (lite/dev) is admin by
+// definition, the same rule App.vue uses for the 平台设置 entry.
+const isAdmin = computed(() => !session.authRequired || session.role === "admin");
+const delTarget = ref<FileRow | null>(null);
+const deleting = ref(false);
+const inFlight = (r: FileRow) => r.status === "queued" || r.status === "processing";
+
+function askDelete(r: FileRow) { delTarget.value = r; }
+function closeDelete() { if (!deleting.value) delTarget.value = null; }
+
+async function confirmDelete() {
+  const r = delTarget.value;
+  if (!r) return;
+  deleting.value = true;
+  try {
+    const res = await api.deleteTask(r.file_id);
+    toast.ok(res.deleted_children
+      ? `任务「${r.file_name}」已删除（含 ${res.deleted_children} 份子单据）`
+      : `任务「${r.file_name}」已删除`);
+    delTarget.value = null;
+    // the current page may now be empty: re-read it and step back if so
+    const left = (await qc.fetchQuery({
+      queryKey: ["files", page.value, applied.value],
+      queryFn: () => filesPage(page.value, applied.value),
+    })).data.length;
+    if (!left && page.value > 1) page.value -= 1;
+    qc.invalidateQueries({ queryKey: ["files"] });
+    qc.invalidateQueries({ queryKey: ["skills"] });
+  } catch (e) {
+    toast.error(e);
+  } finally {
+    deleting.value = false;
+  }
+}
 
 /** Carry the current list view into the review page so its 返回 comes back to
  *  the same filtered page instead of a reset list (P09/P10). */
@@ -394,6 +483,12 @@ function prefetch(r: FileRow) {
 }
 
 const ts = (v: string | null) => v ? new Date(v).toLocaleString() : "-";
+/** Ledger timestamps are stacked date-over-time: at 1280 the two 165px
+ *  single-line stamps alone pushed the table 127px past the viewport. */
+const tsDate = (v: string | null) =>
+  v ? new Date(v).toLocaleDateString("zh-CN") : "-";
+const tsTime = (v: string | null) =>
+  v ? new Date(v).toLocaleTimeString("zh-CN", { hour12: false }) : "";
 function size(n: number | null): string {
   if (n == null) return "-";
   if (n < 1024) return `${n} B`;
@@ -426,6 +521,10 @@ function speedTitle(r: FileRow): string {
 
 <style scoped>
 .block { padding: 14px 16px; }
+/* 2026-09-18 布局: 任务清单要在 1280 窗口里不出现横向滚动。实测溢出 127px，
+   来源是列内边距(24px×12=288)与两个单行时间戳(165px×2)——在不删列、不丢信息
+   的前提下收紧：内边距 24→18，时间改「日期 / 时间」两行。 */
+.ledger th, .ledger td { padding: 7px 9px; }
 .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 10px;
   flex-wrap: wrap; }
 .search { min-width: 220px; flex: 0 1 280px; }
@@ -459,13 +558,18 @@ function speedTitle(r: FileRow): string {
 .fbtn.on::after { content: "•"; font-size: 13px; line-height: 0; }
 .fbtn.open { color: var(--accent); background: var(--bg-raised); }
 .fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 9.15 R20/R19: skill name capped so long names cannot push the table wide */
-.skill-cell { max-width: 170px; overflow: hidden; text-overflow: ellipsis;
+/* 9.15 R20/R19: skill name capped so long names cannot push the table wide
+   (2026-09-18: 走查里最长的技能名 168px 会把「文件名」挤到 250px 上限，
+   这里收到 14 个汉字上下——超出的部分由 title 提示补足) */
+.skill-cell { max-width: 150px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 /* 9.15 R21: initiator column — clipped, hint on hover via title */
 .initiator-cell { max-width: 150px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .code-sub { font-size: 10.5px; color: var(--text-dim); font-family: Consolas, monospace; }
+/* stacked ledger timestamps: the date carries the weight, the clock is a hint */
+.stamp { display: block; font-size: 12.5px; }
+.stamp-time { display: block; font-size: 11px; color: var(--text-dim); }
 .split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
 .speed { font-size: 12px; color: var(--text); white-space: nowrap; }
 .nowrap { white-space: nowrap; }
@@ -473,9 +577,25 @@ function speedTitle(r: FileRow): string {
 .err { color: var(--red); font-size: 12px; cursor: help; }
 .row-act, .th-act { text-align: right; }
 .slim { padding: 2px 12px; font-size: 12px; }
+/* 2026-09-18: admin-only delete sits beside the view action but reads as a
+   quiet text link — a destructive action must not look like the second button
+   of a pair. Red only on hover/focus. */
+.del { background: transparent; border-color: transparent; color: var(--text-dim);
+  margin-left: 4px; padding: 2px 8px; }
+.del:hover, .del:focus { color: var(--red); border-color: transparent;
+  background: rgba(229, 83, 75, 0.10); }
 .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end;
   margin-top: 12px; font-size: 13px; }
 .dim { color: var(--text-dim); }
+/* —— 删除确认弹窗 —— */
+.del-modal { width: 520px; max-width: 92vw; }
+.del-lead { font-size: 13.5px; margin: 0 0 12px; }
+.del-lead strong { color: var(--red); }
+.del-facts { display: grid; grid-template-columns: 84px 1fr; gap: 6px 10px;
+  margin: 0 0 12px; font-size: 13px; }
+.del-facts dt { color: var(--text-dim); }
+.del-facts dd { margin: 0; overflow-wrap: anywhere; }
+.del-scope { font-size: 12.5px; line-height: 1.6; margin: 0; }
 </style>
 
 <style>

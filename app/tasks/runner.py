@@ -59,6 +59,22 @@ def skill_expects_tables(pkg: SkillPackage, deps: dict | None = None) -> bool:
 log = logging.getLogger("idp.runner")
 
 
+async def _txn_deleted(s, file_id: str) -> bool:
+    """True when an admin deleted this task while the pipeline was running.
+
+    Deletion is not blocked for in-flight work (admins must be able to clear a
+    stuck task), so every stage that is about to write a result re-checks the
+    tombstone the delete route leaves on the transaction: stopped work is never
+    resurrected into a file row that no longer exists. Billing settlement is
+    unaffected — process_transaction still finalizes and releases the freeze.
+    """
+    f = await s.get(FileRecord, file_id)
+    if f is None:
+        return True
+    txn = await s.get(Transaction, f.transaction_id)
+    return txn is not None and txn.status == "deleted"
+
+
 async def process_transaction(transaction_id: str) -> None:
     """In-process backend: fan out files (bounded) and finalize."""
     plan = await plan_transaction(transaction_id)
@@ -197,6 +213,8 @@ async def parse_stage(file_id: str, parser_pin: str | None,
         created = f.created_at
         if created.tzinfo is None:            # legacy rows stored naive UTC
             created = created.replace(tzinfo=timezone.utc)
+        if await _txn_deleted(s, file_id):     # admin deleted it while queued
+            return
         queue_ms = int((t0 - created).total_seconds() * 1000)
         f.status = "processing"
         await s.commit()
@@ -261,6 +279,8 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
     async with sf() as s:
         f = await s.get(FileRecord, file_id)
         if f is None or f.status == "error" or not f.udr_path:
+            return
+        if await _txn_deleted(s, file_id):     # deleted between the stages
             return
         tenant, udr_path = f.tenant_id, f.udr_path
         is_child = f.parent_file_id is not None
@@ -426,6 +446,8 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
 
     new_status = "pending_verification" if needs_review else "completed"
     async with sf() as s:
+        if await _txn_deleted(s, file_id):     # deleted while the model ran
+            return
         f = await s.get(FileRecord, file_id)
         f.result = json.loads(json.dumps(result, ensure_ascii=False))
         f.input_tokens = int(usage.get("prompt_tokens") or 0)
@@ -491,6 +513,8 @@ async def _fan_out_children(file_id: str, udr: UDR,
     doc_types: list[str | None] = []
     async with sf() as s:
         parent = await s.get(FileRecord, file_id)
+        if parent is None or await _txn_deleted(s, file_id):
+            return {"child_ids": [], "doc_types": [], "children": []}
         stem, suffix = Path(parent.file_name).stem, Path(parent.file_name).suffix
         for i, entry in enumerate(plan, start=1):
             pages, cat_id = entry["pages"], entry.get("category_id")

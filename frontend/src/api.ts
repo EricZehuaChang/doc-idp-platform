@@ -604,6 +604,13 @@ export const api = {
       if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     return req<FilesPage>("GET", `/api/v1/files?${q}`);
   },
+  /** Admin-only hard delete of one task (root file + its split children, the
+   *  recognition result and every generated output). The server enforces the
+   *  role; the UI only hides the button. */
+  deleteTask: (fileId: string) =>
+    req<{ file_id: string; transaction_id: string;
+          deleted_children: number; deleted_blobs: number }>(
+      "DELETE", `/api/v1/files/${fileId}`),
   // seal/signature detection (pure compute, no billing — /locate's visual twin)
   detect: (file: Blob, fileName: string, kinds = "seal,signature") => {
     const f = new FormData();

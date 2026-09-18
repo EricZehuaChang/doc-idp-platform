@@ -7,22 +7,30 @@
 import csv
 import io
 import json
+import logging
 from datetime import datetime, time, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
-from app.models import Correction, CreditAccount, CreditLedger, FileRecord, Skill, Transaction
+from app.models import (AuditLog, Correction, CreditAccount, CreditLedger,
+                        FileArtifact, FileRecord, Skill, Transaction)
 from app.storage import get_storage
-from app.tenancy import current_tenant
+from app.tenancy import current_actor, current_tenant, require_role
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
 
+log = logging.getLogger(__name__)
+
 _DONE = ("passed", "completed", "exported")
+
+# Admin task deletion leaves the transaction row behind as a tombstone so the
+# append-only money trail keeps its anchor; every task-facing read must skip it.
+_NOT_DELETED = Transaction.status != "deleted"
 
 
 def _day_bounds(date_from: str | None, date_to: str | None):
@@ -94,7 +102,8 @@ async def list_files(status: str | None = None, q: str | None = None,
                 .where(FileRecord.tenant_id == tenant,
                        FileRecord.parent_file_id.is_(None),
                        # 9.15 WP5 (§3.9): Playground test runs stay out of the ledger
-                       Transaction.purpose != "test"))
+                       Transaction.purpose != "test",
+                       _NOT_DELETED))
         conds = []
         if skill_code:
             conds.append(Transaction.skill_code == skill_code)
@@ -187,6 +196,97 @@ async def list_files(status: str | None = None, q: str | None = None,
             "total_pages": (total + page_size - 1) // page_size, "data": data}
 
 
+@router.delete("/files/{file_id}")
+async def delete_task(file_id: str, _: None = Depends(require_role("admin"))):
+    """Admin-only hard delete of one task (one uploaded root file).
+
+    Removes the file rows — the root and every child document of a split — the
+    stored blobs (original, split slice, UDR, page images, preview cache) and
+    the generated output files, so the task disappears from the ledger, the
+    cabinet, the review queue, the dashboard counts and every download route.
+
+    The transaction row is kept as a tombstone (status "deleted", files and
+    purpose untouched) once its LAST root file is gone, because the append-only
+    credit ledger points at it; `_NOT_DELETED` hides it everywhere the task
+    surfaces. The audit log records file name / skill / page count so the
+    deletion stays reconstructible.
+
+    Deletion is allowed while the task is still queued/processing: the runner
+    re-checks this tombstone after every stage and stops persisting results
+    (runner._txn_deleted), so an in-flight task cannot come back to life.
+    """
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        root = await s.get(FileRecord, file_id)
+        if root is None or root.tenant_id != tenant:   # cross-tenant probe -> 404
+            raise HTTPException(404, "file not found")
+        if root.parent_file_id is not None:
+            raise HTTPException(400, "这是一份拆分出来的子单据，请删除它所属的任务")
+        txn = await s.get(Transaction, root.transaction_id)
+        if txn is not None and txn.status == "deleted":
+            raise HTTPException(404, "file not found")   # already deleted
+
+        # one task = the root plus its child documents (children are internal
+        # jobs, never separate ledger rows — they share the root's original)
+        ids = [root.id]
+        ids += list((await s.execute(
+            select(FileRecord.id)
+            .where(FileRecord.tenant_id == tenant,
+                   FileRecord.parent_file_id == root.id))).scalars().all())
+        rows = (await s.execute(
+            select(FileRecord).where(FileRecord.id.in_(ids)))).scalars().all()
+        # dedupe: a split child points at its own "split/<id>.pdf" but falls
+        # back to the parent's original when the physical slice failed
+        keys = {r.storage_path for r in rows if r.storage_path}
+        keys |= {r.udr_path for r in rows if r.udr_path}
+        keys |= {r.images_path for r in rows if r.images_path}
+        keys |= {f"preview/{r.id}.pdf" for r in rows}
+        artifacts = (await s.execute(
+            select(FileArtifact)
+            .where(FileArtifact.tenant_id == tenant,
+                   FileArtifact.file_id.in_(ids)))).scalars().all()
+        keys |= {a.storage_key for a in artifacts if a.storage_key}
+
+        detail = {"file_id": root.id, "file_name": root.file_name,
+                  "skill_code": txn.skill_code if txn else None,
+                  "page_count": root.page_count, "status": root.status,
+                  "child_count": len(ids) - 1, "transaction_id": root.transaction_id}
+        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                       action="files.deleted", detail=detail))
+        # corrections keep no foreign key (plain file_id column): drop them
+        # explicitly — their file is gone, and the accuracy proxy reads them
+        # per skill, where a dangling row would count forever
+        await s.execute(delete(Correction).where(Correction.tenant_id == tenant,
+                                                 Correction.file_id.in_(ids)))
+        await s.execute(delete(FileArtifact).where(FileArtifact.tenant_id == tenant,
+                                                  FileArtifact.file_id.in_(ids)))
+        await s.execute(delete(FileRecord).where(FileRecord.tenant_id == tenant,
+                                                 FileRecord.id.in_(ids)))
+        if txn is not None and not (await s.execute(
+                select(FileRecord.id)
+                .where(FileRecord.transaction_id == root.transaction_id,
+                       FileRecord.parent_file_id.is_(None))
+                .limit(1))).first():
+            # one upload may carry several root files (each its own ledger row):
+            # the tombstone is set only once the LAST one is gone, so deleting
+            # one task can never hide its siblings from the ledger
+            txn.status = "deleted"
+        await s.commit()
+
+    # blobs go last, after the rows are committed: a storage failure leaves an
+    # orphaned file (harmless, collectable), never a row pointing at nothing
+    st = get_storage()
+    removed = 0
+    for key in sorted(keys):
+        try:
+            removed += 1 if st.delete(key) else 0
+        except OSError as e:                       # noqa: PERF203
+            log.warning("task delete: blob %s not removed: %s", key, e)
+    return {"file_id": root.id, "transaction_id": detail["transaction_id"],
+            "deleted_children": detail["child_count"], "deleted_blobs": removed}
+
+
 @router.get("/stats/home")
 async def home_stats():
     """Metric strip (Insavlo home shape): credits, usage, throughput, backlog."""
@@ -205,7 +305,7 @@ async def home_stats():
         rows = (await s.execute(
             select(FileRecord, Transaction.purpose)
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == tenant))).all()
+            .where(FileRecord.tenant_id == tenant, _NOT_DELETED))).all()
         records = [f for f, purpose in rows if purpose != "test"]
         roots = [f for f in records if f.parent_file_id is None]
         children_by_parent: dict[str, list[FileRecord]] = {}
@@ -251,6 +351,7 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
             .where(FileRecord.tenant_id == current_tenant(),
                    Transaction.skill_code == skill_code,
                    Transaction.purpose != "test",   # §3.9
+                   _NOT_DELETED,
                    FileRecord.status.in_(_DONE))
             .order_by(FileRecord.created_at.desc())
             .limit(min(limit, 1000)))).all()
@@ -343,7 +444,8 @@ async def skill_stats():
                    func.count(FileRecord.id))
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
             .where(FileRecord.tenant_id == tenant,
-                   Transaction.purpose != "test")   # §3.9
+                   Transaction.purpose != "test",   # §3.9
+                   _NOT_DELETED)
             .group_by(Transaction.skill_code, FileRecord.status))).all()
         corr = (await s.execute(
             select(Correction.skill_code, Correction.field,

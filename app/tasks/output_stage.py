@@ -135,6 +135,8 @@ async def _output_stage_inner(file_id: str) -> None:
             return
         tenant = root.tenant_id
         txn = await s.get(Transaction, root.transaction_id)
+        if txn is not None and txn.status == "deleted":
+            return                    # admin deleted the task while it ran
         fallback_pkg = None
         if txn is not None:
             # NOTE: `(await s.execute(...)).scalar_one_or_none()` looks right
