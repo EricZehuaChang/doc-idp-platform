@@ -16,7 +16,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.billing.ledger import shadow_meter
-from app.config import get_settings
+from app.config import get_settings, load_parsers
 from app.db import session_factory
 from app.extraction.classifier import ClassificationError, plan_documents
 from app.extraction.pipeline import extract
@@ -127,17 +127,37 @@ def _fast_vision_provider(tenant: str) -> str | None:
     return None
 
 
-async def _fast_parse(path: str, tenant: str) -> tuple[UDR, dict[int, str] | None, str]:
+def _pinned_vision_provider(parser_pin: str | None) -> str | None:
+    """2026-09-18: a skill that pins a cloud_vlm parser is declaring "this kind
+    of document has to be READ as a picture". Fast mode used to ignore the pin,
+    so an electronic PDF with a text layer silently took the pdfplumber route
+    and the model never saw the drawing (engineering drawings carry every
+    dimension line as vector art, not as text). Returns the vision channel
+    behind the pinned parser, or None when the pin is not a vision parser."""
+    if not parser_pin:
+        return None
+    cfg = load_parsers()["parsers"].get(parser_pin)
+    if cfg is None or cfg.type != "cloud_vlm":
+        return None
+    return cfg.provider or parser_pin
+
+
+async def _fast_parse(path: str, tenant: str,
+                      parser_pin: str | None = None) -> tuple[UDR, dict[int, str] | None, str]:
     """Fast-mode parse route (§WP5 表): electronic PDF -> pinned pdfplumber
     (skips the JVM first pass); image/scan -> vision channel with a minimal
     UDR + page rasters, else the default OCR route with a metric note;
-    Office/OFD -> the existing parser. Returns (udr, page_images, route)."""
+    Office/OFD -> the existing parser. A pinned cloud_vlm parser forces the
+    image route even for PDFs that do have a text layer (see
+    `_pinned_vision_provider`). Returns (udr, page_images, route)."""
     from app.parsers import raster
     from app.parsers.router import parse_document
     suffix = Path(path).suffix.lower()
-    if suffix == ".pdf" and await asyncio.to_thread(raster.has_text_layer, path):
+    forced = _pinned_vision_provider(parser_pin)
+    if (suffix == ".pdf" and not forced
+            and await asyncio.to_thread(raster.has_text_layer, path)):
         return await asyncio.to_thread(parse_document, path, "pdfplumber"), None, "pdfplumber_pinned"
-    vision = _fast_vision_provider(tenant)
+    vision = forced or _fast_vision_provider(tenant)
     if vision and (suffix in {".pdf"} or suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}):
         if suffix == ".pdf":
             sizes = raster.pdf_page_sizes(path, get_settings().fast_max_pages)
@@ -153,7 +173,7 @@ async def _fast_parse(path: str, tenant: str) -> tuple[UDR, dict[int, str] | Non
             # #3 fix (走查 P0): UDR.lang is list[str]; lang="" raised a
             # validation error for every image / scanned PDF on the vision route
             udr = UDR(pages=pages, full_markdown="", parser="vision_fast", lang=[])
-            return udr, images, "vision"
+            return udr, images, "vision_forced" if forced else "vision"
     udr = await asyncio.to_thread(parse_document, path, None)
     return udr, None, "ocr_fallback"
 
@@ -186,7 +206,7 @@ async def parse_stage(file_id: str, parser_pin: str | None,
     images: dict[int, str] | None = None
     route = ""
     if fast:
-        udr, images, route = await _fast_parse(path, tenant)
+        udr, images, route = await _fast_parse(path, tenant, parser_pin)
         # fast page cap (§WP5): same code as the submit-time estimate check
         if len(udr.pages) > get_settings().fast_max_pages:
             await mark_error(file_id,

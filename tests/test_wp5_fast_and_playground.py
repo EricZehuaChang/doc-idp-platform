@@ -127,7 +127,7 @@ async def test_runner_fast_route_writes_meta_and_metrics(tmp_path, monkeypatch):
     pkg = _fast_pkg("fast_run")
     seen = {}
 
-    async def fake_parse(path, tenant):
+    async def fake_parse(path, tenant, parser_pin=None):
         udr = UDR(pages=[Page(page_no=1, width=100, height=100, blocks=[],
                               markdown="inv text")],
                   full_markdown="inv text", parser="vision_fast")
@@ -164,7 +164,7 @@ async def test_runner_fast_page_cap_marks_error(tmp_path, monkeypatch):
 
     pkg = _fast_pkg("fast_cap")
 
-    async def fake_parse(path, tenant):
+    async def fake_parse(path, tenant, parser_pin=None):
         udr = UDR(pages=[Page(page_no=i, width=10, height=10, blocks=[],
                               markdown="x") for i in (1, 2, 3, 4, 5, 6)],
                   full_markdown="x", parser="test")
@@ -463,3 +463,75 @@ async def test_documents_review_fields_backend_computed(client):
     r = await c.get(f"/api/v1/transactions/{p_id}/documents")
     doc = r.json()["files"][0]["documents"][0]
     assert doc["review_fields"] == ["a"]   # low confidence; unscored c excluded
+
+
+# —— 2026-09-18: a pinned cloud_vlm parser forces the image route in fast mode ——
+# Field report: engineering drawings uploaded as electronic PDFs took the
+# pdfplumber route (text layer present), so the model only ever saw the title
+# block. These exercise the real `_fast_parse`; only the raster helpers' input
+# (a real one-page PDF) is built here.
+
+def _text_layer_pdf(path) -> str:
+    """A real one-page PDF that has a text layer (so has_text_layer() is True)."""
+    from reportlab.pdfgen import canvas
+    p = str(path / "drawing.pdf")
+    c = canvas.Canvas(p)
+    c.drawString(72, 720, "TITLE BLOCK: PART 3-02 PLATE, MATERIAL NYLON, SCALE 1:2")
+    c.showPage()
+    c.save()
+    return p
+
+
+async def test_fast_parse_pinned_vlm_parser_forces_image_route(tmp_path):
+    from app.tasks import runner as runner_mod
+    pdf = _text_layer_pdf(tmp_path)
+
+    udr, images, route = await runner_mod._fast_parse(pdf, "default", "vlm-qwen")
+    assert route == "vision_forced"
+    assert images and 1 in images and images[1].startswith("data:image/")
+    assert udr.parser == "vision_fast" and udr.lang == []
+    assert len(udr.pages) == 1 and udr.pages[0].width > 0
+
+
+async def test_fast_parse_without_pin_keeps_text_layer_route(tmp_path, monkeypatch):
+    """No pin (or a non-vision pin) keeps the documented WP5 behaviour."""
+    from app.tasks import runner as runner_mod
+    # a tenant vision channel must not hijack a text-layer PDF on its own
+    monkeypatch.setattr(runner_mod, "_fast_vision_provider", lambda tenant: "vision-qwen")
+    pdf = _text_layer_pdf(tmp_path)
+
+    _, images, route = await runner_mod._fast_parse(pdf, "default", None)
+    assert route == "pdfplumber_pinned" and images is None
+
+    _, images, route = await runner_mod._fast_parse(pdf, "default", "pdfplumber")
+    assert route == "pdfplumber_pinned" and images is None
+
+
+def test_pinned_vision_provider_resolves_only_cloud_vlm_parsers():
+    from app.tasks.runner import _pinned_vision_provider
+    assert _pinned_vision_provider("vlm-qwen") == "vision-qwen"
+    assert _pinned_vision_provider("pdfplumber") is None
+    assert _pinned_vision_provider(None) is None
+    assert _pinned_vision_provider("no-such-parser") is None
+
+
+async def test_parse_stage_forwards_the_parser_pin_to_fast_parse(client, monkeypatch):
+    """parse_stage must hand the skill's pin to the fast route (regression: the
+    pin was dropped, which is why the field report never reached the vision path)."""
+    from app.tasks import runner as runner_mod
+    seen = {}
+
+    async def spy(path, tenant, parser_pin=None):
+        seen["pin"] = parser_pin
+        raise RuntimeError("stop after the route decision")
+
+    monkeypatch.setattr(runner_mod, "_fast_parse", spy)
+    p_id, _ = await _seed_pair()
+    from app.db import session_factory
+    async with session_factory()() as s:
+        f = (await s.execute(select(FileRecord)
+                             .where(FileRecord.transaction_id == p_id))).scalars().first()
+        file_id = f.id
+    with pytest.raises(RuntimeError):
+        await runner_mod.parse_stage(file_id, "vlm-qwen", processing_mode="fast")
+    assert seen["pin"] == "vlm-qwen"
