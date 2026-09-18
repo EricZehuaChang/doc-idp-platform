@@ -114,10 +114,39 @@
         </template>
       </EmptyState>
 
+      <!-- 2026-09-18 需求: 页码可直接跳转，不再只有上/下一页。
+           省略号只压缩中间，首末页永远可点；跳转框接受输入并回车/失焦生效。 -->
       <div class="pager" v-if="totalPages > 1">
-        <button :disabled="page <= 1" @click="page--">上一页</button>
-        <span class="dim">{{ page }} / {{ totalPages }}</span>
-        <button :disabled="page >= totalPages" @click="page++">下一页</button>
+        <span class="dim range">
+          {{ (page - 1) * PAGE_SIZE + 1 }}–{{ Math.min(page * PAGE_SIZE, total) }}
+          / 共 {{ total }} 条
+        </span>
+        <div class="pager-ctrl">
+          <button class="pg" :disabled="page <= 1" title="第一页"
+                  data-testid="page-first" @click="goPage(1)">«</button>
+          <button class="pg" :disabled="page <= 1" title="上一页"
+                  data-testid="page-prev" @click="goPage(page - 1)">‹</button>
+          <template v-for="(p, i) in pageNumbers" :key="`${p}-${i}`">
+            <span v-if="p === 0" class="ellipsis">…</span>
+            <button v-else class="pg num" :class="{ on: p === page }"
+                    :disabled="p === page" :title="`第 ${p} 页`"
+                    :data-testid="`page-${p}`" @click="goPage(p)">{{ p }}</button>
+          </template>
+          <button class="pg" :disabled="page >= totalPages" title="下一页"
+                  data-testid="page-next" @click="goPage(page + 1)">›</button>
+          <button class="pg" :disabled="page >= totalPages" title="最后一页"
+                  data-testid="page-last" @click="goPage(totalPages)">»</button>
+        </div>
+        <label class="jump">
+          跳至
+          <!-- 直接读输入框的值，不用 v-model：type=number 在值违反 min 时不发
+               input 事件、纯数字文本经 v-model 取回也可能是空串（两者实测都会让
+               跳转静默失效）。这里自己解析并夹取到 [1, totalPages]。 -->
+          <input type="text" inputmode="numeric" autocomplete="off" ref="jumpEl"
+                 :value="jumpTo" data-testid="page-jump" placeholder="页码"
+                 @keyup.enter="applyJump" @blur="applyJump" />
+          页
+        </label>
       </div>
     </section>
 
@@ -234,6 +263,8 @@ const route = useRoute();
 const router = useRouter();
 const qc = useQueryClient();
 const page = ref(Math.max(1, Number(route.query.page) || 1));
+/** Rows per page — the ledger endpoint is pinned to this in api.files(). */
+const PAGE_SIZE = 20;
 
 // Columns of the task table. `filter` names the menu each header opens; the
 // keys it owns drive both the ⏷ highlight and the condition chip.
@@ -429,6 +460,51 @@ function clearFilters() {
 }
 function reload() { qc.invalidateQueries({ queryKey: ["files"] }); }
 
+// —— 2026-09-18 需求: 页码跳转 ——
+/** Windowed page list for the pager: 0 renders as an ellipsis. The window
+ *  keeps a constant width while paging (grown on the short side near an end)
+ *  so the buttons never reflow under the cursor. */
+const WINDOW = 9;
+const pageNumbers = computed<number[]>(() => {
+  const last = totalPages.value;
+  const cur = Math.min(Math.max(page.value, 1), last);
+  if (last <= WINDOW + 2) return Array.from({ length: last }, (_, i) => i + 1);
+  const span = WINDOW - 2;                       // slots between the two ends
+  let lo = Math.max(2, cur - Math.floor(span / 2));
+  let hi = Math.min(last - 1, lo + span - 1);
+  lo = Math.max(2, hi - span + 1);
+  const out: number[] = [1];
+  if (lo > 2) out.push(0);
+  for (let p = lo; p <= hi; p++) out.push(p);
+  if (hi < last - 1) out.push(0);
+  out.push(last);
+  return out;
+});
+
+const jumpTo = ref("");
+const jumpEl = ref<HTMLInputElement>();
+/** Clear the box: the DOM value (not just the model) is reset by hand —
+ *  an unchanged empty model never patches an identical empty vnode value, so
+ *  the typed text would otherwise stay on screen after a rejected jump. */
+function clearJump() {
+  jumpTo.value = "";
+  if (jumpEl.value) jumpEl.value.value = "";
+}
+function goPage(p: number) {
+  const target = Math.min(Math.max(Math.round(p) || 1, 1), totalPages.value);
+  clearJump();
+  if (target !== page.value) page.value = target;
+}
+/** Enter or blur in the 跳至 box. Reads the field itself so a stale/absent
+ *  model value can never swallow a jump; out-of-range numbers clamp, garbage
+ *  is dropped. */
+function applyJump(e: Event) {
+  const raw = (e.target as HTMLInputElement | null)?.value?.trim() ?? "";
+  const n = Number(raw);
+  if (!raw || !Number.isFinite(n) || n < 1) { clearJump(); return; }
+  goPage(n);
+}
+
 // —— 2026-09-18: admin task deletion ——
 // The role gate is server-side (require_role("admin")); this only decides
 // whether the button is offered. auth-required=false (lite/dev) is admin by
@@ -585,7 +661,20 @@ function speedTitle(r: FileRow): string {
 .del:hover, .del:focus { color: var(--red); border-color: transparent;
   background: rgba(229, 83, 75, 0.10); }
 .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end;
-  margin-top: 12px; font-size: 13px; }
+  margin-top: 12px; font-size: 13px; flex-wrap: wrap; }
+.range { margin-right: auto; font-size: 12px; }
+.pager-ctrl { display: flex; align-items: center; gap: 4px; }
+/* 页码按钮：当前页高亮且不可点，省略号不可点 */
+.pg { min-width: 30px; padding: 3px 7px; font-size: 12.5px; line-height: 1.5;
+  background: transparent; border-color: var(--border); color: var(--text); }
+.pg.num { font-variant-numeric: tabular-nums; }
+.pg:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pg.on { background: var(--accent); border-color: var(--accent);
+  color: var(--accent-text); font-weight: 700; }
+.ellipsis { padding: 0 2px; color: var(--text-dim); }
+.jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim);
+  font-size: 12.5px; }
+.jump input { width: 62px; text-align: center; padding: 3px 6px; font-size: 12.5px; }
 .dim { color: var(--text-dim); }
 /* —— 删除确认弹窗 —— */
 .del-modal { width: 520px; max-width: 92vw; }
