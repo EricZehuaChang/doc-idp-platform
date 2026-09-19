@@ -298,10 +298,19 @@ export interface AuditPage { total: number; page: number; limit: number; data: A
  *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none. */
 export interface FileFilters {
   status?: string; q?: string; skill_code?: string;
+  /** 发起人 column filter: `user:<label>` / `api_key:<label>` / `unknown` /
+   *  `anonymous` — the same values the /files/initiators options carry. */
+  initiator?: string;
   file_name?: string; file_type?: string;
   pages_min?: number; pages_max?: number; verify?: string;
   date_from?: string; date_to?: string;
   updated_from?: string; updated_to?: string;
+}
+/** One selectable 发起人 value with its ledger row count. */
+export interface InitiatorOption {
+  value: string; label: string;
+  type: "user" | "api_key" | "anonymous" | "unknown" | string;
+  count: number;
 }
 export interface SmtpInfo {
   configured: boolean; has_password?: boolean; host?: string; port?: number;
@@ -604,6 +613,10 @@ export const api = {
       if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     return req<FilesPage>("GET", `/api/v1/files?${q}`);
   },
+  /** 发起人 filter vocabulary for this tenant (2026-09-19): distinct initiator
+   *  values with row counts, over the same population the ledger shows. */
+  initiators: () =>
+    req<{ initiators: InitiatorOption[] }>("GET", "/api/v1/files/initiators"),
   /** Admin-only hard delete of one task (root file + its split children, the
    *  recognition result and every generated output). The server enforces the
    *  role; the UI only hides the button. */

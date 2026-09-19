@@ -206,6 +206,21 @@
             </option>
           </select>
         </template>
+        <!-- 2026-09-19 需求: 发起人列可筛选。选项来自本租户台账的去重清单
+             （带条数），不用当前这一页去凑，选任何一项都不会筛出 0 条。 -->
+        <template v-else-if="openCol === 'initiator'">
+          <select v-model="f.initiator" size="8" class="listbox"
+                  data-testid="initiator-listbox">
+            <option value="">全部发起人</option>
+            <option v-for="o in initiatorList" :key="o.value" :value="o.value">
+              {{ o.label }}（{{ o.count }}）
+            </option>
+          </select>
+          <p v-if="!initiatorList.length && initiatorLoading" class="dim fmenu-note">
+            正在读取发起人…</p>
+          <p v-else-if="!initiatorList.length" class="dim fmenu-note">
+            暂无发起人可筛选（该租户的任务都早于发起人记录功能）。</p>
+        </template>
         <template v-else-if="openCol === 'file_name'">
           <input type="search" v-model="f.file_name" placeholder="文件名包含…"
                  @keyup.enter="closeMenu" />
@@ -271,7 +286,7 @@ const PAGE_SIZE = 20;
 const COLUMNS = [
   { key: "created", label: "时间", filter: true, keys: ["date_from", "date_to"] },
   { key: "skill", label: "技能", filter: true, keys: ["skill_code"] },
-  { key: "initiator", label: "发起人", filter: false, keys: [] },
+  { key: "initiator", label: "发起人", filter: true, keys: ["initiator"] },
   { key: "file_name", label: "文件名", filter: true, keys: ["file_name"] },
   { key: "file_type", label: "类型", filter: true, keys: ["file_type"] },
   { key: "size", label: "大小", filter: false, keys: [] },
@@ -283,11 +298,13 @@ const COLUMNS = [
   { key: "act", label: "", filter: false, keys: [] },
 ] as const;
 
-type FilterKey = "q" | "date_from" | "date_to" | "skill_code" | "file_name" | "file_type"
-  | "pages_min" | "pages_max" | "status" | "updated_from" | "updated_to" | "verify";
+type FilterKey = "q" | "date_from" | "date_to" | "skill_code" | "initiator" | "file_name"
+  | "file_type" | "pages_min" | "pages_max" | "status" | "updated_from"
+  | "updated_to" | "verify";
 const EMPTY: Record<FilterKey, string> = {
-  q: "", date_from: "", date_to: "", skill_code: "", file_name: "", file_type: "",
-  pages_min: "", pages_max: "", status: "", updated_from: "", updated_to: "", verify: "",
+  q: "", date_from: "", date_to: "", skill_code: "", initiator: "", file_name: "",
+  file_type: "", pages_min: "", pages_max: "", status: "", updated_from: "",
+  updated_to: "", verify: "",
 };
 const KEYS = Object.keys(EMPTY) as FilterKey[];
 
@@ -404,6 +421,14 @@ const chips = computed(() => {
     out.push({ key: "skill", text: `技能 ${s?.name || f.skill_code}`,
                clear: () => { f.skill_code = ""; } });
   }
+  if (f.initiator) {
+    // the option list may not have loaded yet (deep link) — fall back to the
+    // raw value's label part instead of showing "user:alice@x.com"
+    const o = initiatorList.value.find((x) => x.value === f.initiator);
+    const label = o?.label ?? f.initiator.replace(/^(user|api_key):/, "");
+    out.push({ key: "initiator", text: `发起人 ${initiatorLabel(label)}`,
+               clear: () => { f.initiator = ""; } });
+  }
   if (f.file_name) out.push({ key: "file_name", text: `文件名含「${f.file_name}」`,
                               clear: () => { f.file_name = ""; } });
   if (f.file_type) out.push({ key: "file_type",
@@ -433,6 +458,13 @@ const skillList = computed<SkillInfo[]>(() => [
 // of truth the upload page uses, so the two can never drift
 const { data: limits } = useQuery({ queryKey: ["formats"], queryFn: api.formats });
 const typeOptions = computed(() => limits.value?.extensions ?? []);
+// 2026-09-19: 发起人筛选的候选清单（本人、其他用户、免登录、历史任务），
+// 带条数；与台账同一口径，选中任一项都不会是 0 条
+const { data: initiatorData, isLoading: initiatorLoading } = useQuery({
+  queryKey: ["initiators"],
+  queryFn: api.initiators,
+});
+const initiatorList = computed(() => initiatorData.value?.initiators ?? []);
 
 /** One place for the ledger query so the delete flow can re-read the page it
  *  just changed without duplicating the filter plumbing. */
@@ -698,6 +730,7 @@ function speedTitle(r: FileRow): string {
 .fmenu label input { flex: 1; min-width: 0; }
 .fmenu input, .fmenu select { font-size: 12px; padding: 3px 6px; }
 .fmenu .listbox { width: 100%; }
+.fmenu-note { font-size: 12px; line-height: 1.5; margin: 0; }
 .fmenu-act { display: flex; gap: 8px; justify-content: space-between;
   border-top: 1px solid var(--border); padding-top: 8px; }
 </style>

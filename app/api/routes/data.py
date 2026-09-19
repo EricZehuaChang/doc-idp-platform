@@ -57,10 +57,31 @@ def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _initiator_cond(value: str):
+    """SQL for the 发起人 column filter (2026-09-19 需求).
+
+    Value shapes mirror the options endpoint: `user:<label>` / `api_key:<label>`
+    match one initiator, `unknown` matches rows that predate the snapshot,
+    `anonymous` matches免登录 submissions (auth-off deployments and集成调用).
+    """
+    value = value.strip()
+    if value == "unknown":
+        return or_(Transaction.initiator_type.is_(None),
+                   Transaction.initiator_type == "unknown")
+    if ":" in value:
+        itype, label = value.split(":", 1)
+        if itype in ("user", "api_key"):
+            return and_(Transaction.initiator_type == itype,
+                        Transaction.initiator_label == label)
+    # plain type name (anonymous / user / api_key): label-independent
+    return Transaction.initiator_type == value
+
+
 @router.get("/files")
 async def list_files(status: str | None = None, q: str | None = None,
                      skill_code: str | None = None,
                      file_name: str | None = None, file_type: str | None = None,
+                     initiator: str | None = None,
                      pages_min: int | None = None, pages_max: int | None = None,
                      verify: str | None = None,
                      date_from: str | None = None, date_to: str | None = None,
@@ -118,6 +139,8 @@ async def list_files(status: str | None = None, q: str | None = None,
             conds.append(FileRecord.page_count >= pages_min)
         if pages_max is not None:
             conds.append(FileRecord.page_count <= pages_max)
+        if initiator and initiator.strip():
+            conds.append(_initiator_cond(initiator))
         if q and q.strip():
             conds.append(or_(FileRecord.file_name.ilike(_like(q), escape="\\"),
                              Transaction.skill_code.ilike(_like(q), escape="\\"),
@@ -194,6 +217,53 @@ async def list_files(status: str | None = None, q: str | None = None,
         data = all_data[start:start + page_size]
     return {"total": total, "page": page, "page_size": page_size,
             "total_pages": (total + page_size - 1) // page_size, "data": data}
+
+
+@router.get("/files/initiators")
+async def list_initiators():
+    """Distinct 发起人 values of this tenant's task ledger, with row counts.
+
+    The column filter needs the whole vocabulary, not just the page in hand;
+    options come from the same population the ledger shows (root files,
+    production purpose, not deleted), so a choice can never yield zero rows.
+    `value` is what /files?initiator= expects.
+    """
+    tenant = current_tenant()
+    sf = session_factory()
+    # NULL (pre-snapshot rows) and the literal "unknown" are ONE bucket, so they
+    # must be coalesced in SQL — grouping them separately produced two identical
+    # 「历史任务」options (caught by tests/test_task_filters.py).
+    itype_col = func.coalesce(Transaction.initiator_type, "unknown")
+    async with sf() as s:
+        rows = (await s.execute(
+            select(itype_col, Transaction.initiator_label,
+                   func.count(FileRecord.id))
+            .join(Transaction, FileRecord.transaction_id == Transaction.id)
+            .where(FileRecord.tenant_id == tenant,
+                   FileRecord.parent_file_id.is_(None),
+                   Transaction.purpose != "test",
+                   _NOT_DELETED)
+            .group_by(itype_col, Transaction.initiator_label))).all()
+
+    merged: dict[str, dict] = {}
+    for itype, label, count in rows:
+        if itype in ("user", "api_key") and label:
+            value, out_label = f"{itype}:{label}", label
+        else:
+            # legacy rows (no snapshot) and免登录/anonymous submissions are a
+            # single bucket each — "历史任务" matches R21's ledger wording
+            value = itype or "unknown"
+            out_label = ("历史任务" if value == "unknown"
+                         else ("免登录" if value == "anonymous" else value))
+        opt = merged.setdefault(value, {"value": value, "label": out_label,
+                                        "type": value.split(":", 1)[0]
+                                                if ":" in value else value,
+                                        "count": 0})
+        opt["count"] += count
+    out = list(merged.values())
+    order = {"unknown": 0, "user": 1, "api_key": 2, "anonymous": 3}
+    out.sort(key=lambda x: (order.get(x["type"], 9), -x["count"], x["label"]))
+    return {"initiators": out}
 
 
 @router.delete("/files/{file_id}")
