@@ -158,3 +158,47 @@ async def test_source_views_and_audit(env):
     # SQLite drops tzinfo: timestamps must still go out as explicit UTC
     assert all(r['created_at'].endswith('+00:00') for r in rows)
     assert (await c.get('/api/v1/audit/logs', headers=h['a'])).status_code == 403
+
+
+async def test_shared_review_queue(env):
+    """Option 2 (2026-09-23): every operator sees production tasks awaiting
+    review; the reviewer keeps sight after deciding; viewers, keys and
+    Playground runs get nothing from the shared queue."""
+    c, h, _ = env
+    from app.db import session_factory
+    from app.storage import get_storage
+    storage = get_storage().put_bytes('visibility/shared.pdf', b'%PDF-shared')
+    async with session_factory()() as s:
+        for tid, purpose in [('tshared', 'production'), ('tsharedtest', 'test')]:
+            s.add(Transaction(id=tid, tenant_id='default', skill_code='test', skill_version=1,
+                              status='completed', purpose=purpose, initiator_type='unknown'))
+            await s.flush()
+        s.add(FileRecord(id='shared', tenant_id='default', transaction_id='tshared', file_name='shared.pdf',
+                         storage_path=storage, status='pending_verification', page_count=1,
+                         result={'x': {'$value': 'v', '$confidence': 1}}))
+        s.add(FileRecord(id='sharedtest', tenant_id='default', transaction_id='tsharedtest', file_name='t.pdf',
+                         storage_path=storage, status='pending_verification', page_count=1))
+        await s.commit()
+
+    async def ids(who, **params):
+        r = await c.get('/api/v1/files', headers=h[who], params=params)
+        return {f['file_id'] for f in r.json()['data']}
+
+    for who in ('a', 'b'):
+        assert 'shared' in await ids(who), who
+        assert 'shared' in {q['file_id'] for q in (await c.get('/api/v1/review/queue', headers=h[who])).json()}
+        assert (await c.get('/api/v1/review/shared', headers=h[who])).status_code == 200
+        assert (await c.get('/api/v1/files/shared/download', headers=h[who])).status_code == 200
+        assert (await c.get('/api/v1/review/sharedtest', headers=h[who])).status_code == 404
+    assert (await c.get('/api/v1/stats/home', headers=h['a'])).json()['pending_verification'] >= 2
+    for who in ('v', 'ka', 'app'):
+        assert (await c.get('/api/v1/review/shared', headers=h[who])).status_code in (403, 404), who
+    assert 'shared' not in await ids('v')
+
+    # a reviews it: a keeps it, b (who only saw it via the queue) loses it
+    assert (await c.post('/api/v1/review/shared/lock', headers=h['a'])).status_code == 200
+    assert (await c.post('/api/v1/review/shared/confirm', headers=h['a'])).status_code == 200
+    assert 'shared' in await ids('a')
+    assert (await c.get('/api/v1/review/shared', headers=h['a'])).status_code == 200
+    assert 'shared' not in await ids('b')
+    assert (await c.get('/api/v1/review/shared', headers=h['b'])).status_code == 404

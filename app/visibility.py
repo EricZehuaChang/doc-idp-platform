@@ -1,7 +1,8 @@
 """One authorization boundary for task reads, aggregates and review writes.
 
-Assignment grants access to one root task and its split documents, never to
-unrelated uploads in the same transaction. Keys use immutable IDs exclusively.
+Assignment, the shared review queue (operators see every task awaiting review)
+and "reviewed by me" grant access to one root task and its split documents,
+never to unrelated uploads in the same transaction. Keys use immutable IDs exclusively.
 """
 from fastapi import HTTPException
 from sqlalchemy import and_, false, func, or_, select
@@ -35,19 +36,33 @@ def _owner_cond(actor: dict):
     return or_(Transaction.initiator_user_id == uid, Transaction.api_key_id.in_(keys))
 
 
+def _same_task(cond):
+    """EXISTS a file in the same root task (root + split children) matching
+    ``cond(alias)``; correlated to the outer FileRecord."""
+    g = aliased(FileRecord)
+    return select(g.id).where(
+        g.tenant_id == current_tenant(),
+        g.transaction_id == FileRecord.transaction_id,
+        func.coalesce(g.parent_file_id, g.id)
+        == func.coalesce(FileRecord.parent_file_id, FileRecord.id),
+        cond(g),
+    ).correlate(FileRecord).exists()
+
+
 def visible_file_cond(actor: dict | None = None):
     actor = actor or current_actor()
     owner = _owner_cond(actor)
     if task_scope(actor) == "own" and actor.get("user_id"):
-        assigned = aliased(FileRecord)
-        assignment = select(assigned.id).where(
-            assigned.tenant_id == current_tenant(),
-            assigned.transaction_id == FileRecord.transaction_id,
-            func.coalesce(assigned.parent_file_id, assigned.id)
-            == func.coalesce(FileRecord.parent_file_id, FileRecord.id),
-            assigned.assignee == actor["name"],
-        ).correlate(FileRecord).exists()
-        owner = or_(owner, assignment)
+        # D1: tasks assigned to me
+        owner = or_(owner, _same_task(lambda g: g.assignee == actor["name"]))
+        if actor.get("role") == "operator":
+            # 2026-09-23 (Eric, option 2): the review queue is shared by all
+            # operators — any production task still awaiting review is visible,
+            # and a task I reviewed stays visible after my decision
+            owner = or_(owner, and_(
+                Transaction.purpose != "test",
+                _same_task(lambda g: or_(g.status == "pending_verification",
+                                         g.verified_by == actor["name"]))))
     txn = select(Transaction.id).where(
         Transaction.id == FileRecord.transaction_id,
         Transaction.tenant_id == current_tenant(),
