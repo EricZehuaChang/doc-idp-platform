@@ -10,17 +10,21 @@ import json
 import logging
 from datetime import datetime, time, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, delete, func, or_, select
 
+from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
 from app.models import (AuditLog, Correction, CreditAccount, CreditLedger,
                         FileArtifact, FileRecord, Skill, Transaction)
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant, require_role
+
+from app.visibility import visible_file_cond, visible_txn_cond
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
 
@@ -57,6 +61,14 @@ def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _source_cond(source: str | None):
+    if source == "api":
+        return Transaction.initiator_type == "api_key"
+    if source == "manual":
+        return or_(Transaction.initiator_type.is_(None), Transaction.initiator_type != "api_key")
+    return True
+
+
 def _initiator_cond(value: str):
     """SQL for the 发起人 column filter (2026-09-19 需求).
 
@@ -78,7 +90,7 @@ def _initiator_cond(value: str):
 
 
 @router.get("/files")
-async def list_files(status: str | None = None, q: str | None = None,
+async def list_files(source: Literal["manual", "api"] | None = None, status: str | None = None, q: str | None = None,
                      skill_code: str | None = None,
                      file_name: str | None = None, file_type: str | None = None,
                      initiator: str | None = None,
@@ -120,7 +132,7 @@ async def list_files(status: str | None = None, q: str | None = None,
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
                 .outerjoin(Skill, and_(Skill.code == Transaction.skill_code,
                                        Skill.tenant_id == FileRecord.tenant_id))
-                .where(FileRecord.tenant_id == tenant,
+                .where(visible_file_cond(), FileRecord.transaction_id.in_(select(Transaction.id).where(_source_cond(source))), FileRecord.tenant_id == tenant,
                        FileRecord.parent_file_id.is_(None),
                        # 9.15 WP5 (§3.9): Playground test runs stay out of the ledger
                        Transaction.purpose != "test",
@@ -157,7 +169,7 @@ async def list_files(status: str | None = None, q: str | None = None,
         if root_ids:
             children = (await s.execute(
                 select(FileRecord)
-                .where(FileRecord.tenant_id == tenant,
+                .where(visible_file_cond(), FileRecord.transaction_id.in_(select(Transaction.id).where(_source_cond(source))), FileRecord.tenant_id == tenant,
                        FileRecord.parent_file_id.in_(root_ids))
                 .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
             for child in children:
@@ -220,7 +232,7 @@ async def list_files(status: str | None = None, q: str | None = None,
 
 
 @router.get("/files/initiators")
-async def list_initiators():
+async def list_initiators(source: Literal["manual", "api"] | None = None):
     """Distinct 发起人 values of this tenant's task ledger, with row counts.
 
     The column filter needs the whole vocabulary, not just the page in hand;
@@ -239,7 +251,7 @@ async def list_initiators():
             select(itype_col, Transaction.initiator_label,
                    func.count(FileRecord.id))
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == tenant,
+            .where(visible_file_cond(), FileRecord.transaction_id.in_(select(Transaction.id).where(_source_cond(source))), FileRecord.tenant_id == tenant,
                    FileRecord.parent_file_id.is_(None),
                    Transaction.purpose != "test",
                    _NOT_DELETED)
@@ -302,7 +314,7 @@ async def delete_task(file_id: str, _: None = Depends(require_role("admin"))):
         ids = [root.id]
         ids += list((await s.execute(
             select(FileRecord.id)
-            .where(FileRecord.tenant_id == tenant,
+            .where(visible_file_cond(), FileRecord.tenant_id == tenant,
                    FileRecord.parent_file_id == root.id))).scalars().all())
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.id.in_(ids)))).scalars().all()
@@ -331,7 +343,7 @@ async def delete_task(file_id: str, _: None = Depends(require_role("admin"))):
                                                  Correction.file_id.in_(ids)))
         await s.execute(delete(FileArtifact).where(FileArtifact.tenant_id == tenant,
                                                   FileArtifact.file_id.in_(ids)))
-        await s.execute(delete(FileRecord).where(FileRecord.tenant_id == tenant,
+        await s.execute(delete(FileRecord).where(visible_file_cond(), FileRecord.tenant_id == tenant,
                                                  FileRecord.id.in_(ids)))
         if txn is not None and not (await s.execute(
                 select(FileRecord.id)
@@ -358,7 +370,7 @@ async def delete_task(file_id: str, _: None = Depends(require_role("admin"))):
 
 
 @router.get("/stats/home")
-async def home_stats():
+async def home_stats(source: Literal["manual", "api"] | None = None):
     """Metric strip (Insavlo home shape): credits, usage, throughput, backlog."""
     tenant = current_tenant()
     today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min,
@@ -368,14 +380,15 @@ async def home_stats():
         acct = await s.get(CreditAccount, tenant)
         used = (await s.execute(
             select(func.coalesce(func.sum(CreditLedger.amount), 0.0))
-            .where(CreditLedger.tenant_id == tenant,
+            .where(CreditLedger.transaction_id.in_(select(Transaction.id).where(visible_txn_cond(), _source_cond(source))),
+                   CreditLedger.tenant_id == tenant,
                    CreditLedger.kind == "shadow_meter"))).scalar_one()
 
         # §3.9: Playground test runs stay out of the home metrics
         rows = (await s.execute(
             select(FileRecord, Transaction.purpose)
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == tenant, _NOT_DELETED))).all()
+            .where(visible_file_cond(), FileRecord.transaction_id.in_(select(Transaction.id).where(_source_cond(source))), FileRecord.tenant_id == tenant, _NOT_DELETED))).all()
         records = [f for f, purpose in rows if purpose != "test"]
         roots = [f for f in records if f.parent_file_id is None]
         children_by_parent: dict[str, list[FileRecord]] = {}
@@ -389,7 +402,7 @@ async def home_stats():
         passed_docs = sum(1 for _, meta in grouped if meta["status"] in _DONE)
         passed_pages = (await s.execute(
             select(func.coalesce(func.sum(FileRecord.page_count), 0))
-            .where(FileRecord.tenant_id == tenant,
+            .where(visible_file_cond(), FileRecord.transaction_id.in_(select(Transaction.id).where(_source_cond(source))), FileRecord.tenant_id == tenant,
                    FileRecord.status.in_(_DONE)))).scalar_one()
         pending = sum(1 for _, meta in grouped if meta["status"] == "pending_verification")
         queued = sum(1 for _, meta in grouped if meta["status"] == "queued")
@@ -418,7 +431,7 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
         rows = (await s.execute(
             select(FileRecord, Transaction.skill_code)
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == current_tenant(),
+            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    Transaction.skill_code == skill_code,
                    Transaction.purpose != "test",   # §3.9
                    _NOT_DELETED,
@@ -454,7 +467,8 @@ async def usage_stats(days: int = 7, skill_code: str | None = None):
         rows = (await s.execute(
             select(CreditLedger.created_at, CreditLedger.amount, Transaction.skill_code)
             .join(Transaction, CreditLedger.transaction_id == Transaction.id, isouter=True)
-            .where(CreditLedger.tenant_id == tenant,
+            .where(CreditLedger.transaction_id.in_(select(Transaction.id).where(visible_txn_cond())),
+                   CreditLedger.tenant_id == tenant,
                    CreditLedger.kind == "shadow_meter",
                    CreditLedger.created_at >= since))).all()
     by_day: dict[str, float] = {}
@@ -484,6 +498,9 @@ async def cabinet_csv(skill_code: str, limit: int = 1000):
     rows = await _cabinet_rows(skill_code, limit)
     if not rows:
         raise HTTPException(404, "no decided files for this skill")
+    async with session_factory()() as s:
+        human_event(s, "cabinet.exported", {"skill_code": skill_code, "rows": len(rows)})
+        await s.commit()
     buf = io.StringIO()
     # union of keys across rows: doc_type/source_pages exist only on advanced
     # children — the column set must not depend on which row came first
@@ -513,14 +530,15 @@ async def skill_stats():
             select(Transaction.skill_code, FileRecord.status,
                    func.count(FileRecord.id))
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(FileRecord.tenant_id == tenant,
+            .where(visible_file_cond(), FileRecord.tenant_id == tenant,
                    Transaction.purpose != "test",   # §3.9
                    _NOT_DELETED)
             .group_by(Transaction.skill_code, FileRecord.status))).all()
         corr = (await s.execute(
             select(Correction.skill_code, Correction.field,
                    func.count(Correction.id))
-            .where(Correction.tenant_id == tenant)
+            .where(Correction.tenant_id == tenant, Correction.file_id.in_(
+                select(FileRecord.id).where(visible_file_cond())))
             .group_by(Correction.skill_code, Correction.field))).all()
 
     stats: dict[str, dict] = {}

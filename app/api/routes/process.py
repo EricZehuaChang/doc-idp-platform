@@ -10,11 +10,12 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
 from app import references
@@ -24,7 +25,9 @@ from app.models import FileRecord, Skill, SkillVersion, Transaction
 from app.skillengine.schema import SkillPackageLoose
 from app.storage import get_storage
 from app.tasks import runner
-from app.tenancy import current_actor, current_tenant
+from app.tenancy import current_actor, current_tenant, require_role
+
+from app.visibility import require_file, require_txn, visible_file_cond
 
 router = APIRouter(prefix="/api/v1", tags=["process"])
 
@@ -129,7 +132,8 @@ async def formats():
         max_batch_mb=_MAX_BATCH // (1024 * 1024))
 
 
-@router.post("/process", response_model=SubmitResponse, status_code=202)
+@router.post("/process", response_model=SubmitResponse, status_code=202,
+             dependencies=[Depends(require_role("operator"))])
 async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...),
                  idem_header: str | None = Header(default=None, alias="Idempotency-Key")):
     if len(files) > _MAX_FILES:
@@ -326,6 +330,8 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
             s.add(rec)
             await s.flush()
             out.append({"file_id": rec.id, "original_filename": rec.file_name})
+        human_event(s, "files.submitted", {"transaction_id": txn.id, "skill_code": skill_code,
+                    "files": [{"file_name": name, "estimated_pages": billing.estimate_pages(blob, Path(name).suffix)} for name, blob in blobs]})
         await s.commit()
         txn_id = txn.id
 
@@ -333,25 +339,38 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     return SubmitResponse(transaction_id=txn_id, files=out)
 
 
+_IMMUTABLE = {"Cache-Control": "private, max-age=86400, immutable",
+              "Vary": "Authorization"}
+
+
 @router.get("/files/{file_id}/download")
-async def download(file_id: str):
-    """Original file stream — the left pane of the dual-screen review UI."""
+async def download(file_id: str, save: bool = False):
+    """Original file stream — the left pane of the dual-screen review UI.
+
+    R4 (2026-09-22): the viewer and hover prefetch fetch this same URL, so only
+    an explicit save (``?save=1``, the 下载原件 buttons) is an audited download;
+    viewing stays cacheable and out of the operation log."""
     from fastapi.responses import FileResponse
 
     sf = session_factory()
     async with sf() as s:
-        f = await s.get(FileRecord, file_id)
+        f = await require_file(s, file_id)
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
         st = get_storage()
         if not _original_readable(st, f.storage_path):
             raise HTTPException(404, detail=_ORIGINAL_MISSING)
+        if save:
+            human_event(s, "files.downloaded", {"file_id": f.id})
+            await s.commit()
+            return FileResponse(st.local_path(f.storage_path), filename=f.file_name,
+                                headers={"Cache-Control": "private, no-store"})
         # content is immutable per file_id (content-hash storage): let the
         # browser cache it — second open of the review page renders instantly
-        # (frontend caching design v0.2 §9.0 layer ③)
+        # (frontend caching design v0.2 §9.0 layer ③). Vary keeps one browser's
+        # cache from serving it across accounts now that visibility is per user.
         return FileResponse(st.local_path(f.storage_path),
-                            filename=f.file_name,
-                            headers={"Cache-Control": "private, max-age=86400, immutable"})
+                            filename=f.file_name, headers=_IMMUTABLE)
 
 
 @router.get("/files/{file_id}/preview")
@@ -367,13 +386,13 @@ async def preview(file_id: str):
 
     sf = session_factory()
     async with sf() as s:
-        f = await s.get(FileRecord, file_id)
+        f = await require_file(s, file_id)
         if f is None or f.tenant_id != current_tenant():
             raise HTTPException(404, "file not found")
         suffix = Path(f.file_name).suffix.lower()
         stem = Path(f.file_name).stem
     st = get_storage()
-    immutable = {"Cache-Control": "private, max-age=86400, immutable"}
+    immutable = _IMMUTABLE
     cached_key = f"preview/{file_id}.pdf"
     has_cache = (suffix in _OFFICE_PREVIEW
                  and st.exists(cached_key) and st.size(cached_key) > 0)
@@ -429,7 +448,7 @@ async def transaction_documents(transaction_id: str):
     actor = current_actor()
     sf = session_factory()
     async with sf() as s:
-        txn = await s.get(Transaction, transaction_id)
+        txn = await require_txn(s, transaction_id)
         if txn is None or txn.tenant_id != tenant:
             raise HTTPException(404, "transaction not found")
         is_agent = actor.get("key_type") == "agent"
@@ -441,11 +460,10 @@ async def transaction_documents(transaction_id: str):
                 raise HTTPException(403, detail={
                     "code": "role_required",
                     "message": "测试任务仅对 operator 及以上开放"})
-        elif is_agent and txn.initiator_id != actor.get("name"):
-            raise HTTPException(404, "transaction not found")
+        # R5: key ownership is enforced by require_txn (api_key_id, not name)
 
         files = (await s.execute(
-            select(FileRecord).where(FileRecord.transaction_id == transaction_id)
+            select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond())
             .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
         # 9.15 WP6: artifacts for every file of the txn (incl. failure reasons)
         from app.models import FileArtifact
@@ -532,6 +550,7 @@ async def transaction_documents(transaction_id: str):
                         "extraction_status": view.get("extraction_status"),
                         "error": k.error or None,
                         "data": _clean_data(k),
+                        **({"field_sources": k.document_meta["field_sources"]} if (k.document_meta or {}).get("field_sources") else {}),
                         "review_fields": _review_fields(k.result or {}),
                         "metrics": (k.document_meta or {}).get("metrics"),
                         "artifacts": artifacts_by_file.get(k.id, [])})
@@ -547,6 +566,7 @@ async def transaction_documents(transaction_id: str):
                 "extraction_status": _extraction_status(f),
                 "error": f.error or None,
                 "data": _clean_data(f),
+                **({"field_sources": f.document_meta["field_sources"]} if (f.document_meta or {}).get("field_sources") else {}),
                 "review_fields": _review_fields(f.result or {}),
                 "metrics": (f.document_meta or {}).get("metrics"),
                 "artifacts": artifacts_by_file.get(f.id, [])}]
@@ -582,7 +602,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
-        txn = await s.get(Transaction, transaction_id)
+        txn = await require_txn(s, transaction_id)
         if txn is None or txn.tenant_id != tenant:   # cross-tenant probe -> 404 (§11.2 CI case)
             raise HTTPException(404, "transaction not found")
         actor = current_actor()
@@ -590,7 +610,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
             # §3.9: Playground test runs are invisible to agent keys
             raise HTTPException(404, "transaction not found")
         rows = (await s.execute(
-            select(FileRecord).where(FileRecord.transaction_id == transaction_id))).scalars().all()
+            select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond()))).scalars().all()
 
         def file_payload(f: FileRecord) -> dict:
             result = f.result

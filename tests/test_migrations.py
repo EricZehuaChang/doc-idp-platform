@@ -256,5 +256,6 @@ async def test_duplicate_skill_versions_block_the_upgrade(tmp_path):
         version = raw.execute("select version_num from alembic_version").fetchone()[0]
         indexes = {r[0] for r in raw.execute(
             "select name from sqlite_master where type='index'")}
-    assert version == "b8d0f2a4c6e8"
+    from alembic.script import ScriptDirectory
+    assert version == ScriptDirectory.from_config(alembic_config(url)).get_current_head()
     assert "ux_skill_versions_code_version" in indexes

@@ -10,16 +10,19 @@ skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
 import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
 from app.storage import get_storage
-from app.tenancy import current_actor, current_tenant
+from app.tenancy import current_actor, current_tenant, require_role
+
+from app.visibility import require_file, visible_file_cond
 
 router = APIRouter(prefix="/api/v1/review", tags=["review"])
 
@@ -45,10 +48,7 @@ def _lock_expired(f: FileRecord) -> bool:
 
 
 async def _get_file(s, file_id: str) -> FileRecord:
-    f = await s.get(FileRecord, file_id)
-    if f is None or f.tenant_id != current_tenant():   # cross-tenant probe -> 404 (§11.2)
-        raise HTTPException(404, "file not found")
-    return f
+    return await require_file(s, file_id)
 
 
 def _pages(f: FileRecord) -> list[dict]:
@@ -82,7 +82,7 @@ async def queue(skill_code: str | None = None, assignee: str | None = None,
     async with sf() as s:
         q = (select(FileRecord, Transaction.skill_code)
              .join(Transaction, FileRecord.transaction_id == Transaction.id)
-             .where(FileRecord.tenant_id == current_tenant(),
+             .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                     FileRecord.status == "pending_verification",
                     Transaction.purpose != "test")   # 9.15 WP5 (§3.9)
              .order_by(FileRecord.created_at))
@@ -104,12 +104,12 @@ async def queue(skill_code: str | None = None, assignee: str | None = None,
             return []
         roots = (await s.execute(
             select(FileRecord)
-            .where(FileRecord.tenant_id == current_tenant(),
+            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    FileRecord.id.in_(order)))).scalars().all()
         roots_by_id = {f.id: f for f in roots}
         all_children = (await s.execute(
             select(FileRecord)
-            .where(FileRecord.tenant_id == current_tenant(),
+            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    FileRecord.parent_file_id.in_(order)))).scalars().all()
         child_count: dict[str, int] = {}
         for child in all_children:
@@ -146,7 +146,7 @@ async def detail(file_id: str):
             else await _get_file(s, requested.parent_file_id)
         children = (await s.execute(
             select(FileRecord)
-            .where(FileRecord.tenant_id == current_tenant(),
+            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    FileRecord.parent_file_id == root.id)
             .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
         payload = _detail_payload(root)
@@ -187,7 +187,7 @@ class AssignBody(BaseModel):
     assignee: str
 
 
-@router.post("/{file_id}/assign")
+@router.post("/{file_id}/assign", dependencies=[Depends(require_role("admin"))])
 async def assign(file_id: str, body: AssignBody,
                  x_user: str = Header(default="anonymous")):
     sf = session_factory()
@@ -200,7 +200,7 @@ async def assign(file_id: str, body: AssignBody,
     return {"file_id": file_id, "assignee": body.assignee}
 
 
-@router.post("/{file_id}/lock")
+@router.post("/{file_id}/lock", dependencies=[Depends(require_role("operator"))])
 async def lock(file_id: str, x_user: str = Header(default="anonymous")):
     """Acquire the review lock. 409 if actively held by someone else;
     expired locks are silently reclaimed (reviewer went offline, §2.6)."""
@@ -218,7 +218,7 @@ async def lock(file_id: str, x_user: str = Header(default="anonymous")):
     return {"file_id": file_id, "locked_by": user, "ttl_minutes": 15}
 
 
-@router.post("/{file_id}/unlock")
+@router.post("/{file_id}/unlock", dependencies=[Depends(require_role("operator"))])
 async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
     sf = session_factory()
     async with sf() as s:
@@ -244,7 +244,7 @@ class FieldsPatch(BaseModel):
     edits: list[FieldEdit]
 
 
-@router.patch("/{file_id}/fields")
+@router.patch("/{file_id}/fields", dependencies=[Depends(require_role("operator"))])
 async def patch_fields(file_id: str, body: FieldsPatch,
                        x_user: str = Header(default="anonymous")):
     """Apply human corrections. Business rules: edit requires holding the lock;
@@ -306,6 +306,7 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             # artifacts never regenerated after a correction; found by the
             # FX1 end-to-end test for #4)
             f.result_revision = (f.result_revision or 0) + 1
+            human_event(s, "review.fields_patched", {"file_id": file_id, "fields": applied})
         await s.commit()
     return {"file_id": file_id, "corrected_fields": applied}
 
@@ -314,13 +315,13 @@ class DecisionBody(BaseModel):
     comment: str = ""
 
 
-@router.post("/{file_id}/confirm")
+@router.post("/{file_id}/confirm", dependencies=[Depends(require_role("operator"))])
 async def confirm(file_id: str, body: DecisionBody | None = None,
                   x_user: str = Header(default="anonymous")):
     return await _decide(file_id, "passed", _identity(x_user), body.comment if body else "")
 
 
-@router.post("/{file_id}/reject")
+@router.post("/{file_id}/reject", dependencies=[Depends(require_role("operator"))])
 async def reject(file_id: str, body: DecisionBody | None = None,
                  x_user: str = Header(default="anonymous")):
     return await _decide(file_id, "rejected", _identity(x_user), body.comment if body else "")

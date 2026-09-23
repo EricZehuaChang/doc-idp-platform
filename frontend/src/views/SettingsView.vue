@@ -68,6 +68,7 @@
             </td>
             <td class="dim">{{ u.auth_provider }}</td>
             <td class="row-ops">
+              <button v-if="u.role !== 'admin'" @click="editGrant(u)">API 权限</button>
               <button v-if="u.pending" @click="resend(u)">重发邀请</button>
               <button v-if="!u.pending && u.auth_provider === 'local' && u.active"
                       @click="resetPw(u)" title="重置密码：该用户下次登录必须改密，旧登录会话立即失效">
@@ -80,6 +81,27 @@
       </table>
     </section>
 
+    <!-- R2 (2026-09-22): the admin sets a member's personal-key ceiling; a
+         key's live reach = what it was issued for ∩ this grant -->
+    <AppModal v-if="grantUser" @close="grantUser = null">
+      <h2>API 权限 · {{ grantUser.email }}</h2>
+      <div class="grant-form">
+        <label class="chk-row"><input type="checkbox" v-model="grantDraft.allow_create" />
+          允许创建与使用个人 Key</label>
+        <div class="grant-groups">
+          <label v-for="g in grantGroups" :key="g.value" class="chk-row">
+            <input type="checkbox" v-model="grantDraft.groups" :value="g.value"
+                   :disabled="!grantDraft.allow_create" /> {{ g.label }}</label>
+        </div>
+        <label>可用技能代码（逗号分隔；留空 = 全部）<input v-model="grantSkills" /></label>
+        <p class="dim">保存后立即约束该成员已发出的个人 Key。</p>
+        <div class="row-ops">
+          <button @click="grantUser = null">取消</button>
+          <button class="primary" @click="saveGrant">保存授权</button>
+        </div>
+      </div>
+    </AppModal>
+
     <!-- —— operation log (2026-09-09) —— -->
     <section v-if="tab === 'logs'" class="panel">
       <div class="row">
@@ -88,6 +110,8 @@
           <option v-for="(label, fam) in LOG_ACTIONS" :key="fam" :value="fam">
             {{ label }}</option>
         </select>
+        <select v-model="logActor" @change="loadLogs(1)" aria-label="操作账号"><option value="">全部账号</option><option v-for="a in logActors" :key="a">{{ a }}</option></select>
+        <input type="date" v-model="logFrom" aria-label="开始日期" /><input type="date" v-model="logTo" aria-label="结束日期" />
         <input v-model="logQ" placeholder="按操作人或动作搜索" class="test-to"
                @keyup.enter="loadLogs(1)" />
         <button class="primary" @click="loadLogs(1)">查询</button>
@@ -427,8 +451,9 @@
 </template>
 
 <script setup lang="ts">
+import AppModal from "../components/AppModal.vue";
 import { onMounted, reactive, ref, watch } from "vue";
-import { api, type AuditRow, type BillingAccount, type CustomProvider,
+import { api, type ApiGrants, type AuditRow, type BillingAccount, type CustomProvider,
          type GiftRequestRow, type LedgerRow, type SmtpInfo } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
@@ -468,8 +493,23 @@ async function testSmtp() {
 
 // —— users ——
 interface UserRow { id: string; email: string; role: string; active: boolean;
-                    pending: boolean; auth_provider: string }
+                    pending: boolean; auth_provider: string; api_grants?: ApiGrants | null }
 const users = ref<UserRow[]>([]);
+const grantUser = ref<UserRow | null>(null);
+const grantDraft = reactive<ApiGrants>({ allow_create: true, groups: ['process'], allowed_skill_codes: null });
+const grantSkills = ref('');
+const grantGroups = [{ value: 'process', label: '提交与查询' }, { value: 'detect', label: '印章签名检测' }, { value: 'locate', label: '版面定位' }];
+function editGrant(u: UserRow) {
+  grantUser.value = u;
+  Object.assign(grantDraft, JSON.parse(JSON.stringify(u.api_grants ?? { allow_create: true, groups: ['process'], allowed_skill_codes: null })));
+  grantSkills.value = grantDraft.allowed_skill_codes?.join(',') ?? '';
+}
+async function saveGrant() {
+  if (!grantUser.value) return;
+  const skills = grantSkills.value.split(/[,，]/).map(x => x.trim()).filter(Boolean);
+  try { await api.patchUser(grantUser.value.id, { api_grants: { ...grantDraft, allowed_skill_codes: skills.length ? skills : null } }); grantUser.value = null; await loadUsers(); toast.ok('API 授权已更新'); }
+  catch (e) { toast.error(e); }
+}
 const invEmail = ref("");
 const invRole = ref("operator");
 const invPassword = ref("");
@@ -526,18 +566,23 @@ async function resetPw(u: UserRow) {
 const LOG_ACTIONS: Record<string, string> = {
   auth: "登录与账号", skills: "技能", review: "审核",
   settings: "设置与密钥", billing: "计费", process: "处理",
+  // R4 (2026-09-22): human task / download / key activity
+  files: "任务与原件", artifacts: "产出文件", cabinet: "数据柜", me: "个人 Key",
 };
 const logRows = ref<AuditRow[]>([]);
 const logTotal = ref(0);
 const logPage = ref(1);
 const logLimit = 50;
 const logQ = ref("");
+const logActor = ref(""), logFrom = ref(""), logTo = ref("");
+const logActors = ref<string[]>([]);
 const logAction = ref("");
 
 async function loadLogs(page = 1) {
   logPage.value = page;
   try {
-    const d = await api.auditLogs({ q: logQ.value, action: logAction.value,
+    logActors.value = (await api.auditActors()).actors;
+    const d = await api.auditLogs({ actor: logActor.value, date_from: logFrom.value, date_to: logTo.value, q: logQ.value, action: logAction.value,
                                     page, limit: logLimit });
     logRows.value = d.data;
     logTotal.value = d.total;
@@ -548,6 +593,9 @@ function actionLabel(action: string): string {
   return ACTION_TEXT[action] ?? `${LOG_ACTIONS[fam] ?? fam} · ${action.split(".")[1] ?? action}`;
 }
 const ACTION_TEXT: Record<string, string> = {
+  "auth.login_failed": "登录失败", "auth.api_grants_updated": "更新 API 授权",
+  "files.submitted": "提交任务", "files.downloaded": "下载原件", "artifacts.downloaded": "下载产出",
+  "cabinet.exported": "导出数据柜", "review.fields_patched": "修改识别字段",
   "auth.login": "登录", "auth.login_oidc": "SSO 登录", "auth.activated": "激活账号",
   "auth.user_created": "创建用户", "auth.user_updated": "变更用户", "auth.invite_sent": "发送邀请",
   "auth.password_changed": "修改密码（本人）", "auth.password_reset": "重置密码（自助）",
@@ -555,7 +603,16 @@ const ACTION_TEXT: Record<string, string> = {
   "skills.created": "新建技能", "skills.published": "发布版本",
   "skills.state_changed": "启停技能", "skills.deleted": "删除技能",
   "skills.restored": "恢复技能", "skills.version_deleted": "删除版本", "skills.imported": "导入技能",
-  "review.assign": "分配审单",
+  "review.assign": "分配审单", "review.passed": "审核通过", "review.rejected": "审核驳回",
+  "files.deleted": "删除任务",
+  "me.agent_key_created": "创建个人 Key", "me.agent_key_revoked": "吊销个人 Key",
+  "settings.api_key_created": "创建应用 Key", "settings.api_key_revoked": "吊销应用 Key",
+  "settings.api_key_allocate": "分配 Key 额度", "settings.api_key_quota_mode": "切换 Key 额度模式",
+  "settings.byok_set": "设置模型密钥", "settings.byok_removed": "移除模型密钥",
+  "settings.custom_provider_set": "设置自定义通道", "settings.custom_provider_removed": "移除自定义通道",
+  "settings.oidc_updated": "更新 SSO 配置", "settings.smtp_updated": "更新邮件配置",
+  "skills.package_exported": "导出技能包", "skills.package_imported": "导入技能包",
+  "skills.references_pinned": "固定引用版本",
 };
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -887,6 +944,8 @@ th { color: var(--text-dim); }
 .dim { color: var(--text-dim); }
 .chk-row { flex-direction: row; align-items: center; gap: 8px; }
 .chk-row input { width: auto; }
+.grant-form { display: flex; flex-direction: column; gap: 12px; min-width: 360px; }
+.grant-groups { display: flex; gap: 16px; flex-wrap: wrap; }
 .row-ops { display: flex; gap: 6px; }
 .fresh-key { border: 1px solid var(--accent); border-radius: 8px; padding: 12px;
   background: var(--bg-raised); }

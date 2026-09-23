@@ -1,13 +1,14 @@
 """Webhook registration API (tenant-scoped)."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
 
 from app.db import session_factory
 from app.integrations.webhooks import EVENTS, Webhook
-from app.tenancy import current_tenant
+from app.tenancy import current_tenant, require_role
 
-router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"],
+                   dependencies=[Depends(require_role("admin"))])
 
 
 class HookCreate(BaseModel):

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.api_grants import ApiGrants, Group, grants_for
 from app.auth import security
 from app.config import get_settings
 from app.db import session_factory
@@ -35,6 +36,7 @@ def _key_view(row: ApiKey) -> dict:
 
 class AgentKeyCreate(BaseModel):
     name: str
+    groups: list[Group] = ["process"]
     allowed_skill_codes: list[str] | None = None   # None = all skills, [] = none
 
 
@@ -48,7 +50,8 @@ async def list_my_keys():
                                  ApiKey.owner_user_id == actor["user_id"],
                                  ApiKey.active)
             .order_by(ApiKey.created_at))).scalars().all()
-    return {"keys": [_key_view(r) for r in rows]}
+    return {"keys": [_key_view(r) for r in rows],
+            "grants": grants_for(actor["role"], actor.get("api_grants")).model_dump()}
 
 
 @router.post("/api-keys", status_code=201)
@@ -61,7 +64,17 @@ async def create_my_key(body: AgentKeyCreate):
         raise HTTPException(400, "请为 Key 填写一个名称")
     if len(name) > 100:
         raise HTTPException(400, "Key 名称不能超过 100 字")
-    scopes = "skills:read" if not has_role("operator") else "process:write,skills:read"
+    grants: ApiGrants = grants_for(actor["role"], actor.get("api_grants"))
+    if not grants.allow_create or not set(body.groups) <= set(grants.groups):
+        raise HTTPException(403, "创建 Key 或接口组超出管理员授权")
+    if grants.allowed_skill_codes is not None and (
+            body.allowed_skill_codes is None
+            or not set(body.allowed_skill_codes) <= set(grants.allowed_skill_codes)):
+        raise HTTPException(403, "技能范围超出管理员授权")
+    scopes_list = []
+    if "process" in body.groups:
+        scopes_list = ["skills:read"] if not has_role("operator") else ["process:write", "skills:read"]
+    scopes = ",".join(scopes_list + [g for g in body.groups if g != "process"])
     full_key, prefix, key_hash = security.generate_api_key()
     tenant = current_tenant()
     sf = session_factory()

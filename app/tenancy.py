@@ -14,11 +14,13 @@ Repositories must always filter by current_tenant().
 from contextlib import contextmanager
 from contextvars import ContextVar
 import re as _re
+import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from app.api_grants import grants_for, intersect_skills, scope_groups
 from app.config import get_settings
 
 _tenant_ctx: ContextVar[str] = ContextVar("tenant_id", default="default")
@@ -138,7 +140,7 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
                 or payload.get("ep", 0) != user.session_epoch:
             return None
         return user.tenant_id, {"name": user.email, "role": user.role, "user_id": user.id,
-                                "unlimited": user.unlimited}  # Owner Root flag (§12.7)
+                                "unlimited": user.unlimited, "api_grants": user.api_grants}  # Owner Root flag (§12.7)
 
     # API-key channel (API-first design §7): opaque key, sha256 lookup
     key_hash = security.hash_api_key(token)
@@ -156,7 +158,7 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
         if row.owner_user_id:
             async with sf() as s:
                 owner = await s.get(User, row.owner_user_id)
-            if owner is None or not owner.active:
+            if owner is None or not owner.active or owner.tenant_id != row.tenant_id:
                 return None
         if (row.last_used_at is None
                 or (_dt.datetime.now(_dt.timezone.utc)
@@ -168,20 +170,71 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
                 if stale is not None and stale.active:
                     stale.last_used_at = _dt.datetime.now(_dt.timezone.utc)
                     await s.commit()
+        grants = grants_for(owner.role if owner else "operator", owner.api_grants if owner else None)
+        groups = scope_groups(row.scopes) & set(grants.groups)
+        if not grants.allow_create:
+            groups = set()
         return row.tenant_id, {
+            "groups": groups, "scopes": row.scopes, "key_name": row.name,
             "name": f"apikey:{row.name or row.id}", "role": owner.role if owner else "operator",
             "user_id": None, "api_key_id": row.id, "quota_mode": row.quota_mode,
             "key_type": "agent", "owner_user_id": row.owner_user_id,
             "owner_email": owner.email if owner else None,
-            "allowed_skill_codes": row.allowed_skill_codes,
+            "allowed_skill_codes": intersect_skills(row.allowed_skill_codes, grants.allowed_skill_codes),
         }
+
+    if (row.last_used_at is None or (_dt.datetime.now(_dt.timezone.utc)
+            - row.last_used_at.replace(tzinfo=_dt.timezone.utc)).total_seconds() >= _LAST_USED_THROTTLE):
+        async with sf() as s:
+            stale = await s.get(ApiKey, row.id)
+            if stale is not None and stale.active:
+                stale.last_used_at = _dt.datetime.now(_dt.timezone.utc)
+                await s.commit()
 
     # application keys act as operator: they process documents, they don't
     # manage users. Key identity rides along so the billing gate can charge an
     # allocated key's own budget instead of the tenant pool (§12.7 quota modes).
     return row.tenant_id, {"name": f"apikey:{row.name or row.id}", "role": "operator",
                            "user_id": None, "api_key_id": row.id,
-                           "quota_mode": row.quota_mode, "key_type": "application"}
+                           "quota_mode": row.quota_mode, "key_type": "application",
+                           "key_name": row.name, "owner_user_id": row.owner_user_id}
+
+
+# R3 (2026-09-22): key calls of these endpoints land in api_call_log
+_CALL_LOGGED = ("/api/v1/detect", "/api/v1/locate")
+
+
+def _agent_key_allows(actor: dict, method: str, path: str) -> bool:
+    """R2: a personal key reaches an endpoint group only if the key was issued
+    for it AND the owner's live grant still includes it (actor["groups"]).
+    "process" = the legacy 9.15 whitelist; its writes additionally need the
+    key's process:write scope. A viewer's key is let through so the route's
+    own role gate answers 403 role_required, as it did before R2."""
+    groups = actor["groups"]
+    if "process" in groups and _agent_allowed(method, path):
+        return (method != "POST" or actor["role"] == "viewer"
+                or "process:write" in actor["scopes"].split(","))
+    return method == "POST" and path in {f"/api/v1/{g}" for g in groups & {"detect", "locate"}}
+
+
+async def _log_api_call(request: Request, tenant: str, actor: dict, path: str,
+                        status_code: int, duration_ms: int) -> None:
+    """Metadata-only call record (D4: no file name, no content). Best effort:
+    a failed log write must never turn an answered /detect into a 500."""
+    import logging
+    from app.db import session_factory
+    from app.models import ApiCallLog
+    try:
+        async with session_factory()() as s:
+            s.add(ApiCallLog(tenant_id=tenant, api_key_id=actor["api_key_id"],
+                             key_name=actor.get("key_name") or "",
+                             owner_user_id=actor.get("owner_user_id"),
+                             endpoint=path, status_code=status_code, duration_ms=duration_ms,
+                             page_count=getattr(request.state, "page_count", None),
+                             size_bytes=getattr(request.state, "size_bytes", None)))
+            await s.commit()
+    except Exception:  # noqa: BLE001 — logging is advisory
+        logging.getLogger(__name__).exception("api_call_log write failed")
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -198,11 +251,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
             if resolved is None:
                 return _unauthorized("invalid or expired credential")
             tenant, actor = resolved
-            # 9.15 §3.7: agent keys are default-denied outside their whitelist
-            if actor.get("key_type") == "agent" \
-                    and not _agent_allowed(request.method, path):
-                return _forbidden("key_scope_denied",
-                                  "该 Key 为受限 Agent Key，不能调用此接口")
         else:
             # off mode / public path: M1 dev behavior, synthetic admin actor
             tenant = request.headers.get("X-Tenant-Id") or settings.default_tenant
@@ -210,8 +258,23 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         t_token = _tenant_ctx.set(tenant)
         a_token = _actor_ctx.set(actor)
+        started = time.monotonic()
+        status_code = 500
         try:
-            return await call_next(request)
+            # 9.15 §3.7: agent keys are default-denied outside their whitelist
+            if actor.get("key_type") == "agent" \
+                    and not _agent_key_allows(actor, request.method, path):
+                response = _forbidden("key_scope_denied",
+                                      "该 Key 为受限 Agent Key，不能调用此接口")
+            else:
+                response = await call_next(request)
+            status_code = response.status_code
+            return response
         finally:
-            _tenant_ctx.reset(t_token)
-            _actor_ctx.reset(a_token)
+            try:
+                if actor.get("api_key_id") and path in _CALL_LOGGED:
+                    await _log_api_call(request, tenant, actor, path, status_code,
+                                        int((time.monotonic() - started) * 1000))
+            finally:
+                _tenant_ctx.reset(t_token)
+                _actor_ctx.reset(a_token)

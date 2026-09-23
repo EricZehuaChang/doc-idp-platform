@@ -2,6 +2,8 @@
   <main class="page">
     <PageHeader title="主页" desc="平台运行一目了然：用量、吞吐与待办。" />
 
+    <TaskSourceSwitch />
+
     <!-- metric strip -->
     <div class="strip card-panel">
       <div class="metric"><span class="mlabel">剩余 Credits</span>
@@ -21,7 +23,7 @@
     <!-- call to action: the reviewer's next thing to do -->
     <div v-if="(stats?.pending_verification ?? 0) > 0" class="cta card-panel">
       <span>📋 有 <strong>{{ stats!.pending_verification }}</strong> 份文件等待人工校验</span>
-      <router-link to="/tasks?status=pending_verification">
+      <router-link :to="{ path: '/tasks', query: { status: 'pending_verification', source } }">
         <button class="primary">开始审单 →</button></router-link>
     </div>
 
@@ -34,7 +36,7 @@
           今日完成 {{ stats?.today_completed ?? 0 }}</span>
         <!-- filtering lives on the task workbench; make the way there
              obvious from the home slice (P09) -->
-        <router-link to="/tasks" class="more">🔍 筛选 / 全部任务 →</router-link>
+        <router-link :to="{ path: '/tasks', query: { source } }" class="more">🔍 筛选 / 全部任务 →</router-link>
       </div>
       <div class="table-scroll" v-if="rows.length">
         <table class="data-table">
@@ -76,6 +78,8 @@
 
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
+import TaskSourceSwitch from "../components/TaskSourceSwitch.vue";
+import { useRoute } from "vue-router";
 import { computed } from "vue";
 import { api } from "../api";
 import EmptyState from "../components/EmptyState.vue";
@@ -83,19 +87,20 @@ import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { STATUS_LABELS } from "../labels";
 
+const route = useRoute();
+const source = computed(() => route.query.source === "api" ? "api" : "manual");
 const { data: stats } = useQuery({
-  queryKey: ["home-stats"], queryFn: api.homeStats, refetchInterval: 10_000 });
+  queryKey: computed(() => ["home-stats", source.value]), queryFn: () => api.homeStats(source.value), refetchInterval: 10_000 });
 const { data: files, isLoading } = useQuery({
-  queryKey: ["files", 1, ""],
-  queryFn: () => api.files(1, {}),
+  queryKey: computed(() => ["files", "home", source.value]),
+  queryFn: () => api.files(1, { source: source.value }),
   refetchInterval: 8_000,
-  placeholderData: (prev) => prev,
 });
 const rows = computed(() => (files.value?.data ?? []).slice(0, 8));
 
 /** Tell the review page where 返回 should land (P10). */
 const reviewLink = (fileId: string) =>
-  ({ path: `/review/${fileId}`, query: { back: "/home" } });
+  ({ path: `/review/${fileId}`, query: { back: `/home?source=${source.value}` } });
 
 const fmt = (v: number | undefined) => v == null ? "—" : v.toLocaleString();
 const ts = (v: string | null) => v ? new Date(v).toLocaleString() : "-";

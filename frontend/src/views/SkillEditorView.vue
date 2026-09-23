@@ -123,6 +123,11 @@
                 <span class="dim">适用于页数较少、追求速度的文档，不支持复核；
                   单页上限 {{ fastMaxPages }} 页</span></button>
             </div>
+            <h3>提取通道</h3>
+            <div class="cards">
+              <button class="mode-card" :class="{ on: pkg.extraction_channel !== 'rules_first' }" @click="pkg.extraction_channel = 'model'"><strong>模型提取</strong><span>由模型提取全部字段</span></button>
+              <button class="mode-card" :class="{ on: pkg.extraction_channel === 'rules_first' }" @click="pkg.extraction_channel = 'rules_first'"><strong>规则优先</strong><span>先按字段规则提取，缺失字段由模型补充</span></button>
+            </div>
             <p v-if="pkg.processing_mode === 'fast'" class="dim adv-note" data-testid="fast-note">
               极速模式：结果不带定位与置信评分（显示「未评分」），不进入人工复核；
               校验器照常运行。已保存的复核与高级配置会保留，切回「均衡」后恢复。</p>
@@ -574,6 +579,7 @@
                           :class="{ on: pgActiveField === String(k) }"
                           @click="pgPickDocField(doc, String(k))">
                         <td class="pg-field-name">{{ k }}
+                          <span v-if="doc.field_sources?.[String(k)]" class="dim">{{ sourceLabel(doc.field_sources[String(k)]) }}</span>
                           <span v-if="doc.review_fields.includes(String(k))"
                                 class="badge-r">待复核</span></td>
                         <td>
@@ -740,6 +746,8 @@ import { RUN_STATUS_LABELS, STATUS_LABELS, VERSION_LABELS,
          initiatorLabel } from "../labels";
 import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";
+// R1: where a rules_first field value came from (rule / model / review)
+const sourceLabel = (s: string) => ({ rule: "规则", model: "模型", review: "待复核" }[s] ?? s);
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();

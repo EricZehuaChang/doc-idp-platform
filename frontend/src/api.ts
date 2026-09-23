@@ -1,3 +1,5 @@
+export interface ApiGrants { allow_create: boolean; groups: string[]; allowed_skill_codes: string[] | null }
+export interface ApiCallRow { id: string; key_id: string; key_name: string; endpoint: string; status_code: number; duration_ms: number; page_count: number | null; size_bytes: number | null; created_at: string }
 // API client. Auth-on: Bearer JWT from the session store, 401 kicks back to
 // /login. Auth-off (lite/dev): the M1 dev headers keep working unchanged.
 import { clearSession, session } from "./session";
@@ -103,6 +105,7 @@ export interface QueueItem {
 }
 
 export interface FieldCell {
+  $source?: string;
   $value: string; /** null = 极速模式未评分 */ $confidence: number | null;
   $bbox: number[]; $pages: number | string;
   inferred?: boolean; $reasoning?: string; $corrected?: boolean;
@@ -174,6 +177,7 @@ export interface TxnDocument {
   source_pages: number[]; page_range: string;
   extraction_status: string | null; error: string | null;
   data: Record<string, unknown> | unknown[] | null;
+  field_sources?: Record<string, string>;
   review_fields: string[];
   metrics: Record<string, number | string> | null;
   artifacts: Artifact[];
@@ -205,7 +209,13 @@ export interface FieldOutputFormat {
     | "DD/MM/YYYY" | "MM/DD/YYYY" | null;
   decimal_places: number | null;
 }
+export interface ExtractionRule {
+  kind: 'anchor' | 'regex' | 'table'; labels: string[]; pattern: string;
+  column_aliases: Record<string, string[]>; sheet_name: string | null;
+  stop_words: string[]; on_miss: 'model' | 'review';
+}
 export interface FieldSpec {
+  rule?: ExtractionRule | null;
   name: string; type: string; instruction: string; mode: string; required: boolean;
   anchor_hints: string[]; enum_values: string[]; columns: FieldSpec[];
   /** 9.15 R11: finite display format (dates/numbers) */
@@ -244,6 +254,7 @@ export interface SkillPackage {
   doc_type_hint: string;
   /** 9.15 DSL v2: absent on v1 rows until re-saved by the editor */
   schema_version?: number;
+  extraction_channel?: "model" | "rules_first";
   processing_mode?: "balanced" | "fast";
   skill_mode?: "standard" | "advanced";
   document_layout?: "single" | "mixed" | "same_type_independent" | "same_type_continuous";
@@ -297,6 +308,7 @@ export interface AuditPage { total: number; page: number; limit: number; data: A
  *  UI can sit each control on the column it narrows. Dates are inclusive
  *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none. */
 export interface FileFilters {
+  source?: "manual" | "api";
   status?: string; q?: string; skill_code?: string;
   /** 发起人 column filter: `user:<label>` / `api_key:<label>` / `unknown` /
    *  `anonymous` — the same values the /files/initiators options carry. */
@@ -600,7 +612,7 @@ export const api = {
     req<{ rows: Record<string, string>[] }>("GET", `/api/v1/cabinet/${skill}`),
   cabinetCsvUrl: (skill: string) => `/api/v1/cabinet/${skill}/export.csv`,
   stats: () => req<{ skills: SkillStat[] }>("GET", "/api/v1/stats/skills"),
-  homeStats: () => req<HomeStats>("GET", "/api/v1/stats/home"),
+  homeStats: (source?: string) => req<HomeStats>("GET", `/api/v1/stats/home${source ? `?source=${source}` : ""}`),
   usageStats: (days: number, skill_code?: string) =>
     req<{ by_day: { date: string; credits: number }[];
           by_skill: { skill_code: string; credits: number }[] }>(
@@ -615,8 +627,8 @@ export const api = {
   },
   /** 发起人 filter vocabulary for this tenant (2026-09-19): distinct initiator
    *  values with row counts, over the same population the ledger shows. */
-  initiators: () =>
-    req<{ initiators: InitiatorOption[] }>("GET", "/api/v1/files/initiators"),
+  initiators: (source?: string) =>
+    req<{ initiators: InitiatorOption[] }>("GET", `/api/v1/files/initiators${source ? `?source=${source}` : ""}`),
   /** Admin-only hard delete of one task (root file + its split children, the
    *  recognition result and every generated output). The server enforces the
    *  role; the UI only hides the button. */
@@ -720,14 +732,16 @@ export const api = {
     req("POST", "/api/v1/auth/users", { email, password, role }),
   invite: (email: string, role: string) =>
     req("POST", "/api/v1/auth/invite", { email, role }),
-  patchUser: (id: string, patch: { active?: boolean; role?: string }) =>
+  patchUser: (id: string, patch: { active?: boolean; role?: string; api_grants?: ApiGrants | null }) =>
     req("PATCH", `/api/v1/auth/users/${id}`, patch),
   // 2026-09-09: admin resets a user's password (SMTP-less); the account must
   // change it on next login and every older session dies with the reset
   resetUserPassword: (id: string, password: string) =>
     req("POST", `/api/v1/auth/users/${id}/reset-password`, { password }),
   // operation log: admin view over the append-only audit trail
-  auditLogs: (p: { q?: string; action?: string; page?: number; limit?: number }) =>
+  auditActors: () => req<{ actors: string[] }>("GET", "/api/v1/audit/actors"),
+  apiCalls: (p: Record<string, string>) => req<{ total: number; data: ApiCallRow[] }>("GET", `/api/v1/api-calls?${new URLSearchParams(Object.fromEntries(Object.entries(p).filter(([,v]) => v)))}`),
+  auditLogs: (p: { actor?: string; date_from?: string; date_to?: string; q?: string; action?: string; page?: number; limit?: number }) =>
     req<AuditPage>("GET",
       `/api/v1/audit/logs?${new URLSearchParams(
         Object.fromEntries(Object.entries(p).filter(([, v]) => v != null && v !== "")
@@ -795,18 +809,18 @@ export const api = {
       { name, key_type: keyType, allowed_skill_codes: allowedSkillCodes }),
   revokeApiKey: (id: string) => req("DELETE", `/api/v1/settings/api-keys/${id}`),
   // —— 9.15 WP2: personal agent keys (any logged-in user) ——
-  myKeys: () => req<{ keys: { id: string; name: string; key_type: string;
+  myKeys: () => req<{ grants: ApiGrants; keys: { id: string; name: string; key_type: string;
                               key_prefix: string; scopes: string[];
                               allowed_skill_codes: string[] | null;
                               created_at: string | null;
                               last_used_at: string | null }[] }>(
     "GET", "/api/v1/me/api-keys"),
-  createMyKey: (name: string, allowedSkillCodes: string[] | null = null) =>
+  createMyKey: (name: string, allowedSkillCodes: string[] | null = null, groups: string[] = ["process"]) =>
     req<{ id: string; name: string; key_prefix: string; scopes: string[];
           allowed_skill_codes: string[] | null; created_at: string | null;
           key: string }>(
       "POST", "/api/v1/me/api-keys",
-      { name, allowed_skill_codes: allowedSkillCodes }),
+      { name, allowed_skill_codes: allowedSkillCodes, groups }),
   revokeMyKey: (id: string) => req("DELETE", `/api/v1/me/api-keys/${id}`),
   oidcEnabled: () => req<{ enabled: boolean }>("GET", "/api/v1/auth/oidc/enabled"),
   getOidc: () => req<{ enabled: boolean; issuer?: string; client_id?: string;

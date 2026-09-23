@@ -36,6 +36,7 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(32), default="operator")  # RBAC minimal set (§11.10)
+    api_grants: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # local-login credential; NULL for SSO-only or not-yet-activated accounts (§11.9)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)  # disable takes effect on next request
@@ -358,7 +359,7 @@ class AuditLog(Base):
     __tablename__ = "audit_log"            # append-only; monthly partition on PG (§9.1)
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
-    actor: Mapped[str] = mapped_column(String(64), default="system")
+    actor: Mapped[str] = mapped_column(String(320), default="system")
     action: Mapped[str] = mapped_column(String(100))
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
@@ -376,3 +377,18 @@ class StudioSample(Base):
     file_name: Mapped[str] = mapped_column(String(500))    # display only
     storage_key: Mapped[str] = mapped_column(String(1000))  # content-hash key
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ApiCallLog(Base):
+    __tablename__ = "api_call_log"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    api_key_id: Mapped[str] = mapped_column(String(32), index=True)
+    key_name: Mapped[str] = mapped_column(String(100))
+    owner_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(40))
+    status_code: Mapped[int] = mapped_column(Integer)
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)

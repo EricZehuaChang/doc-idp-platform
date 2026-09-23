@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api.routes import (agent, audit, auth, billing, data, detect, hooks,
+from app.api.routes import (agent, api_calls, audit, auth, billing, data, detect, hooks,
                             locate, me, process, review,
                             settings as settings_routes, skills, studio)
 from app.auth import security
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     app.add_middleware(TenantMiddleware)
     app.include_router(auth.router)
     app.include_router(audit.router)
+    app.include_router(api_calls.router)
     app.include_router(settings_routes.router)
     app.include_router(process.router)
     app.include_router(locate.router)

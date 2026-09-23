@@ -73,6 +73,25 @@
         <span class="hint dim">关于此字段在文档中典型位置的可选提示</span>
       </label>
 
+      <!-- R1 (2026-09-22): deterministic rule for the rules_first channel -->
+      <fieldset v-if="!isColumn" class="rule-box"><legend>提取规则（规则优先通道使用）</legend>
+        <select :value="draft.rule?.kind ?? ''" @change="setRule(($event.target as HTMLSelectElement).value)" aria-label="提取规则类型">
+          <option value="">未配置</option><option v-if="draft.type !== 'table'" value="anchor">键值锚点</option><option v-if="draft.type !== 'table'" value="regex">正则</option><option v-if="draft.type === 'table'" value="table">表头匹配</option>
+        </select>
+        <template v-if="draft.rule">
+          <label v-if="draft.rule.kind !== 'table'">标签词（逗号分隔）<input :value="draft.rule.labels.join(',')" @input="draft.rule.labels = split(($event.target as HTMLInputElement).value)" /></label>
+          <button v-if="draft.rule.kind !== 'table'" class="ghost" @click="draft.rule.labels = [...draft.anchor_hints]">从位置提示带入</button>
+          <label v-if="draft.rule.kind === 'regex'">正则（恰好一个捕获组）<input v-model="draft.rule.pattern" placeholder="发票号[:：]\s*(\S+)" /></label>
+          <template v-if="draft.rule.kind === 'table'">
+            <label>工作表名（可选）<input v-model="draft.rule.sheet_name" /></label>
+            <label v-for="col in draft.columns" :key="col.name">{{ col.name }} 的表头别名<input :value="(draft.rule.column_aliases[col.name] ?? []).join(',')" :placeholder="col.name" @input="draft.rule.column_aliases[col.name] = split(($event.target as HTMLInputElement).value)" /></label>
+            <p v-if="!draft.columns.length" class="dim">保存表格并添加列后，可返回配置各列表头。</p>
+            <label>停止词<input :value="draft.rule.stop_words.join(',')" @input="draft.rule.stop_words = split(($event.target as HTMLInputElement).value)" /></label>
+          </template>
+          <label>规则没取到时<select v-model="draft.rule.on_miss"><option value="model">交给模型补</option><option value="review">留空进复核</option></select></label>
+        </template>
+      </fieldset>
+
       <label class="chk">
         <input type="checkbox" v-model="draft.required" /> 必填
       </label>
@@ -87,7 +106,7 @@
 
 <script setup lang="ts">
 import { computed, reactive } from "vue";
-import type { FieldSpec } from "../api";
+import type { FieldSpec, ExtractionRule } from "../api";
 
 const props = defineProps<{ field: FieldSpec; isNew: boolean; isColumn: boolean }>();
 const emit = defineEmits<{ (e: "save", field: FieldSpec): void; (e: "cancel"): void }>();
@@ -113,6 +132,9 @@ const decimalPlaces = computed<number | null>({
   },
 });
 
+function setRule(kind: string) {
+  draft.rule = kind ? { kind: kind as ExtractionRule['kind'], labels: [], pattern: '', column_aliases: {}, sheet_name: null, stop_words: ['合计', '总计', 'Total'], on_miss: 'model' } : null;
+}
 function save() {
   if (draft.type !== "table") draft.columns = [];
   if (draft.type !== "enum") draft.enum_values = [];
@@ -136,5 +158,10 @@ label input, label select, label textarea { font-weight: 400; }
 .hint { font-weight: 400; font-size: 12px; }
 .chk { flex-direction: row; align-items: center; gap: 8px; }
 .chk input { width: auto; }
+.rule-box { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.rule-box legend { font-size: 13px; font-weight: 600; padding: 0 6px; }
+.rule-box select { width: 100%; }
+.rule-box > button { align-self: flex-start; }
 footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 </style>

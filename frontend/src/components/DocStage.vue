@@ -26,7 +26,7 @@
       </p>
       <div v-if="loadErrorCode !== 'original_missing'" class="err-acts">
         <button class="primary" @click="retry">重试</button>
-        <button class="ghost" @click="downloadFile(src, fileName)">下载原件</button>
+        <button class="ghost" @click="downloadFile(saveUrl, fileName)">下载原件</button>
       </div>
     </div>
 
@@ -38,7 +38,7 @@
       <p class="err-msg">文档已下载但没有可显示的内容，可能是不支持的图像编码或空白页。</p>
       <div class="err-acts">
         <button class="primary" @click="retry">重试</button>
-        <button class="ghost" @click="downloadFile(src, fileName)">下载原件</button>
+        <button class="ghost" @click="downloadFile(saveUrl, fileName)">下载原件</button>
       </div>
     </div>
 
@@ -85,7 +85,7 @@
       <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
       <div v-else-if="!isPdf" class="no-preview dim">
         该格式暂不支持原件预览 ——
-        <a href="#" @click.prevent="downloadFile(src, fileName)">下载原件</a>
+        <a href="#" @click.prevent="downloadFile(saveUrl, fileName)">下载原件</a>
       </div>
 
       <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay.
@@ -187,6 +187,8 @@ const pageErrors = ref<Record<number, string>>({});
 // what to draw: Office originals render their converted PDF (previewSrc);
 // without it, the decision follows the file extension
 const renderSrc = computed(() => props.previewSrc || props.src);
+// R4: an explicit 下载原件 is audited server-side; viewing the same URL is not
+const saveUrl = computed(() => `${props.src}${props.src.includes("?") ? "&" : "?"}save=1`);
 const isImage = computed(() =>
   !props.previewSrc && /\.(png|jpe?g|bmp|webp)$/i.test(props.fileName));
 const isPdf = computed(() => !!props.previewSrc || /\.pdf$/i.test(props.fileName));

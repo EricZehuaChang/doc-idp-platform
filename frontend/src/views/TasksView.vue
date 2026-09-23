@@ -5,7 +5,13 @@
       <router-link to="/upload"><button class="primary">＋ 上传文档</button></router-link>
     </PageHeader>
 
-    <section class="card-panel block">
+    <TaskSourceSwitch />
+    <div v-if="source === 'api'" class="bar">
+      <button :class="{ primary: !showCalls }" @click="router.replace({ query: { ...route.query, api_tab: undefined } })">API 任务</button>
+      <button :class="{ primary: showCalls }" @click="router.replace({ query: { ...route.query, api_tab: 'calls' } })">接口调用</button>
+    </div>
+    <ApiCallHistory v-if="showCalls" />
+    <section v-else class="card-panel block">
       <!-- condition bar: keyword search + what is currently narrowing the list.
            Column conditions live on the headers; this row is where they show up
            once applied, so the table itself keeps a normal single header. -->
@@ -262,6 +268,8 @@
 </template>
 
 <script setup lang="ts">
+import TaskSourceSwitch from "../components/TaskSourceSwitch.vue";
+import ApiCallHistory from "../components/ApiCallHistory.vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -276,6 +284,8 @@ import { toast } from "../toast";
 
 const route = useRoute();
 const router = useRouter();
+const source = computed(() => route.query.source === "api" ? "api" : "manual");
+const showCalls = computed(() => source.value === "api" && route.query.api_tab === "calls");
 const qc = useQueryClient();
 const page = ref(Math.max(1, Number(route.query.page) || 1));
 /** Rows per page — the ledger endpoint is pinned to this in api.files(). */
@@ -286,7 +296,7 @@ const PAGE_SIZE = 20;
 const COLUMNS = [
   { key: "created", label: "时间", filter: true, keys: ["date_from", "date_to"] },
   { key: "skill", label: "技能", filter: true, keys: ["skill_code"] },
-  { key: "initiator", label: "发起人", filter: true, keys: ["initiator"] },
+  { key: "initiator", label: "发起人 / Key", filter: true, keys: ["initiator"] },
   { key: "file_name", label: "文件名", filter: true, keys: ["file_name"] },
   { key: "file_type", label: "类型", filter: true, keys: ["file_type"] },
   { key: "size", label: "大小", filter: false, keys: [] },
@@ -330,9 +340,11 @@ function applyNow() {
 }
 onUnmounted(() => clearTimeout(timer));
 
+watch(source, () => { page.value = 1; f.initiator = ""; });
 watch(applied, () => { page.value = 1; }, { deep: true });
 watch([page, applied], () => {
-  const q: Record<string, string> = {};
+  const q: Record<string, string> = { source: source.value };
+  if (showCalls.value) q.api_tab = "calls";
   for (const k of KEYS) if (f[k]) q[k] = applied.value[k];
   for (const k of Object.keys(q)) if (!q[k]) delete q[k];
   if (page.value > 1) q.page = String(page.value);
@@ -461,8 +473,8 @@ const typeOptions = computed(() => limits.value?.extensions ?? []);
 // 2026-09-19: 发起人筛选的候选清单（本人、其他用户、免登录、历史任务），
 // 带条数；与台账同一口径，选中任一项都不会是 0 条
 const { data: initiatorData, isLoading: initiatorLoading } = useQuery({
-  queryKey: ["initiators"],
-  queryFn: api.initiators,
+  queryKey: computed(() => ["initiators", source.value]),
+  queryFn: () => api.initiators(source.value),
 });
 const initiatorList = computed(() => initiatorData.value?.initiators ?? []);
 
@@ -470,17 +482,16 @@ const initiatorList = computed(() => initiatorData.value?.initiators ?? []);
  *  just changed without duplicating the filter plumbing. */
 function filesPage(p: number, cond: Record<FilterKey, string>) {
   return api.files(p, {
-    ...cond,
+    ...cond, source: source.value,
     pages_min: cond.pages_min ? Number(cond.pages_min) : undefined,
     pages_max: cond.pages_max ? Number(cond.pages_max) : undefined,
   });
 }
 
 const { data: files, isLoading } = useQuery({
-  queryKey: computed(() => ["files", page.value, applied.value]),
+  queryKey: computed(() => ["files", page.value, applied.value, source.value]),
   queryFn: () => filesPage(page.value, applied.value),
   refetchInterval: 8_000,
-  placeholderData: (prev) => prev,
 });
 const rows = computed<FileRow[]>(() => files.value?.data ?? []);
 const total = computed(() => files.value?.total ?? 0);
@@ -561,7 +572,7 @@ async function confirmDelete() {
     delTarget.value = null;
     // the current page may now be empty: re-read it and step back if so
     const left = (await qc.fetchQuery({
-      queryKey: ["files", page.value, applied.value],
+      queryKey: ["files", page.value, applied.value, source.value],
       queryFn: () => filesPage(page.value, applied.value),
     })).data.length;
     if (!left && page.value > 1) page.value -= 1;

@@ -22,7 +22,31 @@ class FieldOutputFormat(BaseModel):
     decimal_places: int | None = Field(default=None, ge=0, le=6)
 
 
+class ExtractionRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["anchor", "regex", "table"] = "anchor"
+    labels: list[str] = Field(default_factory=list, max_length=50)
+    pattern: str = Field(default="", max_length=1000)
+    column_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    sheet_name: str | None = Field(default=None, max_length=200)
+    stop_words: list[str] = Field(default_factory=lambda: ["合计", "总计", "Total"], max_length=50)
+    on_miss: Literal["model", "review"] = "model"
+
+    @model_validator(mode="after")
+    def check_pattern(self):
+        if self.kind == "regex":
+            import re
+            try:
+                pattern = re.compile(self.pattern)
+            except re.error as e:
+                raise ValueError(f"正则表达式无效: {e}") from e
+            if pattern.groups != 1:
+                raise ValueError("提取正则必须恰好包含一个捕获组")
+        return self
+
+
 class FieldSpec(BaseModel):
+    rule: ExtractionRule | None = None
     name: str
     type: str = "string"                 # string|number|date|enum|table
     instruction: str = ""                # natural-language extraction rule (user-authored)
@@ -118,6 +142,7 @@ class _SkillPackageCore(BaseModel):
     kind: str = "extract"                # extract|audit (§5.5, audit lands M3)
     doc_type_hint: str = ""
     # —— v2 execution shape ——
+    extraction_channel: Literal["model", "rules_first"] = "model"
     processing_mode: Literal["balanced", "fast"] = "balanced"
     skill_mode: Literal["standard", "advanced"] = "standard"
     document_layout: Literal["single", "mixed", "same_type_independent",

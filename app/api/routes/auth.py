@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
+from app.api_grants import ApiGrants
 from app.auth import security
 from app.billing import engine as billing
 from app.db import session_factory
@@ -43,6 +44,13 @@ async def login(body: LoginBody):
         ok = security.verify_password(body.password, ph) and user is not None \
             and user.password_hash is not None and user.email_verified
         if not ok:
+            # Unknown accounts belong to the configured default tenant, never
+            # the caller-controlled X-Tenant-Id on this public route.
+            from app.config import get_settings
+            s.add(AuditLog(tenant_id=user.tenant_id if user else get_settings().default_tenant,
+                           actor=str(body.email), action="auth.login_failed",
+                           detail={"reason": "invalid_credentials"}))
+            await s.commit()
             raise HTTPException(401, "invalid email or password")
         token = security.create_session_token(
             user_id=user.id, tenant_id=user.tenant_id, role=user.role,
@@ -105,12 +113,13 @@ async def list_users():
             .order_by(User.created_at))).scalars().all()
         return [{"id": u.id, "email": u.email, "role": u.role, "active": u.active,
                  "email_verified": u.email_verified,
-                 "auth_provider": u.auth_provider,
+                 "auth_provider": u.auth_provider, "api_grants": u.api_grants,
                  "pending": u.password_hash is None and u.auth_provider == "local",
                  "created_at": u.created_at.isoformat()} for u in rows]
 
 
 class UserPatch(BaseModel):
+    api_grants: ApiGrants | None = None
     active: bool | None = None
     role: str | None = None
 
@@ -130,6 +139,11 @@ async def patch_user(user_id: str, body: UserPatch):
             raise HTTPException(404, "user not found")
         if u.id == actor.get("user_id") and body.active is False:
             raise HTTPException(400, "不能停用自己的账号")
+        if "api_grants" in body.model_fields_set:
+            u.api_grants = body.api_grants.model_dump() if body.api_grants else None
+            s.add(AuditLog(tenant_id=u.tenant_id, actor=actor["name"],
+                           action="auth.api_grants_updated",
+                           detail={"user_id": u.id, "email": u.email, "api_grants": u.api_grants}))
         if body.active is not None:
             u.active = body.active
         if body.role is not None:

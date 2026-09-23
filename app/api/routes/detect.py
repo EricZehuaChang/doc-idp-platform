@@ -19,7 +19,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Request, File, Form, HTTPException, UploadFile
 
 from app.config import get_settings, load_detectors
 from app.detectors import (  # noqa: F401  register plugins
@@ -27,6 +27,8 @@ from app.detectors import (  # noqa: F401  register plugins
 from app.detectors import render
 from app.detectors.base import Detector, DetectorUnavailable
 from app.plugins.registry import registry
+
+from app.tenancy import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["detect"])
 
@@ -112,8 +114,8 @@ def _suppress_seal_echoes(regions):
     return out
 
 
-@router.post("/detect")
-async def detect_endpoint(file: UploadFile = File(...),
+@router.post("/detect", dependencies=[Depends(require_role("operator"))])
+async def detect_endpoint(request: Request, file: UploadFile = File(...),
                           kinds: str = Form("seal,signature"),
                           detector: str = Form("")):
     kind_set = _parse_kinds(kinds)
@@ -121,6 +123,7 @@ async def detect_endpoint(file: UploadFile = File(...),
     dets = [(name, _make_detector(name)) for name in det_names]
 
     blob = await file.read()
+    request.state.size_bytes = len(blob)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, f"file too large: {file.filename}")
     suffix = Path(file.filename or "").suffix.lower()
@@ -136,6 +139,7 @@ async def detect_endpoint(file: UploadFile = File(...),
             # thread offload: rasterize + inference are CPU-bound, same
             # discipline as /locate's parse offload
             pages, total_pages = await asyncio.to_thread(render.rasterize, str(path))
+            request.state.page_count = total_pages
         except DetectorUnavailable as e:
             raise HTTPException(422, f"检测不可用: {e}")
         regions = []
@@ -172,6 +176,7 @@ async def detect_endpoint(file: UploadFile = File(...),
     # examined — a silent partial scan would read as "no seal in the
     # document", which the redaction downstream cannot afford.
     misses = sorted(kind_set - {e["label"] for e in out})
+    request.state.page_count = total_pages
     return {"page_count": total_pages, "pages_scanned": len(pages),
             "truncated": len(pages) < total_pages, "detector": "+".join(det_names),
             "pages": [{"page": p.page_no, "width": p.width, "height": p.height}

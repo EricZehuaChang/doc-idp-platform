@@ -207,18 +207,57 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
     contract carries $confidence=None/$bbox=[]/$pages="" ("未评分", never a
     fabricated high score); rule failures still surface as $rule_failures."""
     chain = _provider_chain(pkg, provider_override)
-    raw, usage, providers_used = _raw_extract(
-        udr, pkg, chain, transport=transport, page_images=page_images,
-        single_call=fast)
+    rules_first = pkg.extraction_channel == "rules_first"
+    rule_values: dict = {}
+    review_misses: set[str] = set()
+    model_pkg = pkg
+    if rules_first:
+        from app.extraction.rules import extract_rules
+        from app.extraction.validators import _to_number
+        rule_values = extract_rules(udr, pkg.fields)
+        failures = run_validators(rule_values, pkg.validators)
+        for field in pkg.fields:
+            value = rule_values.get(field.name)
+            if field.name in failures or (value is not None and (
+                    (field.type == "number" and _to_number(value) is None)
+                    or (field.type == "enum" and field.enum_values and value not in field.enum_values)
+                    or formatting.format_value(field, str(value))[1] is not None)):
+                rule_values.pop(field.name, None)
+        # With no parser text (fast vision), every field retains the existing
+        # model path regardless of a textual rule's on_miss choice.
+        has_text = bool((udr.full_markdown or udr.full_text()).strip())
+        review_misses = {f.name for f in pkg.fields if has_text and f.rule
+                         and f.rule.on_miss == "review" and f.mode != "inferred"
+                         and f.name not in rule_values}
+        model_fields = [f for f in pkg.fields if f.name not in rule_values and f.name not in review_misses]
+        model_pkg = pkg.model_copy(update={"fields": model_fields,
+            "few_shot": [sample.model_copy(update={"expected_output": {
+                k: v for k, v in sample.expected_output.items() if k in {f.name for f in model_fields}}})
+                for sample in pkg.few_shot]})
+    if model_pkg.fields:
+        raw, usage, providers_used = _raw_extract(
+            udr, model_pkg, chain, transport=transport, page_images=page_images,
+            single_call=fast)
+        if rules_first:
+            raw = {f.name: raw.get(f.name) for f in model_pkg.fields}
+    else:
+        raw, usage, providers_used = {}, {"prompt_tokens": 0, "completion_tokens": 0}, []
+    raw = {**raw, **rule_values}
+    model_names = {f.name for f in model_pkg.fields}
+    if rules_first:
+        usage.update(rule_fields=len(rule_values), model_fields=len(model_names),
+                     model_called=bool(model_names), review_misses=sorted(review_misses),
+                     field_sources={f.name: ("rule" if f.name in rule_values else
+                         "model" if f.name in model_names else "review") for f in pkg.fields})
 
     # challenger pass (skipped for dry-run overrides: they compare providers
     # explicitly). Best-effort: an unavailable challenger never fails the file.
     challenger_raw: dict | None = None
     challenger = None if fast else pkg.model_binding.challenger
-    if challenger and not provider_override and challenger not in providers_used:
+    if model_pkg.fields and challenger and not provider_override and challenger not in providers_used:
         try:
             challenger_raw, ch_usage, _ = _raw_extract(
-                udr, pkg, [challenger], transport=transport)
+                udr, model_pkg, [challenger], transport=transport)
             usage["challenger_used"] = challenger
             usage["challenger_prompt_tokens"] = int(ch_usage.get("prompt_tokens") or 0)
             usage["challenger_completion_tokens"] = int(ch_usage.get("completion_tokens") or 0)
@@ -281,7 +320,7 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         }
         # model channel (§5.3): challenger disagreement caps confidence at 1
         # (below any sane threshold) and records the second opinion
-        if challenger_raw is not None:
+        if challenger_raw is not None and f.name in model_names:
             ch_val = challenger_raw.get(f.name)
             if f.mode == "inferred" and isinstance(ch_val, dict):
                 ch_val = ch_val.get("value")
@@ -319,4 +358,16 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         needs_review = False
     else:
         needs_review = lowest < policy.confidence_threshold
+    if rules_first:
+        for name, value in result.items():
+            source = usage["field_sources"][name]
+            if isinstance(value, dict):
+                value["$source"] = source
+            elif isinstance(value, list):
+                for row in value:
+                    if isinstance(row, dict):
+                        for column in next(f.columns for f in pkg.fields if f.name == name):
+                            row.setdefault("$cells", {}).setdefault(column.name, {})["$source"] = source
+        if review_misses:
+            needs_review = True
     return result, usage, needs_review

@@ -24,6 +24,8 @@ from app.tasks import runner
 from app.skillengine import studio
 from app.tenancy import current_actor, current_tenant, require_role
 
+from app.visibility import require_file, visible_file_cond
+
 router = APIRouter(prefix="/api/v1/studio", tags=["studio"])
 
 _MAX_SIZE = 50 * 1024 * 1024
@@ -470,7 +472,7 @@ async def list_runs(skill_code: str | None = None, sample_id: str | None = None)
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
-        q = (select(StudioRun).where(StudioRun.tenant_id == tenant)
+        q = (select(StudioRun).where(StudioRun.tenant_id == tenant, StudioRun.file_id.in_(select(FileRecord.id).where(visible_file_cond())))
              .order_by(StudioRun.created_at.desc()).limit(200))
         if skill_code:
             q = q.where(StudioRun.skill_code == skill_code)
@@ -492,6 +494,7 @@ async def run_detail(run_id: str):
         if r is None or r.tenant_id != tenant:
             raise HTTPException(404, detail={"code": "run_not_found",
                                              "message": "运行记录不存在"})
+        await require_file(s, r.file_id)
         txn = await s.get(Transaction, r.transaction_id)
         grouped = await _rows_for_runs(s, [r])
         out = _run_view(r, _derive_run(r, grouped.get(r.id, [])))
@@ -563,14 +566,15 @@ async def naming_preview(payload: dict):
         async with sf() as s:
             run = (await s.execute(
                 select(StudioRun)
-                .where(StudioRun.tenant_id == current_tenant(),
+                .where(StudioRun.file_id.in_(select(FileRecord.id).where(visible_file_cond())),
+                       StudioRun.tenant_id == current_tenant(),
                        StudioRun.sample_id == str(sample_id),
                        StudioRun.transaction_id.is_not(None))
                 .order_by(StudioRun.created_at.desc()))).scalars().first()
             if run is not None:
                 f = (await s.execute(
                     select(FileRecord)
-                    .where(FileRecord.transaction_id == run.transaction_id)
+                    .where(FileRecord.id == run.file_id, visible_file_cond())
                     .order_by(FileRecord.created_at, FileRecord.id))
                 ).scalars().first()
                 children = (await s.execute(

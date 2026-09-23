@@ -12,11 +12,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
+from app.audit import human_event
 from app.api.http_headers import content_disposition
 from app.db import session_factory
-from app.models import FileArtifact, FileRecord, Transaction
+from app.models import FileArtifact, FileRecord
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant
+
+from app.visibility import require_file, require_txn, visible_file_cond
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 
@@ -41,25 +44,14 @@ async def _list_for(s, file_ids: list[str], tenant: str) -> list[FileArtifact]:
         .order_by(FileArtifact.created_at, FileArtifact.id))).scalars().all())
 
 
-def _guard_agent(txn: Transaction | None) -> None:
-    """Agent keys: production txns only, and only ones they created (§3.6)."""
-    actor = current_actor()
-    if actor.get("key_type") != "agent":
-        return
-    if txn is None or txn.purpose == "test" or txn.initiator_id != actor.get("name"):
-        raise HTTPException(404, "artifact not found")
-
-
 @router.get("/files/{file_id}/artifacts")
 async def file_artifacts(file_id: str):
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
-        f = await s.get(FileRecord, file_id)
+        f = await require_file(s, file_id)
         if f is None or f.tenant_id != tenant:
             raise HTTPException(404, "file not found")
-        txn = await s.get(Transaction, f.transaction_id)
-        _guard_agent(txn)
         rows = await _list_for(s, [file_id], tenant)
     return {"artifacts": [_view(a) for a in rows]}
 
@@ -69,14 +61,14 @@ async def txn_artifacts(txn_id: str):
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
-        txn = await s.get(Transaction, txn_id)
+        txn = await require_txn(s, txn_id)
         if txn is None or txn.tenant_id != tenant:
             raise HTTPException(404, "transaction not found")
         if txn.purpose == "test" and current_actor().get("key_type") == "agent":
             raise HTTPException(404, "transaction not found")
         files = (await s.execute(
             select(FileRecord.id)
-            .where(FileRecord.transaction_id == txn_id))).scalars().all()
+            .where(FileRecord.transaction_id == txn_id, visible_file_cond()))).scalars().all()
         rows = await _list_for(s, list(files), tenant)
     return {"artifacts": [_view(a) for a in rows]}
 
@@ -89,15 +81,15 @@ async def download(artifact_id: str):
         a = await s.get(FileArtifact, artifact_id)
         if a is None or a.tenant_id != tenant:
             raise HTTPException(404, "artifact not found")
-        f = await s.get(FileRecord, a.file_id)
-        txn = await s.get(Transaction, f.transaction_id) if f else None
-        _guard_agent(txn)
+        await require_file(s, a.file_id)
         if a.status == "pending":
             raise HTTPException(409, detail={"code": "artifact_not_ready",
                                              "message": "产出文件尚未就绪"})
         if a.status != "ready" or not a.storage_key:
             raise HTTPException(404, "artifact not available")
         key, name = a.storage_key, a.display_name
+        human_event(s, "artifacts.downloaded", {"artifact_id": a.id, "file_id": a.file_id})
+        await s.commit()
 
     st = get_storage()
 

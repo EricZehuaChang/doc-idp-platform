@@ -230,7 +230,7 @@ watch(usableSkills, (list) => {
 });
 
 // credits are shown for context only; the real gate is the server's 402
-const { data: home } = useQuery({ queryKey: ["home-stats"], queryFn: api.homeStats });
+const { data: home } = useQuery({ queryKey: ["home-stats"], queryFn: () => api.homeStats() });
 const credits = computed(() => home.value?.remaining_credits ?? null);
 
 // —— selection ——

@@ -18,11 +18,13 @@ import json
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Request, File, Form, HTTPException, UploadFile
 
 from app.extraction.confidence import locate_terms
 from app.parsers.base import ParserUnavailable
 from app.parsers.router import parse_document
+
+from app.tenancy import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["locate"])
 
@@ -65,10 +67,11 @@ def _parse_terms(raw: str) -> list[str]:
     return out
 
 
-@router.post("/locate")
-async def locate_endpoint(file: UploadFile = File(...), terms: str = Form(...)):
+@router.post("/locate", dependencies=[Depends(require_role("operator"))])
+async def locate_endpoint(request: Request, file: UploadFile = File(...), terms: str = Form(...)):
     term_list = _parse_terms(terms)
     blob = await file.read()
+    request.state.size_bytes = len(blob)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, f"file too large: {file.filename}")
     suffix = Path(file.filename or "").suffix.lower()
@@ -127,5 +130,6 @@ async def locate_endpoint(file: UploadFile = File(...), terms: str = Form(...)):
     hits.sort(key=lambda e: (e["page"],
                              e["y"] if e["y"] is not None else -1.0,
                              e["x"] if e["x"] is not None else -1.0))
+    request.state.page_count = len(udr.pages)
     return {"page_count": len(udr.pages), "parser": udr.parser,
             "hits": hits, "misses": misses}

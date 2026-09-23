@@ -103,6 +103,7 @@
              @click="focusField(f)">
           <div class="field-head">
             <span class="fname">{{ f.name }}</span>
+            <span v-if="f.cell.$source" class="dim">{{ ({rule: "规则", model: "模型", review: "待复核"} as Record<string, string>)[f.cell.$source] }}</span>
             <span v-if="f.cell.inferred" class="badge-inferred">参考结果</span>
             <span v-if="f.cell.$confidence !== null && f.cell.$confidence < 2" class="badge-r">R</span>
             <span v-if="pendingBoxes[f.name]" class="badge-box" title="已重画定位框，待保存">▣</span>

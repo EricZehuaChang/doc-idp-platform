@@ -440,7 +440,7 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
     _x0 = datetime.now(timezone.utc)
     result, usage, needs_review = await asyncio.to_thread(
         extract, udr, pkg, page_images=page_images, fast=fast)
-    if fast:
+    if fast and not usage.get("review_misses"):
         # 极速模式 executes as standard: no review, no scoring (§WP5)
         needs_review = False
 
@@ -465,6 +465,11 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         metrics.update(extract_ms=extract_ms,
                        pages=f.page_count,
                        provider_used=str(usage.get("provider_used") or ""))
+        for key in ("rule_fields", "model_fields", "model_called"):
+            if key in usage:
+                metrics[key] = usage[key]
+        if "field_sources" in usage:
+            meta["field_sources"] = usage["field_sources"]
         if classify_ms is not None:
             metrics["classify_ms"] = classify_ms
         # queue/parse already landed in parse_stage
