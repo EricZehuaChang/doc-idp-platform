@@ -40,6 +40,16 @@ async def env(tmp_path, monkeypatch):
                             storage_path=storage, status='pending_verification', page_count=1, assignee=users['a']['email']))
             s.add(StudioRun(id='runb', tenant_id='default', transaction_id='tb', file_id='b',
                             skill_code='test', skill_version=1, sample_id='sample', package_hash='h', created_by=users['b']['email']))
+            # A Playground run made through the application key (skill-building integration)
+            s.add(Transaction(id='tapptest', tenant_id='default', skill_code='test', skill_version=1,
+                status='completed', purpose='test', api_key_id='app', initiator_type='user',
+                initiator_label='apikey:same-name'))
+            await s.flush()
+            s.add(FileRecord(id='apptest', tenant_id='default', transaction_id='tapptest', file_name='s.pdf',
+                             storage_path=storage, status='completed', page_count=1))
+            await s.flush()
+            s.add(StudioRun(id='runapp', tenant_id='default', transaction_id='tapptest', file_id='apptest',
+                            skill_code='test', skill_version=1, sample_id='sample2', package_hash='h', created_by='apikey:same-name'))
             await s.commit()
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as c:
             yield c, headers, users
@@ -78,6 +88,11 @@ async def test_visibility_matrix(env):
         assert {f['file_id'] for f in r.json()['files']} == {'assigned'}
     assert (await c.get('/api/v1/studio/runs/runb', headers=headers['a'])).status_code == 404
     assert (await c.get('/api/v1/studio/runs', headers=headers['a'])).json()['runs'] == []
+    # An application key keeps reading its own Playground runs; users do not see them
+    assert (await c.get('/api/v1/studio/runs/runapp', headers=headers['app'])).status_code == 200
+    assert [r['run_id'] for r in (await c.get('/api/v1/studio/runs', headers=headers['app'])).json()['runs']] == ['runapp']
+    assert (await c.get('/api/v1/studio/runs/runapp', headers=headers['a'])).status_code == 404
+    assert (await c.get('/api/v1/transactions/tapptest/documents', headers=headers['ka'])).status_code == 404
 
 
 async def test_role_write_gates(env):

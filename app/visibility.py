@@ -19,8 +19,12 @@ def task_scope(actor: dict) -> str:
 
 def _owner_cond(actor: dict):
     if actor.get("api_key_id"):
-        return and_(Transaction.api_key_id == actor["api_key_id"],
-                    Transaction.purpose != "test")
+        own = Transaction.api_key_id == actor["api_key_id"]
+        # §3.9: Playground runs are hidden from agent keys only; an application
+        # key (e.g. a skill-building integration) must still read its own runs
+        if actor.get("key_type") == "agent":
+            return and_(own, Transaction.purpose != "test")
+        return own
     if task_scope(actor) == "all":
         return Transaction.tenant_id == current_tenant()
     uid = actor.get("user_id")

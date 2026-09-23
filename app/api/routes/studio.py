@@ -427,7 +427,9 @@ async def create_run(payload: RunRequest,
                           skill_version=ver.version, purpose="test",
                           initiator_type="user", initiator_id=actor["name"],
                           initiator_label=actor["name"],
-                          initiator_user_id=actor.get("user_id"))
+                          initiator_user_id=actor.get("user_id"),
+                          # R5: a key's own Playground runs stay visible to it
+                          api_key_id=actor.get("api_key_id"))
         s.add(txn)
         await s.flush()
         try:
