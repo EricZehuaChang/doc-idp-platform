@@ -164,18 +164,18 @@
             <div class="cards" :class="{ disabled: pkg.processing_mode === 'fast' }">
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.skill_mode !== 'advanced' }"
-                      @click="pkg.skill_mode = 'standard'">
+                      @click="setSkillMode('standard')">
                 <strong>标准</strong>
                 <span class="dim">一份文档、一组字段，适合大多数单据</span></button>
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.skill_mode === 'advanced' }"
-                      @click="pkg.skill_mode = 'advanced'">
+                      data-testid="mode-advanced"
+                      @click="setSkillMode('advanced')">
                 <strong>高级</strong>
                 <span class="dim">一份文件多种单据，先分类再提取</span></button>
             </div>
             <p v-if="pkg.skill_mode === 'advanced'" class="dim adv-note">
-              「文档分类」步骤（类别、识别说明、引用已有技能）随高级提取批次开放；
-              当前保存会保留技能模式标记，发布前需要完成分类配置。</p>
+              高级模式：在「文档分类」设置文件构成、类别与分类模型；在「字段提取」按类别配置字段。</p>
 
             <details class="adv-settings">
               <summary>高级设置（抽取模型、备用模型、挑战者模型、解析器）</summary>
@@ -191,7 +191,10 @@
                 <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
                   <input v-model="pkg.model_binding.extractor" list="dl-providers"
                          placeholder="下拉选择或直接输入，如 qwen"
-                         @focus="comboOpen" @input="comboTyped" @blur="comboClose" /></label>
+                         @focus="comboOpen" @input="comboTyped" @blur="comboClose" />
+                  <span v-if="pkg.skill_mode === 'advanced'" class="hint dim">
+                    高级模式：「本技能内配置字段」的类别用此模型；分类未单独设置时也用它；
+                    引用的已有技能用它自己的模型。</span></label>
                 <label>备用模型（fallback）
                   <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
                          placeholder="可空；下拉选择或直接输入"
@@ -211,13 +214,30 @@
             </details>
           </section>
 
-          <!-- —— 文档分类（高级模式，图06–11） —— -->
+          <!-- —— 文档分类（高级模式，图05–11）: 文件构成 + 类别 + 分类模型。
+               每个类别怎么提取（字段 / 引用技能 / 仅分类）在「字段提取」里按类别
+               配置（2026-09-23 F-02）—— -->
           <section v-show="step === 'classify'" class="card-panel block step-panel">
             <h3 class="block-title">文档分类</h3>
             <p class="dim cat-intro">
-              一份文件包含多种/多份单据时，先分类再提取。每个类别选择提取方式：
-              在本技能内配置字段、复用已有技能、或只分类不提取。</p>
+              一份文件包含多种/多份单据时，先分类再提取。这里设置文件怎么拆、有哪些类别、
+              怎么识别；每个类别提取哪些字段，在下一步「字段提取」里按类别配置。</p>
 
+            <!-- B-01 (R07 图05): the layout decides whether a file is split at all -->
+            <h4 class="sub-title">文件构成</h4>
+            <div class="cards layout-cards">
+              <button v-for="l in LAYOUTS" :key="l.value" class="mode-card"
+                      :class="{ on: docLayout === l.value }"
+                      :data-testid="`layout-${l.value}`"
+                      @click="pkg.document_layout = l.value">
+                <strong>{{ l.label }}</strong>
+                <span class="dim">{{ l.desc }}</span></button>
+            </div>
+            <p v-if="docLayout === 'single'" class="dim adv-note"
+               data-testid="layout-single-note">
+              整个文件按一份文档判断类别，不会拆分。文件里有多份单据时，请选「多种单据混合」。</p>
+
+            <h4 class="sub-title">类别</h4>
             <div class="cat-list">
               <div v-for="(c, ci) in editableCats" :key="c.id" class="cat-card"
                    :class="{ other: c.is_other }">
@@ -238,80 +258,25 @@
                 <label class="cat-rec">识别说明（模型按这段话判断页面归属）
                   <textarea v-model="c.recognition_instruction" rows="2"
                             placeholder="例如：有「发票号码」「开票日期」和价税合计"></textarea></label>
-                <div class="cat-handler">
-                  <span class="dim">提取方式</span>
-                  <button class="hseg" :class="{ on: c.handler === 'inline' }"
-                          @click="setHandler(c, 'inline')">本技能内配置字段</button>
-                  <button class="hseg" :class="{ on: c.handler === 'existing_skill' }"
-                          @click="setHandler(c, 'existing_skill')">使用已有技能</button>
-                  <button class="hseg" :class="{ on: c.handler === 'classify_only' }"
-                          @click="setHandler(c, 'classify_only')">仅分类，不提取</button>
+                <div class="cat-extract">
+                  <span class="dim">提取：{{ catSummary(c) }}</span>
+                  <button class="mini" :data-testid="`cat-goto-${c.id}`"
+                          @click="gotoCategoryFields(c)">配置字段 →</button>
                 </div>
-
-                <!-- inline: fields edited with the same machinery as the top level -->
-                <div v-if="c.handler === 'inline'" class="cat-fields">
-                  <div class="seg-row">
-                    <span class="dim">输出结构</span>
-                    <button class="hseg" :class="{ on: c.output_shape !== 'list' }"
-                            @click="c.output_shape = 'object'">Object</button>
-                    <button class="hseg" :class="{ on: c.output_shape === 'list' }"
-                            @click="c.output_shape = 'list'">List</button>
-                  </div>
-                  <p v-if="!c.fields.length" class="dim">该类别还没有字段。</p>
-                  <div class="field-tree">
-                    <FieldCard v-for="(f, fi) in c.fields" :key="f.name || fi"
-                               :field="f" :index="fi"
-                               :drag-from="reorder.from.value ?? -1"
-                               :drag-over="reorder.over.value ?? -1"
-                               @edit="openEdit(c.fields, fi)"
-                               @remove="c.fields.splice(fi, 1)"
-                               @edit-column="(x) => openEdit(f.columns, x, true)"
-                               @add-column="openAdd(f.columns, true)"
-                               @grip-down="startFieldDrag" />
-                    <button class="add-field" @click="openAdd(c.fields)">＋ 添加字段</button>
-                  </div>
-                </div>
-
-                <!-- existing_skill: R10 reference (图16) -->
-                <div v-else-if="c.handler === 'existing_skill'" class="cat-ref">
-                  <div class="ref-row">
-                    <select :value="c.skill_ref?.skill_code ?? ''"
-                            @change="setRefSkill(c, ($event.target as HTMLSelectElement).value)">
-                      <option value="">选择要复用的技能…</option>
-                      <option v-for="r in refSkills" :key="r.skill_code"
-                              :value="r.skill_code">{{ r.name }}（{{ r.skill_code }}）</option>
-                    </select>
-                    <select v-if="c.skill_ref?.skill_code"
-                            :value="c.skill_ref?.version ?? ''"
-                            @change="setRefVersion(c, ($event.target as HTMLSelectElement).value)">
-                      <option value="">跟随最新发布版{{ refVersionHint(c) }}</option>
-                      <option v-for="v in refVersions(c)" :key="v" :value="v">v{{ v }}</option>
-                    </select>
-                  </div>
-                  <div v-if="c.skill_ref?.skill_code" class="ref-banner">
-                    <span class="dim">
-                      已关联技能：{{ refName(c) }}（{{ c.skill_ref.skill_code }}）。本类别复用已有技能，
-                      字段在此只读；如需修改，请打开原技能编辑器。</span>
-                    <a class="btn-like" :href="`/#/skills/${c.skill_ref.skill_code}`"
-                       target="_blank">打开技能编辑器</a>
-                  </div>
-                  <ul v-if="refFields(c).length" class="ref-fields">
-                    <li v-for="f in refFields(c)" :key="f.name">
-                      <code>{{ f.name }}</code><span class="dim">{{ f.type }}</span>
-                      <span class="ex dim" :title="f.instruction">{{ f.instruction }}</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <p v-else-if="c.handler === 'classify_only'" class="dim">
-                  该类别只输出所属文档类型（doc_type），不抽取字段；审单时可直接通过。</p>
-
-                <label v-if="!c.is_other" class="cat-rules">类别附加规则（可选）
-                  <textarea v-model="c.additional_rules" rows="1"
-                            placeholder="只作用于该类别的补充说明"></textarea></label>
               </div>
             </div>
             <button class="add-cat" @click="addCategory">＋ 添加类别</button>
+
+            <!-- F-01: the classification step names its model and what it inherits -->
+            <h4 class="sub-title">分类模型</h4>
+            <label class="cls-model">
+              <input :value="pkg.model_binding.classifier ?? ''" list="dl-providers"
+                     placeholder="空 = 与抽取模型相同；下拉选择或直接输入"
+                     data-testid="classifier-model"
+                     @focus="comboOpen" @blur="comboClose"
+                     @input="comboTyped($event); pkg.model_binding.classifier = ($event.target as HTMLInputElement).value || null" />
+              <span class="hint dim" data-testid="classifier-effective">
+                实际使用：{{ classifierEffective }}</span></label>
 
             <details class="rules-fold">
               <summary>分类附加规则（可选，作用于整个分类步骤）</summary>
@@ -320,81 +285,152 @@
             </details>
           </section>
 
-          <!-- —— 字段提取 —— -->
+          <!-- —— 字段提取 ——
+               standard: one field list. advanced (2026-09-23 F-02): one tab per
+               category defined in 「文档分类」, each with its own extraction —
+               fields of this skill, a referenced skill (read-only, with source,
+               jump link and impact), or classification only. -->
           <section v-show="step === 'fields'" class="card-panel block step-panel fields-step">
             <SamplePanel :skill-code="isNew ? undefined : code"
                          class="sample-col" />
             <div class="fields-col">
-              <div class="block-head">
-                <h3 class="block-title">字段配置</h3>
-                <div class="seg" role="group" aria-label="输出结构">
-                  <button :class="{ on: pkg.output_shape !== 'list' }"
-                          title="每个字段一个键（默认）"
-                          @click="pkg.output_shape = 'object'">Object</button>
-                  <button :class="{ on: pkg.output_shape === 'list' }"
-                          title="结果为对象数组，每行一组字段（如逐行明细）"
-                          @click="pkg.output_shape = 'list'">List</button>
+              <template v-if="activeCat">
+                <nav class="cat-tabs" aria-label="按类别配置字段">
+                  <button v-for="c in editableCats" :key="c.id" class="cat-tab"
+                          :class="{ on: activeCat.id === c.id }"
+                          :data-testid="`cat-tab-${c.id}`"
+                          @click="activeCatId = c.id">
+                    {{ catName(c) }} <span class="dim">{{ catBadge(c) }}</span></button>
+                </nav>
+                <div class="cat-handler">
+                  <span class="dim">提取方式</span>
+                  <button class="hseg" :class="{ on: activeCat.handler === 'inline' }"
+                          @click="setHandler(activeCat, 'inline')">本技能内配置字段</button>
+                  <button class="hseg" :class="{ on: activeCat.handler === 'existing_skill' }"
+                          @click="setHandler(activeCat, 'existing_skill')">使用已有技能</button>
+                  <button class="hseg" :class="{ on: activeCat.handler === 'classify_only' }"
+                          @click="setHandler(activeCat, 'classify_only')">仅分类，不提取</button>
                 </div>
-                <button class="mini" :disabled="!undoStack.length"
-                        title="撤销上一次自动生成/起草的结果"
-                        @click="undoGenerate">↩ 撤销上次生成</button>
-                <button class="mini primary" @click="genModal = true">✨ 自动生成字段</button>
-                <details class="more-draft">
-                  <summary class="mini btn-like">更多起草方式 ▾</summary>
-                  <div class="more-pop" ref="morePopEl">
-                    <label class="file-btn slim">
-                      <input type="file" hidden @change="probe" :disabled="probing" />
-                      <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
-                    </label>
-                    <!-- #18: picking an item closes the popover (it used to stay
-                         open and cover the panel it had just revealed) -->
-                    <button class="mini" :class="{ primary: textPanel }"
-                            @click="openTextPanel">📝 描述生成</button>
-                    <label class="file-btn slim">
-                      <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
-                      <span class="btn-like">📊 表格导入</span>
-                    </label>
-                    <button class="mini" :disabled="!pkg.fields.length || enriching"
-                            title="把字段说明扩写为完整抽取指令"
-                            @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
+                <!-- F-01: the model / channel that actually runs for this category -->
+                <p class="dim eff-line" data-testid="cat-effective">{{ catEffective(activeCat) }}</p>
+              </template>
+
+              <template v-if="!activeCat || activeCat.handler === 'inline'">
+                <div class="block-head">
+                  <h3 class="block-title">{{ activeCat ? `「${catName(activeCat)}」的字段` : "字段配置" }}</h3>
+                  <div class="seg" role="group" aria-label="输出结构">
+                    <button :class="{ on: fieldShape !== 'list' }"
+                            title="每个字段一个键（默认）"
+                            @click="fieldShape = 'object'">Object</button>
+                    <button :class="{ on: fieldShape === 'list' }"
+                            title="结果为对象数组，每行一组字段（如逐行明细）"
+                            @click="fieldShape = 'list'">List</button>
                   </div>
-                </details>
-                <button v-if="pkg.fields.length" class="mini danger"
-                        @click="clearFields">清空全部字段</button>
-              </div>
-
-              <div v-if="textPanel" class="text-panel">
-                <textarea v-model="draftText" rows="4"
-                          placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）…"></textarea>
-                <div class="text-panel-act">
-                  <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
-                  <button class="primary" :disabled="drafting || !draftText.trim()"
-                          @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
+                  <button class="mini" :disabled="!undoStack.length"
+                          title="撤销上一次自动生成/起草的结果"
+                          @click="undoGenerate">↩ 撤销上次生成</button>
+                  <button class="mini primary" @click="genModal = true">✨ 自动生成字段</button>
+                  <details class="more-draft">
+                    <summary class="mini btn-like">更多起草方式 ▾</summary>
+                    <div class="more-pop" ref="morePopEl">
+                      <label class="file-btn slim">
+                        <input type="file" hidden @change="probe" :disabled="probing" />
+                        <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
+                      </label>
+                      <!-- #18: picking an item closes the popover (it used to stay
+                           open and cover the panel it had just revealed) -->
+                      <button class="mini" :class="{ primary: textPanel }"
+                              @click="openTextPanel">📝 描述生成</button>
+                      <label class="file-btn slim">
+                        <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
+                        <span class="btn-like">📊 表格导入</span>
+                      </label>
+                      <button class="mini" :disabled="!curFields.length || enriching"
+                              title="把字段说明扩写为完整抽取指令"
+                              @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
+                    </div>
+                  </details>
+                  <button v-if="curFields.length" class="mini danger"
+                          @click="clearFields">清空全部字段</button>
                 </div>
+
+                <div v-if="textPanel" class="text-panel">
+                  <textarea v-model="draftText" rows="4"
+                            placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）…"></textarea>
+                  <div class="text-panel-act">
+                    <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
+                    <button class="primary" :disabled="drafting || !draftText.trim()"
+                            @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
+                  </div>
+                </div>
+
+                <p v-if="!curFields.length" class="dim pad">
+                  还没有字段。用「✨ 自动生成字段」从样本/描述起草，或「＋ 添加字段」手动创建。
+                </p>
+                <p v-if="curFields.length > 1" class="dim drag-tip">
+                  拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
+                </p>
+                <div class="field-tree" ref="treeEl">
+                  <FieldCard v-for="(f, i) in curFields" :key="f.name || i" :field="f" :index="i"
+                             :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
+                             @edit="openEdit(curFields, i)"
+                             @remove="curFields.splice(i, 1)"
+                             @edit-column="(ci) => openEdit(f.columns, ci, true)"
+                             @add-column="openAdd(f.columns, true)"
+                             @grip-down="startFieldDrag" />
+                  <button class="add-field" @click="openAdd(curFields)">＋ 添加字段</button>
+                </div>
+              </template>
+
+              <!-- existing_skill: R10 reference (图16) + F-02 §3.18 source/jump/impact -->
+              <div v-else-if="activeCat.handler === 'existing_skill'" class="cat-ref">
+                <div class="ref-row">
+                  <select :value="activeCat.skill_ref?.skill_code ?? ''"
+                          @change="setRefSkill(activeCat, ($event.target as HTMLSelectElement).value)">
+                    <option value="">选择要复用的技能…</option>
+                    <option v-for="r in refSkills" :key="r.skill_code"
+                            :value="r.skill_code">{{ r.name }}（{{ r.skill_code }}）</option>
+                  </select>
+                  <select v-if="activeCat.skill_ref?.skill_code"
+                          :value="activeCat.skill_ref?.version ?? ''"
+                          @change="setRefVersion(activeCat, ($event.target as HTMLSelectElement).value)">
+                    <option value="">跟随最新发布版{{ refVersionHint(activeCat) }}</option>
+                    <option v-for="v in refVersions(activeCat)" :key="v" :value="v">v{{ v }}</option>
+                  </select>
+                </div>
+                <div v-if="activeCat.skill_ref?.skill_code" class="ref-banner">
+                  <span class="dim">
+                    字段来源：引用技能「{{ refName(activeCat) }}」（{{ activeCat.skill_ref.skill_code }}），
+                    在此只读；如需修改，请打开原技能编辑器。</span>
+                  <a class="btn-like" :href="`/#/skills/${activeCat.skill_ref.skill_code}`"
+                     target="_blank">打开技能编辑器</a>
+                </div>
+                <p v-if="activeCat.skill_ref?.skill_code" class="dim ref-impact"
+                   data-testid="ref-impact">{{ refImpact(activeCat) }}</p>
+                <ul v-if="refFields(activeCat).length" class="ref-fields">
+                  <li v-for="f in refFields(activeCat)" :key="f.name">
+                    <code>{{ f.name }}</code><span class="dim">{{ f.type }}</span>
+                    <span class="ex dim" :title="f.instruction">{{ f.instruction }}</span>
+                  </li>
+                </ul>
               </div>
 
-              <p v-if="!pkg.fields.length" class="dim pad">
-                还没有字段。用「✨ 自动生成字段」从样本/描述起草，或「＋ 添加字段」手动创建。
-              </p>
-              <p v-if="pkg.fields.length > 1" class="dim drag-tip">
-                拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
-              </p>
-              <div class="field-tree" ref="treeEl">
-                <FieldCard v-for="(f, i) in pkg.fields" :key="f.name || i" :field="f" :index="i"
-                           :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
-                           @edit="openEdit(pkg!.fields, i)"
-                           @remove="pkg!.fields.splice(i, 1)"
-                           @edit-column="(ci) => openEdit(f.columns, ci, true)"
-                           @add-column="openAdd(f.columns, true)"
-                           @grip-down="startFieldDrag" />
-                <button class="add-field" @click="openAdd(pkg!.fields)">＋ 添加字段</button>
-              </div>
+              <p v-else-if="activeCat.handler === 'classify_only'" class="dim pad">
+                该类别只输出所属文档类型（doc_type），不抽取字段；审单时可直接通过。</p>
 
-              <details class="rules-fold">
-                <summary>附加规则（可选，自由文本，进提示词）</summary>
+              <label v-if="activeCat && !activeCat.is_other && activeCat.handler !== 'classify_only'"
+                     class="cat-rules">类别附加规则（可选，填写后替代{{ activeCat.handler === 'inline' ? "下方通用附加规则" : "原技能的附加规则" }}）
+                <textarea v-model="activeCat.additional_rules" rows="1"
+                          placeholder="只作用于该类别的补充说明"></textarea></label>
+
+              <details v-if="!activeCat || activeCat.handler === 'inline'" class="rules-fold">
+                <summary>{{ activeCat ? "通用附加规则（可选，没有填写类别附加规则的类别使用）"
+                                     : "附加规则（可选，自由文本，进提示词）" }}</summary>
                 <textarea v-model="pkg.additional_rules" rows="2"
                           placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea>
               </details>
+              <p v-if="activeCat && pkg.fields.length" class="dim" data-testid="top-fields-note">
+                另有 {{ pkg.fields.length }} 个标准模式字段：切回「标准」技能模式或使用极速模式时生效，高级模式下不使用。</p>
             </div>
           </section>
 
@@ -775,7 +811,9 @@ const selectedStatus = computed(() =>
 const tab = ref<"design" | "test">("design");
 const step = ref<"basic" | "classify" | "fields" | "output">("basic");
 const genModal = ref(false);
-const undoStack = ref<FieldSpec[][]>([]);   // one-shot undo for generation merges
+// one-shot undo for generation merges; `cat` = the category whose list it was
+// (null = top-level fields), so switching tabs never restores into the wrong list
+const undoStack = ref<{ cat: string | null; fields: FieldSpec[] }[]>([]);
 
 function blankPkg(): SkillPackage {
   return { skill_code: "", name: "", description: "", kind: "extract", doc_type_hint: "",
@@ -806,6 +844,7 @@ function catFieldCount(p: SkillPackage): number {
 function resetPerSkillState() {
   changelog.value = "";
   step.value = "basic";
+  activeCatId.value = null;
   sampleStatus.value = {};
   runBySample.value = {};
   pgDocs.value = [];
@@ -871,7 +910,7 @@ const fastMaxPages = 5;   // mirror of IDP_FAST_MAX_PAGES default (server enforc
 const splitAvailable = computed(() => {
   const p = pkg.value;
   return !!p && p.skill_mode === "advanced"
-    && (p.document_layout ?? "mixed") !== "single";
+    && (p.document_layout ?? "single") !== "single";
 });
 
 function setOutputAction(a: "rename" | "split") {
@@ -1012,7 +1051,8 @@ function setProcessingMode(m: "balanced" | "fast") {
 // —— 文档分类 (R08, 图06–11): categories live on the package; Other is a fixed
 // sentinel at the bottom (doc_type stays "Other") ——
 const refSkills = ref<{ skill_code: string; name: string; published_version: number;
-                        fields: { name: string; type: string; instruction: string }[] }[]>([]);
+                        fields: { name: string; type: string; instruction: string }[];
+                        extractor?: string; extraction_channel?: string }[]>([]);
 watch([tab, pkg], async ([t]) => {
   if (t !== "design" || refSkills.value.length) return;
   try {
@@ -1033,7 +1073,10 @@ const editableCats = computed(() => {
   return cats;
 });
 function addCategory() {
-  pkg.value!.categories!.push(blankCategory());
+  // Other stays the bottom sentinel: new categories go in above it
+  const cats = pkg.value!.categories!;
+  const other = cats.findIndex((c) => c.is_other);
+  cats.splice(other < 0 ? cats.length : other, 0, blankCategory());
 }
 function removeCategory(ci: number) {
   const cats = pkg.value!.categories!;
@@ -1068,6 +1111,100 @@ function refVersions(c: CategorySpec): number[] {
 }
 function refFields(c: CategorySpec) {
   return refMeta(c)?.fields ?? [];
+}
+
+/** R07 图05 / B-01 (2026-09-23): 文件构成 — how the classifier cuts a file into
+ *  documents (app/extraction/classifier.py). The backend default is single,
+ *  which never splits; the editor used to offer no way to change it. */
+const LAYOUTS = [
+  { value: "single", label: "单份文档", desc: "一个文件就是一份文档，只判断类别，不拆分" },
+  { value: "mixed", label: "多种单据混合", desc: "一个文件含多份、不同类型的单据，逐页分类并拆分" },
+  { value: "same_type_independent", label: "同类单据 · 每页一份",
+    desc: "每页都是一份独立单据，类别相同" },
+  { value: "same_type_continuous", label: "同类单据 · 可跨页",
+    desc: "同一类单据，一份可能连续占多页" },
+] as const;
+const docLayout = computed(() => pkg.value?.document_layout ?? "single");
+/** The 高级 card promises "一份文件多种单据": entering advanced mode from the
+ *  default layout starts at 多种单据混合 so that promise holds (B-01). */
+function setSkillMode(m: "standard" | "advanced") {
+  const p = pkg.value;
+  if (!p) return;
+  if (m === "advanced" && p.skill_mode !== "advanced"
+      && (p.document_layout ?? "single") === "single") p.document_layout = "mixed";
+  p.skill_mode = m;
+}
+
+// —— 字段提取 by category (F-02): the tab being edited. Fast mode executes as
+// standard, so it keeps editing the top-level list like a standard skill ——
+const activeCatId = ref<string | null>(null);
+const activeCat = computed<CategorySpec | null>(() => {
+  const p = pkg.value;
+  if (!p || p.skill_mode !== "advanced" || p.processing_mode === "fast") return null;
+  const cats = editableCats.value;
+  return cats.find((c) => c.id === activeCatId.value) ?? cats[0] ?? null;
+});
+/** The list the field tools edit: the active inline category's, else the
+ *  skill's top-level fields. */
+const curFields = computed<FieldSpec[]>(() =>
+  activeCat.value?.handler === "inline" ? activeCat.value.fields : pkg.value!.fields);
+function setCurFields(v: FieldSpec[]) {
+  if (activeCat.value?.handler === "inline") activeCat.value.fields = v;
+  else pkg.value!.fields = v;
+}
+const fieldShape = computed<"object" | "list">({
+  get: () => (activeCat.value ?? pkg.value!).output_shape ?? "object",
+  set: (v) => { (activeCat.value ?? pkg.value!).output_shape = v; },
+});
+const catName = (c: CategorySpec) =>
+  c.is_other ? "Other（兜底）" : (c.doc_type || "未命名类别");
+function catBadge(c: CategorySpec): string {
+  if (c.handler === "existing_skill") return "引用";
+  if (c.handler === "classify_only") return "仅分类";
+  return `${c.fields.length} 字段`;
+}
+function catSummary(c: CategorySpec): string {
+  if (c.handler === "existing_skill")
+    return c.skill_ref?.skill_code ? `引用技能「${refName(c)}」` : "引用已有技能（未选择）";
+  if (c.handler === "classify_only") return "仅分类，不提取";
+  return `本技能内配置 ${c.fields.length} 个字段`;
+}
+function gotoCategoryFields(c: CategorySpec) {
+  activeCatId.value = c.id;
+  step.value = "fields";
+}
+
+// —— F-01: which model / channel actually runs, spelled out in the editor ——
+const channelLabel = (c?: string | null) => (c === "rules_first" ? "规则优先" : "模型提取");
+function modelLabel(name?: string | null): string {
+  return name || `平台默认${activeProvider.value ? `（${activeProvider.value}）` : ""}`;
+}
+const classifierEffective = computed(() => {
+  const mb = pkg.value!.model_binding;
+  return mb.classifier || `与抽取模型相同 · ${modelLabel(mb.extractor)}`;
+});
+/** Mirrors app/skillengine/effective.category_subpackage. */
+function catEffective(c: CategorySpec): string {
+  const p = pkg.value!;
+  if (c.handler === "classify_only") return "生效配置：只分类，不调用抽取模型。";
+  if (c.handler === "existing_skill") {
+    const m = refMeta(c);
+    if (!m) return "选择要复用的技能后，这里显示它实际使用的模型与提取通道。";
+    return `生效配置：沿用「${m.name}」自己的抽取模型 ${modelLabel(m.extractor)}、`
+      + `提取通道「${channelLabel(m.extraction_channel)}」；复核策略与解析器沿用本技能。`;
+  }
+  return `生效配置：本技能的抽取模型 ${modelLabel(p.model_binding.extractor)}、`
+    + `提取通道「${channelLabel(p.extraction_channel)}」（在「基础」中设置）。`;
+}
+/** F-02 §3.18: what changing the referenced skill does to this one (R10
+ *  pinning: a publish freezes the referenced version; drafts follow latest). */
+function refImpact(c: CategorySpec): string {
+  const v = c.skill_ref?.version;
+  const pin = v != null
+    ? `固定使用 v${v}：原技能之后发布的新版本不影响本技能。`
+    : "跟随最新发布版：本技能发布时锁定原技能当时的最新发布版；原技能再发布新版本后，"
+      + "本技能需重新发布才会使用，测试页试跑始终用原技能最新发布版。";
+  return `${pin}原技能可能被多个技能共享，在原技能里修改并发布会按上述规则影响所有引用它的技能。`;
 }
 
 // —— Playground (9.15 WP5, 图21): sample test runs against the current draft ——
@@ -1422,7 +1559,8 @@ const flowNodes = computed(() => {
     })(),
     ...(p.skill_mode === "advanced"
       ? [{ key: "classify" as const, label: "文档分类",
-           sub: `${(p.categories ?? []).length} 个类别${catFieldCount(p) ? ` / ${catFieldCount(p)} 个字段` : ""}`,
+           sub: `${(p.categories ?? []).length} 个类别 · ${
+             LAYOUTS.find((l) => l.value === (p.document_layout ?? "single"))?.label ?? ""}`,
            bad: badCats }]
       : []),
     { key: "fields" as const, label: "字段提取",
@@ -1477,7 +1615,7 @@ const treeEl = ref<HTMLElement>();
 const reorder = useListReorder();
 function startFieldDrag(i: number, ev: PointerEvent) {
   reorder.start(i, ev, treeEl.value,
-                (f, t) => { if (pkg.value) moveItem(pkg.value.fields, f, t); });
+                (f, t) => { if (pkg.value) moveItem(curFields.value, f, t); });
 }
 
 // —— field modal editing ——
@@ -1498,29 +1636,41 @@ function commitEdit(spec: FieldSpec) {
 }
 
 // —— generation (R05/图13): snapshot → apply suggested fields → undoable ——
+function pushUndo() {
+  undoStack.value.push({ cat: activeCat.value?.id ?? null,
+                         fields: JSON.parse(JSON.stringify(curFields.value)) });
+}
 function applyGenerated(fields: FieldSpec[], replaceAll: boolean) {
   if (!pkg.value) return;
-  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
+  pushUndo();
   if (replaceAll) {
-    pkg.value.fields = fields.map((f) => ({ ...blankField(), ...f }));
+    setCurFields(fields.map((f) => ({ ...blankField(), ...f })));
     return;
   }
-  const existing = new Set(pkg.value.fields.map((f) => f.name));
+  const existing = new Set(curFields.value.map((f) => f.name));
   const fresh = fields.filter((f) => !existing.has(f.name));
   const skipped = fields.length - fresh.length;
-  pkg.value.fields.push(...fresh.map((f) => ({ ...blankField(), ...f })));
+  curFields.value.push(...fresh.map((f) => ({ ...blankField(), ...f })));
   if (skipped) toast.ok(`跳过 ${skipped} 个同名字段（未覆盖你的修改）`);
 }
 function undoGenerate() {
-  if (!pkg.value || !undoStack.value.length) return;
-  pkg.value.fields = undoStack.value.pop()!;
+  const last = undoStack.value.pop();
+  if (!pkg.value || !last) return;
+  if (last.cat) {
+    const cat = pkg.value.categories?.find((c) => c.id === last.cat);
+    if (!cat) { toast.error("该类别已删除，无法撤销"); return; }
+    cat.fields = last.fields;
+    activeCatId.value = cat.id;
+  } else {
+    pkg.value.fields = last.fields;
+  }
   toast.ok("已撤销上一次生成");
 }
 function clearFields() {
-  if (!pkg.value || !pkg.value.fields.length) return;
-  if (!confirm(`清空全部 ${pkg.value.fields.length} 个字段？可用「撤销上次生成」恢复。`)) return;
-  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
-  pkg.value.fields = [];
+  if (!pkg.value || !curFields.value.length) return;
+  if (!confirm(`清空全部 ${curFields.value.length} 个字段？可用「撤销上次生成」恢复。`)) return;
+  pushUndo();
+  setCurFields([]);
 }
 
 /** Save = update the draft on screen (P04). Outbound payloads are always v2. */
@@ -1625,11 +1775,12 @@ async function copyCode() {
 const probing = ref(false);
 function mergeDraft(fields: FieldSpec[], docType?: string): number {
   if (!pkg.value) return 0;
-  undoStack.value.push(JSON.parse(JSON.stringify(pkg.value.fields)));
-  const existing = new Set(pkg.value.fields.map((f) => f.name));
+  pushUndo();
+  const existing = new Set(curFields.value.map((f) => f.name));
   const fresh = fields.filter((f) => !existing.has(f.name));
-  pkg.value.fields.push(...fresh);
-  if (docType && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = docType;
+  curFields.value.push(...fresh);
+  // a category already names its document type; only a standard skill takes the hint
+  if (docType && !activeCat.value && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = docType;
   return fresh.length;
 }
 async function probe(ev: Event) {
@@ -1674,10 +1825,11 @@ async function tableImport(ev: Event) {
 }
 const enriching = ref(false);
 async function enrich() {
-  if (!pkg.value?.fields.length) return;
+  if (!pkg.value || !curFields.value.length) return;
   enriching.value = true;
   try {
-    const r = await api.skillEnrich(pkg.value.fields, pkg.value.doc_type_hint);
+    const r = await api.skillEnrich(curFields.value,
+                                    activeCat.value?.doc_type || pkg.value.doc_type_hint);
     let n = 0;
     const apply = (specs: FieldSpec[], patches: { name: string; instruction: string;
                                                   columns?: { name: string; instruction: string }[] }[]) => {
@@ -1689,7 +1841,7 @@ async function enrich() {
           apply(f.columns, p.columns.map((c) => ({ ...c, columns: undefined })));
       }
     };
-    apply(pkg.value.fields, r.fields);
+    apply(curFields.value, r.fields);
     toast.ok(`已补全 ${n} 处字段说明（${r.provider_used}），请核对后保存`);
   } catch (e) { toast.error(e); }
   finally { enriching.value = false; }
@@ -1964,6 +2116,18 @@ async function goldenCheck() {
 .add-cat { border-style: dashed; }
 
 .cards.disabled { opacity: .55; pointer-events: none; }
+/* 2026-09-23 B-01 / F-01 / F-02: layout cards, per-category tabs, effective config */
+.layout-cards { grid-template-columns: repeat(4, 1fr); }
+.cat-extract { display: flex; gap: 10px; align-items: center; font-size: 12.5px; }
+.cat-extract .mini { margin-left: auto; }
+.cls-model { display: flex; flex-direction: column; gap: 4px; max-width: 420px; }
+.cls-model .hint { font-size: 12px; }
+.cat-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.cat-tab { font-size: 12.5px; padding: 4px 12px; border-radius: 16px; }
+.cat-tab.on { border-color: var(--accent); background: var(--bg-raised); font-weight: 600; }
+.cat-tab .dim { font-weight: 400; margin-left: 2px; }
+.eff-line { font-size: 12px; margin: 6px 0 10px; }
+.ref-impact { font-size: 12px; margin: 0; }
 /* #26: samples | original preview | results */
 .playground .pg-grid { display: grid;
   grid-template-columns: 250px minmax(320px, 1fr) minmax(360px, 1.2fr);

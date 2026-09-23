@@ -1,16 +1,23 @@
 <template>
   <main class="page">
     <PageHeader title="技能中心" desc="技能 = 一类文档的抽取契约：字段、校验规则与模型绑定。">
-      <label class="file-btn">
-        <input type="file" accept=".yaml,.yml" hidden @change="importYaml" />
-        <span class="btn-like">导入 YAML</span>
-      </label>
+      <!-- U-01 (2026-09-23): one 导入技能 entry; the format is chosen inside, so a
+           future import source adds a menu item instead of another button -->
+      <details class="import-menu" ref="importMenuEl">
+        <summary class="btn-like" data-testid="import-menu">导入技能 ▾</summary>
+        <div class="import-pop">
+          <label class="file-btn">
+            <input type="file" accept=".yaml,.yml" hidden @change="importYaml" />
+            <span class="btn-like">导入 YAML 文件</span>
+          </label>
+          <button class="ghost" data-testid="import-package" @click="openPackageImport">
+            导入加密技能包</button>
+        </div>
+      </details>
       <!-- one class or the other: `ghost primary` together leaves primary's dark
            text on ghost's transparent background, i.e. an invisible button -->
       <button :class="showGallery ? 'primary' : 'ghost'"
               @click="showGallery = !showGallery">从模板新建</button>
-      <button class="ghost" data-testid="import-package" @click="importOpen = true">
-        导入加密包</button>
       <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
     </PageHeader>
 
@@ -396,6 +403,15 @@ async function copyPass() {
 }
 
 const importOpen = ref(false);
+const importMenuEl = ref<HTMLDetailsElement>();
+/** Picking an import format closes the 导入技能 menu behind it. */
+function closeImportMenu() {
+  if (importMenuEl.value) importMenuEl.value.open = false;
+}
+function openPackageImport() {
+  closeImportMenu();
+  importOpen.value = true;
+}
 const importFile = ref<File | null>(null);
 const importPass = ref("");
 const importPreview = ref<Awaited<ReturnType<typeof api.skillPackageImportPreview>>
@@ -499,6 +515,7 @@ async function restore(s: SkillInfo) {
 }
 
 async function importYaml(ev: Event) {
+  closeImportMenu();
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
   try {
@@ -526,6 +543,17 @@ async function importYaml(ev: Event) {
 .file-btn .btn-like { border: 1px solid var(--border); background: var(--bg-raised);
   border-radius: 6px; padding: 6px 14px; cursor: pointer; display: inline-block; }
 .file-btn .btn-like:hover { border-color: var(--accent); }
+.import-menu { position: relative; }
+/* the summary looks like the header's ghost buttons (style.css `button`) */
+.import-menu summary { list-style: none; cursor: pointer; border: 1px solid var(--border);
+  background: transparent; color: var(--text); border-radius: 6px; padding: 6px 14px; }
+.import-menu summary:hover { border-color: var(--accent); }
+.import-menu summary::-webkit-details-marker { display: none; }
+.import-pop { position: absolute; z-index: 60; top: calc(100% + 4px); right: 0;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 170px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.import-pop .file-btn .btn-like, .import-pop button { width: 100%; text-align: left; }
 .code { font-family: Consolas, monospace; color: var(--blue); }
 .desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ver { font-variant-numeric: tabular-nums; white-space: nowrap; }

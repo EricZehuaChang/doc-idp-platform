@@ -98,6 +98,9 @@ class ModelBinding(BaseModel):
     extractor: str = ""                  # provider name; empty -> platform active
     fallback: str | None = None
     challenger: str | None = None        # optional arbitration channel (§5.3)
+    # advanced mode: model of the classification step (2026-09-23 F-01);
+    # empty -> same as extractor, so packages without it behave as before
+    classifier: str | None = None
 
 
 class CategorySpec(BaseModel):

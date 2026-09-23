@@ -254,6 +254,10 @@ async def reference_skills(exclude: str | None = None):
             out.append({"skill_code": skill.code, "name": skill.name,
                         "published_version": ver.version,
                         "field_count": len(pkg.fields),
+                        # F-01: a referenced skill runs with its OWN model and
+                        # extraction channel; the editor shows what applies
+                        "extractor": pkg.model_binding.extractor or "",
+                        "extraction_channel": pkg.extraction_channel,
                         # read-only field digest for the reference banner (图16)
                         "fields": [{"name": f.name, "type": f.type,
                                     "instruction": f.instruction}

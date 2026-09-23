@@ -266,7 +266,9 @@ export interface SkillPackage {
   few_shot: { input_excerpt: string; expected_output: Record<string, unknown> }[];
   validators: ValidatorSpec[];
   review_policy: { mode: string; confidence_threshold: number };
-  model_binding: { extractor: string; fallback: string | null; challenger: string | null };
+  model_binding: { extractor: string; fallback: string | null; challenger: string | null;
+                   /** advanced mode: classification model; empty = extractor (F-01) */
+                   classifier?: string | null };
   parser: string | null; additional_rules: string;
 }
 export interface SkillDetail {
@@ -705,6 +707,8 @@ export const api = {
     req<{ skills: { skill_code: string; name: string; published_version: number;
                      field_count: number;
                      fields: { name: string; type: string; instruction: string }[];
+                     /** F-01: the referenced skill's own model / channel */
+                     extractor?: string; extraction_channel?: string;
                      updated_at?: string }[] }>(
       "GET", `/api/v1/studio/reference-skills${exclude ? `?exclude=${exclude}` : ""}`),
   studioSampleFileUrl: (id: string) => `/api/v1/studio/samples/${id}/file`,

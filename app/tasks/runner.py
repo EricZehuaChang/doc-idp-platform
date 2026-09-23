@@ -311,7 +311,8 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
                 plan_documents, udr, cats,
                 pkg.document_layout or "single",
                 pkg.classification_rules or "",
-                (pkg.model_binding.extractor or None))
+                (pkg.model_binding.classifier or pkg.model_binding.extractor
+                 or None))
         except ClassificationError as e:
             # 分类失败: the whole file fails, no silent Other fallback;
             # error rows bill nothing (settle counts result-bearing rows only)

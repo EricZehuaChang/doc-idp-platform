@@ -59,7 +59,7 @@ class Env:
 
     async def seed_and_run(self, monkeypatch, plan=None, extract_fail_pages=(),
                            classify_error=False, extract_fake=None,
-                           parse_fake=None):
+                           parse_fake=None, plan_calls=None):
         """Returns (txn_id, files_by_name, fired_webhooks)."""
         from sqlalchemy import select
 
@@ -95,6 +95,8 @@ class Env:
         monkeypatch.setattr(runner_mod.webhooks, "fire", fake_fire)
 
         def fake_plan(udr, cats, layout, rules, provider=None, transport=None):
+            if plan_calls is not None:
+                plan_calls.append({"layout": layout, "provider": provider})
             if classify_error:
                 raise classifier.ClassificationError("no valid plan")
             usage = {"prompt_tokens": 7, "completion_tokens": 3,
@@ -416,3 +418,22 @@ async def test_execution_snapshot_used_by_runner(tmp_path, monkeypatch):
 
 async def async_noop_fire(*a, **k):
     return None
+
+
+async def test_classification_uses_classifier_model_else_extractor(tmp_path, monkeypatch):
+    """F-01 (2026-09-23): the classification step runs on
+    model_binding.classifier when set, and on the extraction model otherwise
+    (packages saved before the setting existed keep their behavior)."""
+    from app.skillengine.schema import ModelBinding
+    for binding, expected in [
+            (ModelBinding(extractor="ext_model", classifier="cls_model"), "cls_model"),
+            (ModelBinding(extractor="ext_model"), "ext_model"),
+            (ModelBinding(), None)]:
+        pkg = adv_pkg()
+        pkg.model_binding = binding
+        calls: list[dict] = []
+        sub = tmp_path / (expected or "default")
+        sub.mkdir()
+        async with Env(sub, monkeypatch, pkg) as env:
+            await env.seed_and_run(monkeypatch, plan=PLAN3[:1], plan_calls=calls)
+        assert calls == [{"layout": "mixed", "provider": expected}]

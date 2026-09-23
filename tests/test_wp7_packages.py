@@ -173,7 +173,7 @@ async def test_import_two_step_rename_and_inline(tmp_path, monkeypatch):
                "validators": [],
                "review_policy": {"mode": "auto", "confidence_threshold": 2},
                "model_binding": {"extractor": "gpt4o", "fallback": None,
-                                 "challenger": None}}
+                                 "challenger": None, "classifier": "gpt4o"}}
     pw = generate_passphrase()
     inner = {"skill": {"package": adv_pkg, "skill_code": "adv_src",
                        "name": "高级源", "kind": "extract", "version": 1,
@@ -237,6 +237,8 @@ async def test_import_two_step_rename_and_inline(tmp_path, monkeypatch):
                 assert cat["skill_ref"] is None
                 assert [f["name"] for f in cat["fields"]] == ["extra_no"]
                 assert pkg["model_binding"]["extractor"] == ""
+                # F-01: the classification model is a channel like the others
+                assert pkg["model_binding"]["classifier"] == ""
                 # audit written, passphrase never recorded
                 logs = (await s.execute(
                     select(AuditLog).where(
@@ -374,3 +376,13 @@ async def test_role_guard_and_dependencies_export(tmp_path, monkeypatch):
                              data={"passphrase": "x"},
                              headers={"Authorization": f"Bearer {key}"})
             assert r.status_code == 403
+
+
+def test_requirements_list_the_classification_model():
+    """F-01: an exported package declares its classification channel so the
+    target environment can map it on import."""
+    from app.api.routes.packages import _collect_requirements
+    from app.skillengine.schema import ModelBinding, SkillPackageLoose
+    pkg = SkillPackageLoose(skill_code="x", model_binding=ModelBinding(
+        extractor="ext", classifier="cls"))
+    assert _collect_requirements(pkg)["channels"] == ["ext", "cls"]

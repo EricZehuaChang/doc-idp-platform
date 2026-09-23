@@ -39,7 +39,8 @@ def _collect_requirements(pkg: SkillPackageLoose) -> dict:
     channels = []
     mb = pkg.model_binding
     mb = mb if isinstance(mb, dict) else (mb.model_dump() if mb else {})
-    for c in (mb.get("extractor"), mb.get("fallback"), mb.get("challenger")):
+    for c in (mb.get("extractor"), mb.get("fallback"), mb.get("challenger"),
+              mb.get("classifier")):
         if c and c not in channels:
             channels.append(c)
     return {"channels": channels, "parsers": []}
@@ -283,7 +284,7 @@ async def import_commit(payload: dict):
         # —— channel mapping ——
         if channel_map:
             mb = pkg_raw.get("model_binding") or {}
-            for k in ("extractor", "fallback", "challenger"):
+            for k in ("extractor", "fallback", "challenger", "classifier"):
                 if mb.get(k) in channel_map:
                     mb[k] = channel_map[mb[k]] or ""
             pkg_raw["model_binding"] = mb
