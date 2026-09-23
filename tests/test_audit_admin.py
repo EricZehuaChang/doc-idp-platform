@@ -251,3 +251,30 @@ async def test_audit_logs_skills_lifecycle_written(tmp_path, monkeypatch):
                 "skills.deleted": 1, "skills.restored": 1}
         assert got == want, got
         assert all(x["actor"] == "anonymous" for x in rows)
+
+
+async def test_skill_name_follows_new_version_and_publish(tmp_path, monkeypatch):
+    """2026-09-23 bug: renaming via 「新建版本」 (editing a published version)
+    or publishing left the skill center on the old name."""
+    app = await _client(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            async def center_name():
+                rows = (await c.get("/api/v1/skills")).json()
+                return next(r["name"] for r in rows if r["skill_code"] == "auditpkg")
+
+            assert (await c.post("/api/v1/skills", json={
+                "package": {**_pkg(), "name": "旧名"}})).status_code == 201
+            await c.post("/api/v1/skills/auditpkg/versions/1/publish")
+            # new draft branched from the published version carries the rename
+            r = await c.post("/api/v1/skills/auditpkg/versions",
+                             json={"package": {**_pkg(), "name": "新名"}})
+            assert r.status_code == 201 and await center_name() == "新名"
+            await c.post("/api/v1/skills/auditpkg/versions",
+                         json={"package": {**_pkg(), "name": "草稿名"}})
+            assert await center_name() == "草稿名"
+            # publishing v2 makes its name the skill's name again
+            await c.post("/api/v1/skills/auditpkg/versions/2/publish")
+            assert await center_name() == "新名"
+            assert (await c.get("/api/v1/skills/auditpkg")).json()["name"] == "新名"

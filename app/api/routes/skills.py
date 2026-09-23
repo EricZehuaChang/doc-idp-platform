@@ -352,6 +352,9 @@ async def new_draft(skill_code: str, payload: DraftUpdate):
         s.add(SkillVersion(tenant_id=tenant, skill_code=skill_code, version=next_ver,
                            status="draft", package=payload.package.model_dump(),
                            changelog=payload.changelog))
+        # 2026-09-23: the skill center reads skills.name — keep it in step with
+        # the newest version, as update_draft already does
+        skill.name = payload.package.name or skill.name
         _touch(skill)
         await s.commit()
     return {"skill_code": skill_code, "version": next_ver, "status": "draft"}
@@ -775,6 +778,8 @@ async def publish(skill_code: str, version: int):
         target.status = "published"
         skill = await s.get(Skill, skill_code)
         if skill is not None:
+            # 2026-09-23: the published version's name is the skill's name
+            skill.name = (target.package or {}).get("name") or skill.name
             _touch(skill)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="skills.published",
