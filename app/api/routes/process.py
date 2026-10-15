@@ -161,7 +161,7 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
         else:
             label = f"应用：{key_name}"
         initiator = {"type": "api_key", "id": actor["name"], "label": label,
-                     "user_id": None, "api_key_id": actor["api_key_id"]}
+                     "user_id": actor.get("owner_user_id"), "api_key_id": actor["api_key_id"]}
     else:
         initiator = {"type": "anonymous", "id": "anonymous", "label": "anonymous",
                      "user_id": None, "api_key_id": None}

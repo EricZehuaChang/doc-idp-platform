@@ -48,7 +48,7 @@
           <button v-for="(part, i) in detail.children" :key="part.file_id"
                   :class="['part', { active: activeFileId === part.file_id }]"
                   @click="switchPart(part.file_id)">
-            <span>单据 {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
+            <span class="part-name" :title="part.document?.doc_type ?? ''">单据 {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
             <small>第 {{ partRange(part) }} 页</small>
             <span class="chip" :class="`chip-${part.status}`">{{ stLabel(part.status) }}</span>
           </button>
@@ -749,7 +749,12 @@ async function releaseLock(fileId = activeItem.value?.file_id) {
 }
 
 async function switchPart(fileId: string) {
-  if (fileId === activeItem.value?.file_id || navBusy.value) return;
+  if (navBusy.value) return;
+  if (fileId === activeItem.value?.file_id) {
+    activePage.value = toRootPage(1);
+    stage.value?.gotoPage(activePage.value);
+    return;
+  }
   const oldFileId = activeItem.value?.file_id;
   navBusy.value = true;
   try {
@@ -758,7 +763,8 @@ async function switchPart(fileId: string) {
     resetPartState();
     activeFileId.value = fileId;
     // 需求5: 点击右侧单据,左侧原件跳到该单据的起始页
-    const start = (activeItem.value?.page_offset ?? 0) + 1;
+    const start = toRootPage(1);
+    activePage.value = start;
     await nextTick();
     stage.value?.gotoPage(start);
   } finally {
@@ -816,8 +822,9 @@ async function decide(kind: "confirm" | "reject") {
     if (nextPart) {
       resetPartState();
       activeFileId.value = nextPart.file_id;
+      activePage.value = toRootPage(1);
       await nextTick();
-      stage.value?.gotoPage((nextPart.page_offset ?? 0) + 1);   // 需求5: 跳到下一份的首页
+      stage.value?.gotoPage(activePage.value);   // 需求5: 跳到下一份的原件首页
       toast.ok(`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`);
       return;
     }
@@ -921,7 +928,7 @@ onUnmounted(() => {
    every flex/grid ancestor of a scroller needs min-height:0, otherwise
    min-height:auto lets the column grow to its content and the whole page
    scrolls instead of the pane under the cursor. */
-.review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px);
+.review { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, 1fr);
   height: calc(100vh - 52px); min-height: 0; overflow: hidden; }
 .doc-pane { border-right: 1px solid var(--border); display: flex; flex-direction: column;
   min-width: 0; min-height: 0; }
@@ -948,10 +955,12 @@ onUnmounted(() => {
   margin-bottom: 8px; font-size: 13px; }
 .parts-head .dim { font-size: 11px; }
 .part-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-.part { display: grid; grid-template-columns: auto auto; gap: 1px 7px; align-items: center;
-  min-width: 108px; padding: 6px 8px; text-align: left; border-color: var(--border); }
+.part { display: flex; flex: 0 0 auto; flex-direction: column; gap: 3px; align-items: flex-start;
+  min-width: 124px; max-width: 220px; padding: 6px 8px; text-align: left;
+  border-color: var(--border); font-size: 12px; }
+.part-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .part small { color: var(--text-dim); }
-.part .chip { grid-column: 2; grid-row: 1 / span 2; font-size: 10px; }
+.part .chip { font-size: 10px; }
 .part.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .tabs { display: flex; gap: 8px; align-items: center; padding: 12px;
   border-bottom: 1px solid var(--border); flex-shrink: 0; }

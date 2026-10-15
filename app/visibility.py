@@ -1,12 +1,11 @@
 """One authorization boundary for task reads, aggregates and review writes.
 
-Assignment, the shared review queue (operators see every task awaiting review)
-and "reviewed by me" grant access to one root task and its split documents,
-never to unrelated uploads in the same transaction. Keys use immutable IDs exclusively.
+Only the submitting account (including its owned API keys) and administrators
+may access a task. Assignment, review state and reviewer names are workflow
+metadata, never access grants. Keys use immutable IDs exclusively.
 """
 from fastapi import HTTPException
-from sqlalchemy import and_, false, func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import and_, false, or_, select
 
 from app.models import ApiKey, FileRecord, Transaction
 from app.tenancy import current_actor, current_tenant
@@ -33,36 +32,17 @@ def _owner_cond(actor: dict):
         return false()
     keys = select(ApiKey.id).where(ApiKey.tenant_id == current_tenant(),
                                    ApiKey.owner_user_id == uid)
-    return or_(Transaction.initiator_user_id == uid, Transaction.api_key_id.in_(keys))
-
-
-def _same_task(cond):
-    """EXISTS a file in the same root task (root + split children) matching
-    ``cond(alias)``; correlated to the outer FileRecord."""
-    g = aliased(FileRecord)
-    return select(g.id).where(
-        g.tenant_id == current_tenant(),
-        g.transaction_id == FileRecord.transaction_id,
-        func.coalesce(g.parent_file_id, g.id)
-        == func.coalesce(FileRecord.parent_file_id, FileRecord.id),
-        cond(g),
-    ).correlate(FileRecord).exists()
+    # New key submissions pin the account at submission. Older key tasks may
+    # use their explicit key-owner relation; unknown/ownerless tasks are never
+    # attributed from display names, assignments or previous review activity.
+    return or_(Transaction.initiator_user_id == uid,
+               and_(Transaction.initiator_user_id.is_(None),
+                    Transaction.api_key_id.in_(keys)))
 
 
 def visible_file_cond(actor: dict | None = None):
     actor = actor or current_actor()
     owner = _owner_cond(actor)
-    if task_scope(actor) == "own" and actor.get("user_id"):
-        # D1: tasks assigned to me
-        owner = or_(owner, _same_task(lambda g: g.assignee == actor["name"]))
-        if actor.get("role") == "operator":
-            # 2026-09-23 (Eric, option 2): the review queue is shared by all
-            # operators — any production task still awaiting review is visible,
-            # and a task I reviewed stays visible after my decision
-            owner = or_(owner, and_(
-                Transaction.purpose != "test",
-                _same_task(lambda g: or_(g.status == "pending_verification",
-                                         g.verified_by == actor["name"]))))
     txn = select(Transaction.id).where(
         Transaction.id == FileRecord.transaction_id,
         Transaction.tenant_id == current_tenant(),

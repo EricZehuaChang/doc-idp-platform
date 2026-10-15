@@ -489,7 +489,9 @@ function scrollPageIntoView(no: number, block: "start" | "nearest") {
   const er = el.getBoundingClientRect();
   const pad = 8;
   if (block === "start") {
-    if (er.top < vr.top + pad || er.top > vr.bottom - pad) vp.scrollTop += er.top - vr.top - pad;
+    // Explicit page/part navigation aligns its top even when a small corner
+    // is already visible at low zoom. Visibility alone is not arrival.
+    vp.scrollTop += er.top - vr.top - pad;
   } else if (er.top < vr.top) {
     vp.scrollTop += er.top - vr.top - pad;
   } else if (er.bottom > vr.bottom) {

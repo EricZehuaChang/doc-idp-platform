@@ -31,6 +31,7 @@
 
       <div class="table-scroll" ref="scrollEl">
         <table class="data-table ledger">
+          <colgroup><col v-for="col in COLUMNS" :key="col.key" :style="{ width: `${col.width}%` }" /></colgroup>
           <thead>
             <tr>
               <th v-for="col in COLUMNS" :key="col.key" :class="col.key === 'act' ? 'th-act' : ''">
@@ -63,7 +64,7 @@
                 <span v-else class="dim">—</span>
               </td>
               <td class="fname" :title="r.file_name">
-                {{ r.file_name }}
+                <span class="file-label">{{ r.file_name }}</span>
                 <span v-if="r.child_count" class="split-note">
                   内含 {{ r.child_count }} 份单据<span v-if="r.pending_children">
                     · {{ r.pending_children }} 份待校验</span>
@@ -294,18 +295,18 @@ const PAGE_SIZE = 20;
 // Columns of the task table. `filter` names the menu each header opens; the
 // keys it owns drive both the ⏷ highlight and the condition chip.
 const COLUMNS = [
-  { key: "created", label: "时间", filter: true, keys: ["date_from", "date_to"] },
-  { key: "skill", label: "技能", filter: true, keys: ["skill_code"] },
-  { key: "initiator", label: "发起人 / Key", filter: true, keys: ["initiator"] },
-  { key: "file_name", label: "文件名", filter: true, keys: ["file_name"] },
-  { key: "file_type", label: "类型", filter: true, keys: ["file_type"] },
-  { key: "size", label: "大小", filter: false, keys: [] },
-  { key: "pages", label: "页数", filter: true, keys: ["pages_min", "pages_max"] },
-  { key: "speed", label: "处理速度", filter: false, keys: [] },
-  { key: "status", label: "状态", filter: true, keys: ["status"] },
-  { key: "updated", label: "更新时间", filter: true, keys: ["updated_from", "updated_to"] },
-  { key: "verify", label: "校验", filter: true, keys: ["verify"] },
-  { key: "act", label: "", filter: false, keys: [] },
+  { key: "created", label: "时间", width: 8, filter: true, keys: ["date_from", "date_to"] },
+  { key: "skill", label: "技能", width: 11, filter: true, keys: ["skill_code"] },
+  { key: "initiator", label: "发起人 / Key", width: 11, filter: true, keys: ["initiator"] },
+  { key: "file_name", label: "文件名", width: 17, filter: true, keys: ["file_name"] },
+  { key: "file_type", label: "类型", width: 5, filter: true, keys: ["file_type"] },
+  { key: "size", label: "大小", width: 5, filter: false, keys: [] },
+  { key: "pages", label: "页数", width: 4, filter: true, keys: ["pages_min", "pages_max"] },
+  { key: "speed", label: "处理速度", width: 10, filter: false, keys: [] },
+  { key: "status", label: "状态", width: 8, filter: true, keys: ["status"] },
+  { key: "updated", label: "更新时间", width: 8, filter: true, keys: ["updated_from", "updated_to"] },
+  { key: "verify", label: "校验", width: 5, filter: true, keys: ["verify"] },
+  { key: "act", label: "", width: 8, filter: false, keys: [] },
 ] as const;
 
 type FilterKey = "q" | "date_from" | "date_to" | "skill_code" | "initiator" | "file_name"
@@ -676,7 +677,10 @@ function speedTitle(r: FileRow): string {
 .fbtn.on { color: var(--accent); }
 .fbtn.on::after { content: "•"; font-size: 13px; line-height: 0; }
 .fbtn.open { color: var(--accent); background: var(--bg-raised); }
-.fname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger { table-layout: fixed; min-width: 1180px; }
+.ledger td { overflow: hidden; text-overflow: ellipsis; }
+.fname, .file-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-label { display: block; }
 /* 9.15 R20/R19: skill name capped so long names cannot push the table wide
    (2026-09-18: 走查里最长的技能名 168px 会把「文件名」挤到 250px 上限，
    这里收到 14 个汉字上下——超出的部分由 title 提示补足) */
@@ -689,7 +693,7 @@ function speedTitle(r: FileRow): string {
 /* stacked ledger timestamps: the date carries the weight, the clock is a hint */
 .stamp { display: block; font-size: 12.5px; }
 .stamp-time { display: block; font-size: 11px; color: var(--text-dim); }
-.split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
+.split-note { display: block; margin-top: 3px; color: var(--accent); font-size: 11px; }
 .speed { font-size: 12px; color: var(--text); white-space: nowrap; }
 .nowrap { white-space: nowrap; }
 .ftype { font-size: 11px; color: var(--red); font-weight: 700; }

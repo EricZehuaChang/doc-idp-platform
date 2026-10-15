@@ -1,4 +1,4 @@
-"""Authorization contract: users, assignments, same-name keys and aggregates."""
+"""Strict account ownership: tasks, child resources, writes, keys and aggregates."""
 import pytest
 from httpx import ASGITransport, AsyncClient
 from app.auth import security
@@ -35,7 +35,7 @@ async def env(tmp_path, monkeypatch):
                 s.add(FileArtifact(id='ar'+name, tenant_id='default', file_id=name, config_hash='test',
                     action='rename', storage_key=storage, display_name=name+'.pdf', status='ready'))
                 s.add(CreditLedger(tenant_id='default', transaction_id='t'+name, kind='shadow_meter', amount=1))
-            # Two independent uploads share a transaction; assignment exposes only one root.
+            # Assignment is metadata and must not expose another user's upload.
             s.add(FileRecord(id='assigned', tenant_id='default', transaction_id='tb', file_name='assigned.pdf',
                             storage_path=storage, status='pending_verification', page_count=1, assignee=users['a']['email']))
             s.add(StudioRun(id='runb', tenant_id='default', transaction_id='tb', file_id='b',
@@ -58,7 +58,7 @@ async def env(tmp_path, monkeypatch):
 async def test_visibility_matrix(env):
     c, headers, _ = env
     expected = {'admin': {'a', 'b', 'ka', 'kb', 'app', 'legacy', 'assigned'},
-                'a': {'a', 'ka', 'assigned'}, 'b': {'b', 'kb', 'assigned'}, 'v': set(),
+                'a': {'a', 'ka'}, 'b': {'b', 'kb', 'assigned'}, 'v': set(),
                 'app': {'app'}}
     for who, ids in expected.items():
         h = headers[who]
@@ -81,11 +81,10 @@ async def test_visibility_matrix(env):
             for suffix in (f'status/t{target}', f'transactions/t{target}/documents', f'transactions/t{target}/artifacts'):
                 r = await c.get('/api/v1/'+suffix, headers=headers[key])
                 assert r.status_code == (200 if target == key else 404), (key, suffix, r.text)
-    # An assigned upload must not expose other uploads or their Playground run.
+    # Assignment must not grant even partial access to another account's task.
     for suffix in ('status/tb', 'transactions/tb/documents'):
         r = await c.get('/api/v1/'+suffix, headers=headers['a'])
-        assert r.status_code == 200, r.text
-        assert {f['file_id'] for f in r.json()['files']} == {'assigned'}
+        assert r.status_code == 404, r.text
     assert (await c.get('/api/v1/studio/runs/runb', headers=headers['a'])).status_code == 404
     assert (await c.get('/api/v1/studio/runs', headers=headers['a'])).json()['runs'] == []
     # An application key keeps reading its own Playground runs; users do not see them
@@ -106,7 +105,87 @@ async def test_role_write_gates(env):
     assert (await c.patch('/api/v1/review/assigned/fields', headers=headers['v'], json={'edits': []})).status_code == 403
     assert (await c.post('/api/v1/process', headers=headers['v'], files={'files': ('x.pdf', b'x')}, data={'skill_code': 'test'})).status_code == 403
     assert (await c.post('/api/v1/review/b/lock', headers=headers['a'])).status_code == 404
-    assert (await c.post('/api/v1/review/assigned/lock', headers=headers['a'])).status_code == 200
+    assert (await c.post('/api/v1/review/assigned/lock', headers=headers['a'])).status_code == 404
+    assert (await c.post('/api/v1/review/assigned/lock', headers=headers['b'])).status_code == 200
+
+
+async def test_other_account_child_writes_never_mutate_task(env):
+    c, h, _ = env
+    from app.db import session_factory
+    for who in ('a', 'app'):
+        for file_id in ('b', 'assigned'):
+            for suffix in ('lock', 'unlock', 'confirm', 'reject'):
+                r = await c.post(f'/api/v1/review/{file_id}/{suffix}', headers=h[who])
+                assert r.status_code == 404, (who, file_id, suffix, r.text)
+            r = await c.patch(f'/api/v1/review/{file_id}/fields', headers=h[who], json={'edits': []})
+            assert r.status_code == 404, (who, file_id, r.text)
+            # Task deletion keeps its existing administrator-only gate.
+            assert (await c.delete(f'/api/v1/files/{file_id}', headers=h[who])).status_code == 403
+    async with session_factory()() as s:
+        row = await s.get(FileRecord, 'assigned')
+        assert row.status == 'pending_verification'
+        assert row.locked_by is None
+        assert row.verified_by is None
+
+
+async def test_pinned_submitter_is_authoritative_over_later_key_owner(env):
+    c, h, users = env
+    from app.db import session_factory
+    async with session_factory()() as s:
+        txn = await s.get(Transaction, 'tka')
+        txn.initiator_user_id = users['a']['id']
+        key = await s.get(ApiKey, 'ka')
+        key.owner_user_id = users['b']['id']
+        await s.commit()
+    for who, expected in [('a', 200), ('b', 404), ('admin', 200)]:
+        assert (await c.get('/api/v1/review/ka', headers=h[who])).status_code == expected
+
+
+async def test_account_owned_application_key_dies_with_owner(env):
+    c, h, users = env
+    from app.db import session_factory
+    from app.models import User
+    async with session_factory()() as s:
+        key = await s.get(ApiKey, 'app')
+        key.owner_user_id = users['a']['id']
+        await s.commit()
+    assert (await c.get('/api/v1/status/tapp', headers=h['app'])).status_code == 200
+    async with session_factory()() as s:
+        owner = await s.get(User, users['a']['id'])
+        owner.active = False
+        await s.commit()
+    assert (await c.get('/api/v1/status/tapp', headers=h['app'])).status_code == 401
+
+
+async def test_split_children_and_studio_sample_results_follow_task_owner(env):
+    c, h, users = env
+    from app.db import session_factory
+    async with session_factory()() as s:
+        parent = await s.get(FileRecord, 'b')
+        s.add(FileRecord(id='bchild', tenant_id='default', transaction_id='tb',
+                        parent_file_id='b', file_name='b-child.pdf',
+                        storage_path=parent.storage_path, status='pending_verification',
+                        page_count=1, result={'private': {'$value': 'OWNER-B-ONLY'}}))
+        await s.flush()
+        s.add(FileArtifact(id='arbchild', tenant_id='default', file_id='bchild',
+                           config_hash='test', action='split', storage_key=parent.storage_path,
+                           display_name='b-child.pdf', status='ready'))
+        await s.commit()
+    for who, expected in [('a', 404), ('b', 200), ('admin', 200)]:
+        for suffix in ('review/bchild', 'files/bchild/download', 'files/bchild/preview',
+                       'files/bchild/artifacts', 'artifacts/arbchild/download'):
+            r = await c.get('/api/v1/'+suffix, headers=h[who])
+            assert r.status_code == expected, (who, suffix, r.text)
+    for suffix in ('lock', 'unlock', 'confirm', 'reject'):
+        assert (await c.post('/api/v1/review/bchild/'+suffix, headers=h['a'])).status_code == 404
+    assert (await c.patch('/api/v1/review/bchild/fields', headers=h['a'],
+                          json={'edits': []})).status_code == 404
+    payload = {'sample_id': 'sample', 'fields': ['private'],
+               'pattern': '{data.private}', 'action': 'rename'}
+    for who in ('a', 'b', 'admin'):
+        r = await c.post('/api/v1/studio/naming-preview', headers=h[who], json=payload)
+        assert r.status_code == 200, r.text
+        assert ('OWNER-B-ONLY' in r.json()['preview']) == (who != 'a')
 
 
 async def test_live_grants_and_call_history(env):
@@ -160,10 +239,8 @@ async def test_source_views_and_audit(env):
     assert (await c.get('/api/v1/audit/logs', headers=h['a'])).status_code == 403
 
 
-async def test_shared_review_queue(env):
-    """Option 2 (2026-09-23): every operator sees production tasks awaiting
-    review; the reviewer keeps sight after deciding; viewers, keys and
-    Playground runs get nothing from the shared queue."""
+async def test_unknown_pending_tasks_are_admin_only_and_review_history_does_not_grant_access(env):
+    """Unknown historical ownership remains unknown, even with review metadata."""
     c, h, _ = env
     from app.db import session_factory
     from app.storage import get_storage
@@ -185,20 +262,26 @@ async def test_shared_review_queue(env):
         return {f['file_id'] for f in r.json()['data']}
 
     for who in ('a', 'b'):
-        assert 'shared' in await ids(who), who
-        assert 'shared' in {q['file_id'] for q in (await c.get('/api/v1/review/queue', headers=h[who])).json()}
-        assert (await c.get('/api/v1/review/shared', headers=h[who])).status_code == 200
-        assert (await c.get('/api/v1/files/shared/download', headers=h[who])).status_code == 200
+        assert 'shared' not in await ids(who), who
+        assert 'shared' not in {q['file_id'] for q in (await c.get('/api/v1/review/queue', headers=h[who])).json()}
+        assert (await c.get('/api/v1/review/shared', headers=h[who])).status_code == 404
+        assert (await c.get('/api/v1/files/shared/download', headers=h[who])).status_code == 404
         assert (await c.get('/api/v1/review/sharedtest', headers=h[who])).status_code == 404
-    assert (await c.get('/api/v1/stats/home', headers=h['a'])).json()['pending_verification'] >= 2
+    assert (await c.get('/api/v1/stats/home', headers=h['a'])).json()['pending_verification'] == 0
     for who in ('v', 'ka', 'app'):
         assert (await c.get('/api/v1/review/shared', headers=h[who])).status_code in (403, 404), who
     assert 'shared' not in await ids('v')
 
-    # a reviews it: a keeps it, b (who only saw it via the queue) loses it
-    assert (await c.post('/api/v1/review/shared/lock', headers=h['a'])).status_code == 200
-    assert (await c.post('/api/v1/review/shared/confirm', headers=h['a'])).status_code == 200
-    assert 'shared' in await ids('a')
-    assert (await c.get('/api/v1/review/shared', headers=h['a'])).status_code == 200
+    assert 'shared' in await ids('admin')
+    assert (await c.post('/api/v1/review/shared/lock', headers=h['admin'])).status_code == 200
+    assert (await c.post('/api/v1/review/shared/confirm', headers=h['admin'])).status_code == 200
+    # A historical reviewer name cannot become ownership after the change.
+    async with session_factory()() as s:
+        row = await s.get(FileRecord, 'shared')
+        row.verified_by = 'a@example.com'
+        row.assignee = 'a@example.com'
+        await s.commit()
+    assert 'shared' not in await ids('a')
+    assert (await c.get('/api/v1/review/shared', headers=h['a'])).status_code == 404
     assert 'shared' not in await ids('b')
     assert (await c.get('/api/v1/review/shared', headers=h['b'])).status_code == 404
