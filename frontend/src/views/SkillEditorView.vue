@@ -782,6 +782,7 @@ import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { RUN_STATUS_LABELS, STATUS_LABELS, VERSION_LABELS,
          initiatorLabel } from "../labels";
+import { copyText } from "../clipboard";
 import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";
 // R1: where a rules_first field value came from (rule / model / review)
@@ -1842,10 +1843,10 @@ async function removeVersion() {
 const copied = ref(false);
 async function copyCode() {
   try {
-    await navigator.clipboard.writeText(pkg.value?.skill_code ?? "");
+    await copyText(pkg.value?.skill_code ?? "");
     copied.value = true;
     setTimeout(() => (copied.value = false), 1500);
-  } catch { /* clipboard unavailable */ }
+  } catch { toast.error("复制失败，请手动选择技能代码"); }
 }
 
 // —— draft channels ——

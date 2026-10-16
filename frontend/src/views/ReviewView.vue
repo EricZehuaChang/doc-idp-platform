@@ -226,6 +226,7 @@ import { api, fetchBlob, type Artifact, type DetectResult, type FieldCell,
          type ReviewItem, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
+import { copyText } from "../clipboard";
 import { downloadResult, type ResultExportInput } from "../resultExport";
 import { toast } from "../toast";
 
@@ -288,7 +289,7 @@ const activePartIdx = computed(() => {
 });
 async function copyFid() {
   try {
-    await navigator.clipboard.writeText(detail.value?.file_id ?? props.fileId);
+    await copyText(detail.value?.file_id ?? props.fileId);
     toast.ok("已复制 file_id");
   } catch { toast.error("复制失败，请手动从任务列表复制"); }
 }

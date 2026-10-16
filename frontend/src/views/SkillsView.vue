@@ -222,6 +222,7 @@ import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, downloadFile, type SkillInfo } from "../api";
+import { copyText } from "../clipboard";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import AppModal from "../components/AppModal.vue";
@@ -398,7 +399,7 @@ function closeImport() {
 async function copyPass() {
   const r = exportResult.value;
   if (!r) return;
-  try { await navigator.clipboard.writeText(r.passphrase); toast.ok("口令已复制"); }
+  try { await copyText(r.passphrase); toast.ok("口令已复制"); }
   catch { toast.error("复制失败，请手动选择口令"); }
 }
 

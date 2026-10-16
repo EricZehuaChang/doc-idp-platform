@@ -63,6 +63,7 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, ref } from "vue";
+import { copyText } from "../clipboard";
 import { toast } from "../toast";
 
 const props = defineProps<{ skillCode: string }>();
@@ -115,7 +116,7 @@ const CopyBtn = defineComponent({
     const done = ref(false);
     const copy = async () => {
       try {
-        await navigator.clipboard.writeText(p.text);
+        await copyText(p.text);
         done.value = true;
         setTimeout(() => (done.value = false), 1500);
       } catch { toast.error("复制失败，请手动选择文本"); }
