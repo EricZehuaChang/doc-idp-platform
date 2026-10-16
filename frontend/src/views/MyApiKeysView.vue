@@ -48,6 +48,7 @@
 import { onMounted, ref } from "vue";
 import { api, type ApiGrants } from "../api";
 import { toast } from "../toast";
+import { copyText } from "../clipboard";
 
 type MyKeyRow = {
   id: string; name: string; key_type: string; key_prefix: string;
@@ -80,8 +81,9 @@ async function createKey() {
   } catch (e) { toast.error(e); }
 }
 async function copyKey() {
+  copied.value = false;
   try {
-    await navigator.clipboard.writeText(freshKey.value);
+    await copyText(freshKey.value);
     copied.value = true;
   } catch { toast.error("复制失败，请手动选择文本"); }
 }

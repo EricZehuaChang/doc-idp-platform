@@ -459,6 +459,7 @@ import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { toast } from "../toast";
+import { copyText } from "../clipboard";
 
 const tab = ref<"email" | "users" | "logs" | "billing" | "byok" | "sso" | "apikeys">("email");
 
@@ -865,8 +866,9 @@ async function createKey() {
   } catch (e) { toast.error(e); }
 }
 async function copyKey() {
+  copied.value = false;
   try {
-    await navigator.clipboard.writeText(freshKey.value);
+    await copyText(freshKey.value);
     copied.value = true;
   } catch { toast.error("复制失败，请手动选择文本"); }
 }
