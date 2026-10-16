@@ -1,145 +1,170 @@
 <template>
   <div class="sample-panel" :class="{ collapsed }">
-    <div class="sp-head" @click="collapsed = !collapsed">
-      <strong>样本</strong>
-      <span class="dim">{{ activeName || "未选择" }}</span>
-      <button class="sp-toggle">{{ collapsed ? "▸" : "◂" }}</button>
-    </div>
+    <header class="sp-head">
+      <template v-if="!collapsed">
+        <strong>参考样本</strong>
+        <select v-if="samples.length" :value="activeId" aria-label="当前参考样本"
+                @change="selectById(($event.target as HTMLSelectElement).value)">
+          <option v-for="s in samples" :key="s.id" :value="s.id">{{ s.file_name }}</option>
+        </select>
+        <span v-else class="dim">尚未上传</span>
+      </template>
+      <button class="sp-toggle" :aria-expanded="!collapsed" :title="collapsed ? '展开样本' : '收起样本'"
+              @click="toggleCollapse">{{ collapsed ? '展开样本 ›' : '‹ 收起' }}</button>
+    </header>
     <template v-if="!collapsed">
-      <label class="file-btn slim">
-        <input type="file" hidden @change="upload" :disabled="uploading" />
-        <span class="btn-like">{{ uploading ? "⏳ 上传中…" : "＋ 上传样本" }}</span>
-      </label>
-      <ul class="sp-list">
-        <li v-for="s in samples" :key="s.id"
-            :class="{ on: s.id === activeId }" @click="select(s)">
-          <span class="nm" :title="s.file_name">{{ s.file_name }}</span>
-          <button class="del" title="删除样本"
-                  @click.stop="removeSample(s.id)">×</button>
-        </li>
-        <li v-if="!samples.length" class="dim none">还没有样本</li>
-      </ul>
       <div v-if="activeId" class="sp-stage">
-        <DocStage :src="fileUrl" :file-name="activeName || 'sample'"
-                  :pages="pages" :active-box="null" :active-page="1"
-                  :annotate="false" />
+        <DocStage :src="fileUrl" :file-name="activeName" :pages="stagePages?.length ? stagePages : pages"
+                  :active-box="activeBox" :active-page="activePage ?? 1" :annotate="false"
+                  :boxes="boxes" :active-key="activeKey || undefined" compact fit-width
+                  @pick="emit('pick', $event)" />
       </div>
-      <p v-if="parseError" class="dim sp-warn">预解析未成功（{{ parseError }}）——不影响手工对照。</p>
+      <label v-else class="sp-empty">
+        <span class="upload-mark">＋</span><strong>上传一份参考样本</strong>
+        <span class="dim">对照原件定义字段，也可以从样本生成建议</span>
+        <span class="btn-like">{{ uploading ? '上传中…' : '选择文件' }}</span>
+        <input type="file" hidden :disabled="uploading" @change="upload" />
+      </label>
+      <footer v-if="activeId" class="sp-footer">
+        <span class="dim">{{ samples.length }} 份样本 · 点击原件标注可定位字段</span>
+        <label class="file-btn slim"><input type="file" hidden @change="upload" :disabled="uploading" />
+          <span class="btn-like">{{ uploading ? '上传中…' : '＋ 上传' }}</span></label>
+        <button class="delete-sample" @click="removeSample(activeId)">删除样本</button>
+      </footer>
+      <p v-if="parseError" class="dim sp-warn">预解析未成功（{{ parseError }}），仍可手工对照。</p>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { api } from "../api";
 import DocStage from "./DocStage.vue";
 import { toast } from "../toast";
-
-type SampleRow = { id: string; file_name: string; skill_code: string | null;
-                   created_at: string };
+type SampleRow = { id: string; file_name: string; skill_code: string | null; created_at: string };
 type PageDim = { page_no: number; width: number; height: number };
-
-const props = defineProps<{ skillCode?: string }>();
-
+const props = defineProps<{
+  skillCode?: string;
+  boxes?: { key: string; label: string; page: number; bbox: number[] }[];
+  activeKey?: string | null;
+  activePage?: number;
+  stagePages?: PageDim[];
+}>();
+const emit = defineEmits<{
+  (e: "select", sample: { id: string; file_name: string } | null): void;
+  (e: "pick", key: string): void;
+  (e: "collapse", collapsed: boolean): void;
+  (e: "uploading", uploading: boolean): void;
+}>();
 const collapsed = ref(false);
 const samples = ref<SampleRow[]>([]);
 const activeId = ref("");
-const activeName = ref("");
+const activeName = computed(() => samples.value.find(s => s.id === activeId.value)?.file_name || "sample");
+const fileUrl = computed(() => activeId.value ? api.studioSampleFileUrl(activeId.value) : "");
+const activeBox = computed(() => props.boxes?.find(b => b.key === props.activeKey)?.bbox ?? null);
 const pages = ref<PageDim[]>([]);
 const parseError = ref<string | null>(null);
 const uploading = ref(false);
-/** ids uploaded while the skill code was still empty (D6) */
 const pendingIds = ref<string[]>([]);
-
-const fileUrl = ref("");
-
-async function load() {
-  // #20 (走查): the panel used to list every sample of the tenant and load
-  // only once on mount. It now asks for THIS skill's samples and reloads when
-  // the editor switches skill or a sample is uploaded.
-  try {
-    samples.value = (await api.studioSamples(props.skillCode || undefined)).samples;
-    if (activeId.value && !samples.value.some((s) => s.id === activeId.value)) {
-      activeId.value = "";
-      fileUrl.value = "";
-      pages.value = [];
-    }
-  } catch (e) { toast.error(e); }
+const metadata = new Map<string, { pages: PageDim[]; parse_error: string | null }>();
+let loadId = 0;
+let alive = true;
+let adoption: Promise<void> | null = null;
+function toggleCollapse() { collapsed.value = !collapsed.value; emit("collapse", collapsed.value); }
+function selectById(id: string) {
+  const sample = samples.value.find(s => s.id === id);
+  activeId.value = sample?.id ?? "";
+  pages.value = metadata.get(id)?.pages ?? [];
+  parseError.value = metadata.get(id)?.parse_error ?? null;
+  emit("select", sample ? { id: sample.id, file_name: sample.file_name } : null);
 }
+async function load() {
+  const request = ++loadId;
+  const code = props.skillCode;
+  try {
+    // New skills show only this editor session's uploads, never tenant-wide samples.
+    const rows = code ? (await api.studioSamples(code)).samples : samples.value.filter(s => pendingIds.value.includes(s.id));
+    if (!alive || request !== loadId || code !== props.skillCode) return;
+    samples.value = rows;
+    selectById(rows.some(s => s.id === activeId.value) ? activeId.value : rows[0]?.id ?? "");
+  } catch (e) { if (alive && request === loadId) toast.error(e); }
+}
+// Await before navigating a new skill, so session uploads survive a remount.
+async function adoptSamples(skillCode: string) {
+  if (adoption) return adoption;
+  adoption = (async () => {
+    for (const id of [...pendingIds.value]) {
+      await api.studioAdoptSample(id, skillCode);
+      pendingIds.value = pendingIds.value.filter(x => x !== id);
+      const sample = samples.value.find(s => s.id === id);
+      if (sample) sample.skill_code = skillCode;
+    }
+  })();
+  try { await adoption; } finally { adoption = null; }
+}
+defineExpose({ adoptSamples });
 onMounted(load);
 watch(() => props.skillCode, async (code, prev) => {
-  if (code === prev) return;
+  ++loadId;
+  if (code && !prev) { try { await adoptSamples(code); } catch (e) { toast.error(e); return; } }
   await load();
-  // D6: samples uploaded while creating a skill were unassigned — once the
-  // skill exists, adopt this session's uploads into it.
-  if (code && !prev) await adoptUnassigned();
 });
-
-/** D6 (#20): claim the session's unassigned uploads for the new skill code. */
-async function adoptUnassigned() {
-  const mine = pendingIds.value;
-  if (!mine.length) return;
-  try {
-    for (const id of mine) await api.studioAdoptSample(id, props.skillCode!);
-    pendingIds.value = [];
-    await load();
-  } catch { /* adoption is best-effort; the sample stays unassigned */ }
-}
-
-async function select(s: SampleRow) {
-  activeId.value = s.id;
-  activeName.value = s.file_name;
-  parseError.value = null;
-  pages.value = [];
-  // original streams through the authenticated preview path used by DocStage
-  fileUrl.value = api.studioSampleFileUrl(s.id);
-}
-
+onBeforeUnmount(() => { alive = false; ++loadId; });
 async function upload(ev: Event) {
-  const file = (ev.target as HTMLInputElement).files?.[0];
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
+  const code = props.skillCode;
   uploading.value = true;
+  emit("uploading", true);
   try {
-    const r = await api.studioUploadSample(file, props.skillCode);
-    if (!props.skillCode) pendingIds.value.push(r.id);   // adopt after create
-    toast.ok("样本已上传");
-    pages.value = r.pages;
-    parseError.value = r.parse_error;
+    const r = await api.studioUploadSample(file, code);
+    if (!alive || code !== props.skillCode) return;
+    if (!code) pendingIds.value.push(r.id);
+    metadata.set(r.id, { pages: r.pages, parse_error: r.parse_error });
+    samples.value.push({ id: r.id, file_name: r.file_name, skill_code: code || null, created_at: "" });
+    activeId.value = r.id;
     await load();
-    await select({ id: r.id, file_name: r.file_name, skill_code: null,
-                   created_at: "" });
-  } catch (e) { toast.error(e); }
-  finally {
-    uploading.value = false;
-    (ev.target as HTMLInputElement).value = "";
-  }
+    toast.ok("样本已上传");
+  } catch (e) { if (alive) toast.error(e); }
+  finally { uploading.value = false; if (alive) emit("uploading", false); input.value = ""; }
 }
-
 async function removeSample(id: string) {
   if (!confirm("删除该样本？仅影响编辑器里的参考文件。")) return;
+  const code = props.skillCode;
   try {
     await api.studioDeleteSample(id);
-    if (activeId.value === id) { activeId.value = ""; fileUrl.value = ""; }
+    if (!alive || code !== props.skillCode) return;
+    pendingIds.value = pendingIds.value.filter(x => x !== id);
+    metadata.delete(id);
+    samples.value = samples.value.filter(s => s.id !== id);
     await load();
-  } catch (e) { toast.error(e); }
+  } catch (e) { if (alive) toast.error(e); }
 }
 </script>
 
 <style scoped>
-.sample-panel { border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg-panel); padding: 10px; display: flex;
-  flex-direction: column; gap: 8px; min-width: 280px; max-width: 420px; }
-.sample-panel.collapsed { min-width: 0; max-width: 44px; cursor: pointer; }
-.sp-head { display: flex; gap: 8px; align-items: center; cursor: pointer; }
-.sp-toggle { margin-left: auto; border: 0; background: none; cursor: pointer; }
-.sp-list { list-style: none; margin: 0; padding: 0; max-height: 130px;
-  overflow: auto; }
-.sp-list li { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
-  border-radius: 6px; cursor: pointer; font-size: 13px; }
-.sp-list li.on, .sp-list li:hover { background: var(--bg-hover); }
-.sp-list li.none { cursor: default; }
-.nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.del { border: 0; background: none; color: var(--red); cursor: pointer; }
-.sp-stage { height: 420px; }
-.sp-warn { font-size: 12px; }
+.sample-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel);
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.sp-head { display: flex; gap: 10px; align-items: center; min-height: 55px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); }
+.sp-head strong { white-space: nowrap; font-size: 13px; }
+.sp-head select { flex: 1; min-width: 0; max-width: 100%; font-size: 12px; }
+.sp-toggle { margin-left: auto; white-space: nowrap; font-size: 12px; background: transparent; }
+.collapsed .sp-head { border: 0; padding: 10px 6px; }
+.collapsed .sp-toggle { writing-mode: vertical-rl; padding: 10px 5px; }
+.sp-stage { flex: 1; min-height: 360px; background: var(--bg); padding: 6px; }
+.sp-empty { flex: 1; min-height: 360px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; padding: 28px; text-align: center; cursor: pointer; }
+.upload-mark { font-size: 30px; color: var(--accent); }
+.sp-empty .dim { font-size: 13px; line-height: 1.8; }
+.sp-footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px;
+  border-top: 1px solid var(--border); font-size: 11px; }
+.sp-footer > .dim { margin-right: auto; }
+.sp-footer button, .sp-footer .btn-like { font-size: 12px; padding: 5px 8px; }
+.delete-sample { color: var(--text-dim); background: transparent; border-color: transparent; }
+.delete-sample:hover { color: var(--red); }
+.sp-warn { padding: 0 12px; font-size: 12px; }
+.dim { color: var(--text-dim); }
+@media(max-width: 600px) { .sp-head { gap: 6px; padding: 10px; } .sp-head strong { display: none; } }
 </style>

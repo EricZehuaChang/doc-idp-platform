@@ -26,6 +26,8 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     try { detail = _detailText((await resp.json()).detail); } catch { /* non-JSON body */ }
     throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
   }
+  // Sample deletion succeeds with 204 and intentionally has no JSON body.
+  if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
 }
 

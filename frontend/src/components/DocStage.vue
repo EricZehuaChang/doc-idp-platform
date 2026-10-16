@@ -1,12 +1,12 @@
 <template>
-  <div class="stage" ref="stageEl">
+  <div class="stage" :class="{ compact }" ref="stageEl">
     <!-- zoom / rotate toolbar (WP2): same tool semantics for images and PDFs —
          左转/右转、适应页面、放大/缩小、1:1、重置; the toolbar and rail always
          stay upright because only page content is transformed -->
     <div class="tools">
       <button title="左转 90°" @click="rotateBy(-90)">⟲</button>
       <button title="右转 90°" @click="rotateBy(90)">⟳</button>
-      <button title="适应页面" :class="{ on: fitMode }" @click="fitMode = true">适应</button>
+      <button :title="fitWidth ? '适应宽度' : '适应页面'" :class="{ on: fitMode }" @click="fitMode = true">适应</button>
       <button title="缩小" @click="zoomBy(-0.25)">－</button>
       <span class="zoom-val">{{ Math.round(zoom * 100) }}%</span>
       <button title="放大" @click="zoomBy(0.25)">＋</button>
@@ -164,6 +164,8 @@ const props = defineProps<{
   /** server-converted PDF for Office originals (需求3): when set, the stage
    *  renders this instead of `src`, which stays the download target */
   previewSrc?: string;
+  compact?: boolean;
+  fitWidth?: boolean;
 }>();
 const emit = defineEmits<{
   (e: "box", page: number, bbox: number[]): void;
@@ -255,7 +257,8 @@ function refit() {
   const rail = vp.querySelector<HTMLElement>(".page-rail");
   const availW = vp.clientWidth - (rail ? rail.offsetWidth + 10 : 0) - 28;
   const availH = vp.clientHeight - 28;
-  const f = fitScale(availW, availH, dim.w, dim.h, rotation.value);
+  const f = props.fitWidth ? availW / rotatedSize(dim.w, dim.h, rotation.value).w
+    : fitScale(availW, availH, dim.w, dim.h, rotation.value);
   if (f != null && Number.isFinite(f) && f > 0) zoom.value = f;
 }
 
@@ -547,6 +550,14 @@ onBeforeUnmount(() => {
 .tools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 2px 0; }
 .tools button { padding: 2px 10px; font-size: 13px; }
 .tools button.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.stage.compact { position: relative; padding-bottom: 44px; }
+.compact .tools { position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%);
+  z-index: 5; max-width: calc(100% - 12px); overflow-x: auto; white-space: nowrap;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 9px;
+  padding: 5px; gap: 2px; box-shadow: 0 4px 16px #0003; }
+.compact .tools button { padding: 4px 7px; flex-shrink: 0; }
+.compact .tools .hint.load { display: none; }
+.compact .scaler { margin-top: 0; }
 .zoom-val { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; }
 .hint { font-size: 12px; color: var(--accent); }
 .hint.load { margin-left: auto; }

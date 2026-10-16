@@ -22,7 +22,7 @@
             ▾
           </summary>
           <div class="ver-pop">
-            <button class="new-ver" @click="newVersion">＋ 新建版本</button>
+            <button class="new-ver" :disabled="saving || fieldTrialStarting || sampleUploading" @click="newVersion">＋ 新建版本</button>
             <div v-for="v in [...versions].reverse()" :key="v.version" class="ver-card"
                  :class="{ current: v.version === selectedVersion }"
                  @click="selectVersion(v.version)">
@@ -58,9 +58,9 @@
                       @click="removeVersion">删除当前版本</button>
             </div>
           </details>
-          <button class="primary" :disabled="saving" @click="save">
-            💾 {{ isNew ? "创建技能" : saveLabel }}</button>
-          <button v-if="!isNew && selectedStatus === 'draft'" class="confirm"
+          <button class="primary" :disabled="saving || fieldTrialStarting || sampleUploading || importing || enriching" @click="save">
+            {{ saving ? "保存中…" : (isNew ? "创建技能" : saveLabel) }}</button>
+          <button v-if="!isNew && selectedStatus === 'draft'" class="confirm" :disabled="saving || fieldTrialStarting || sampleUploading"
                   @click="publishSelected">🚀 发布</button>
         </div>
       </div>
@@ -73,21 +73,15 @@
 
       <!-- —— 设计 tab —— -->
       <template v-if="tab === 'design'">
-        <div v-if="isNew && !pkg.fields.length" class="guide card-panel">
-          <span class="step"><b>1</b> 自动生成或起草字段</span>
-          <span class="arrow">→</span>
-          <span class="step"><b>2</b> 逐字段核对修改（点 ✎ 编辑）</span>
-          <span class="arrow">→</span>
-          <span class="step"><b>3</b> 测试页签试跑，创建并发布</span>
-        </div>
-
-        <div class="design-body">
+        <div class="design-body" :inert="saving">
           <!-- flow rail: 基础 → (文档分类) → 字段提取 → 文件产出 -->
           <nav class="flow-rail" aria-label="设计步骤">
-            <button v-for="n in flowNodes" :key="n.key" class="node"
+            <button v-for="(n, ni) in flowNodes" :key="n.key" class="node"
                     :class="{ on: step === n.key, bad: n.bad }"
+                    :disabled="saving || fieldTrialStarting"
+                    :aria-current="step === n.key ? 'step' : undefined"
                     @click="goto(n.key)">
-              <span class="lbl"><span class="dot"></span>{{ n.label }}</span>
+              <span class="lbl"><span class="step-number">{{ ni + 1 }}</span>{{ n.label }}</span>
               <span class="sub dim">{{ n.sub }}</span>
             </button>
           </nav>
@@ -97,9 +91,9 @@
             <h3 class="block-title">基本信息</h3>
             <div class="basic-grid">
               <label>技能名称
-                <input v-model="pkg.name" placeholder="例如：XCMG 海外发票" /></label>
+                <input ref="skillNameInput" v-model="pkg.name" placeholder="例如：XCMG 海外发票" /></label>
               <label>skill_code（英文，创建后不可改）
-                <input v-model="pkg.skill_code" class="mono" :disabled="!isNew" /></label>
+                <input ref="skillCodeInput" v-model="pkg.skill_code" class="mono" :disabled="!isNew" /></label>
               <label class="span2">描述
                 <textarea v-model="pkg.description" rows="2"
                           placeholder="这个技能处理什么文档、服务什么业务（给同事看的说明）"></textarea>
@@ -290,10 +284,20 @@
                category defined in 「文档分类」, each with its own extraction —
                fields of this skill, a referenced skill (read-only, with source,
                jump link and impact), or classification only. -->
-          <section v-show="step === 'fields'" class="card-panel block step-panel fields-step">
-            <SamplePanel :skill-code="isNew ? undefined : code"
-                         class="sample-col" />
-            <div class="fields-col">
+          <section v-show="step === 'fields'" class="fields-step"
+                   :class="{ 'sample-collapsed': sampleCollapsed, 'show-sample': mobilePane === 'sample' }"
+                   data-testid="fields-workbench">
+            <nav class="mobile-panes" aria-label="字段工作区">
+              <button :class="{ on: mobilePane === 'sample' }" @click="mobilePane = 'sample'">样本</button>
+              <button :class="{ on: mobilePane === 'fields' }" @click="mobilePane = 'fields'">字段 · {{ curFields.length }}</button>
+            </nav>
+            <SamplePanel ref="samplePanel" :skill-code="isNew ? undefined : code"
+                         :boxes="fieldTrialBoxes" :active-key="activeFieldName" :stage-pages="fieldTrialPages"
+                         :active-page="fieldActivePage" class="sample-col"
+                         @select="selectFieldSample" @pick="pickFieldBox"
+                         @uploading="sampleUploading = $event"
+                         @collapse="sampleCollapsed = $event" />
+            <fieldset class="fields-col card-panel" :disabled="saving || fieldTrialStarting">
               <template v-if="activeCat">
                 <nav class="cat-tabs" aria-label="按类别配置字段">
                   <button v-for="c in editableCats" :key="c.id" class="cat-tab"
@@ -316,70 +320,63 @@
               </template>
 
               <template v-if="!activeCat || activeCat.handler === 'inline'">
-                <div class="block-head">
-                  <h3 class="block-title">{{ activeCat ? `「${catName(activeCat)}」的字段` : "字段配置" }}</h3>
-                  <div class="seg" role="group" aria-label="输出结构">
-                    <button :class="{ on: fieldShape !== 'list' }"
-                            title="每个字段一个键（默认）"
-                            @click="fieldShape = 'object'">Object</button>
-                    <button :class="{ on: fieldShape === 'list' }"
-                            title="结果为对象数组，每行一组字段（如逐行明细）"
-                            @click="fieldShape = 'list'">List</button>
+                <div class="field-heading">
+                  <div>
+                    <h3>{{ activeCat ? `「${catName(activeCat)}」的字段` : "字段提取" }} <span class="field-count">{{ curFields.length }}</span></h3>
+                    <p class="dim">对照左侧样本，定义需要提取的信息。</p>
                   </div>
-                  <button class="mini" :disabled="!undoStack.length"
-                          title="撤销上一次自动生成/起草的结果"
-                          @click="undoGenerate">↩ 撤销上次生成</button>
-                  <button class="mini primary" @click="genModal = true">✨ 自动生成字段</button>
-                  <details class="more-draft">
-                    <summary class="mini btn-like">更多起草方式 ▾</summary>
-                    <div class="more-pop" ref="morePopEl">
+                  <span class="save-state dim">{{ saving ? "保存中…" : dirty ? "有未保存修改" : isNew ? "尚未创建" : "已保存" }}</span>
+                </div>
+                <div class="field-actions">
+                  <button class="primary" data-testid="field-trial"
+                          :disabled="!activeSample || !curFields.length || saving || fieldTrialStarting || sampleUploading || pgPolling || pgCreating || importing || enriching"
+                          :title="!activeSample ? '先上传或选择一份样本' : '先保存当前定义，再试抽当前样本'"
+                          @click="runFieldTrial">{{ fieldTrialStarting ? "保存并准备试抽…" : fieldTrialRunning ? "试抽中…" : fieldTrial ? "重新试抽" : "试抽当前样本" }}</button>
+                  <button @click="genPanel = !genPanel">生成字段</button>
+                  <button @click="addInlineField">＋ 添加</button>
+                  <details class="more-draft field-more">
+                    <summary class="btn-like" aria-label="更多字段操作">•••</summary>
+                    <div class="more-pop">
+                      <button :disabled="!undoStack.length" @click="undoGenerate">撤销上次生成</button>
                       <label class="file-btn slim">
-                        <input type="file" hidden @change="probe" :disabled="probing" />
-                        <span class="btn-like">{{ probing ? "⏳ 分析中…" : "⚡ 样本预标注" }}</span>
-                      </label>
-                      <!-- #18: picking an item closes the popover (it used to stay
-                           open and cover the panel it had just revealed) -->
-                      <button class="mini" :class="{ primary: textPanel }"
-                              @click="openTextPanel">📝 描述生成</button>
-                      <label class="file-btn slim">
-                        <input type="file" accept=".xlsx,.csv,.tsv" hidden @change="tableImport" />
-                        <span class="btn-like">📊 表格导入</span>
+                        <input type="file" accept=".xlsx,.csv,.tsv" hidden :disabled="importing" @change="tableImport" />
+                        <span class="btn-like">{{ importing ? '导入中…' : '表格导入' }}</span>
                       </label>
                       <button class="mini" :disabled="!curFields.length || enriching"
                               title="把字段说明扩写为完整抽取指令"
                               @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
+                      <button class="danger" :disabled="!curFields.length" @click="clearFields">清空全部字段</button>
                     </div>
                   </details>
-                  <button v-if="curFields.length" class="mini danger"
-                          @click="clearFields">清空全部字段</button>
                 </div>
-
-                <div v-if="textPanel" class="text-panel">
-                  <textarea v-model="draftText" rows="4"
-                            placeholder="用一段话描述要抽取什么。例：从海外发票抽取发票号（去掉空格和连字符）、开票日期（统一 YYYY-MM-DD）、币种（ISO 三位码）、总金额（保留两位小数）…"></textarea>
-                  <div class="text-panel-act">
-                    <span class="dim">生成的字段会预填到下方，可修改后再保存（消耗少量 token）</span>
-                    <button class="primary" :disabled="drafting || !draftText.trim()"
-                            @click="draftFromText">{{ drafting ? "⏳ 起草中…" : "生成字段草稿" }}</button>
-                  </div>
+                <GenerateFieldsPanel v-if="genPanel || !curFields.length"
+                                     :key="`${activeCat?.id ?? 'standard'}:${activeSample?.id ?? ''}`"
+                                     :sample-id="activeSample?.id" :sample-name="activeSample?.file_name"
+                                     :existing-count="curFields.length"
+                                     @apply="applyGenerated" @close="genPanel = false" />
+                <div v-if="curFields.length" class="trial-banner" :class="{ stale: fieldTrialStale, failed: fieldTrialError }" role="status">
+                  <span v-if="fieldTrialError">{{ fieldTrialError }}</span>
+                  <span v-else-if="fieldTrialStarting">正在保存当前字段定义…</span>
+                  <span v-else-if="fieldTrialRunning">正在试抽「{{ activeSample?.file_name }}」…</span>
+                  <span v-else-if="fieldTrialStale">定义已修改，下面的结果可能已过期。请重新试抽。</span>
+                  <span v-else-if="fieldTrialReady">试抽完成 · {{ fieldTrialFilled }}/{{ curFields.length }} 个字段有值<span v-if="pgDuration != null"> · {{ (pgDuration / 1000).toFixed(1) }} 秒</span></span>
+                  <span v-else>{{ activeSample ? '试抽当前样本，核对每个字段的值与位置。' : '上传一份样本后，即可在这里试抽核对。' }}</span>
+                  <select v-if="fieldTrialDocs.length > 1" v-model.number="fieldTrialDocIndex" aria-label="选择试抽文档">
+                    <option v-for="(doc, di) in fieldTrialDocs" :key="doc.file_id" :value="di">{{ doc.doc_type || '文档' }} {{ di + 1 }} · {{ doc.page_range }}</option>
+                  </select>
                 </div>
-
-                <p v-if="!curFields.length" class="dim pad">
-                  还没有字段。用「✨ 自动生成字段」从样本/描述起草，或「＋ 添加字段」手动创建。
-                </p>
-                <p v-if="curFields.length > 1" class="dim drag-tip">
-                  拖动字段左侧 ⠿ 可调整顺序；顺序即抽取结果与导出的字段顺序，保存后生效。
-                </p>
+                <div v-if="curFields.length" class="field-list-head" aria-hidden="true"><span></span><span>字段与说明</span><span>类型</span><span>试抽结果</span><span>状态</span><span></span><span></span></div>
                 <div class="field-tree" ref="treeEl">
-                  <FieldCard v-for="(f, i) in curFields" :key="f.name || i" :field="f" :index="i"
+                  <FieldCard v-for="(f, i) in curFields" :key="`${activeCat?.id ?? 'standard'}:${i}`" :field="f" :index="i"
+                             inline :expanded="expandedField === i" :active="activeFieldName === f.name"
+                             :result="fieldValue(f.name)" :result-status="fieldResultStatus(f.name)"
                              :drag-from="reorder.from.value ?? -1" :drag-over="reorder.over.value ?? -1"
-                             @edit="openEdit(curFields, i)"
-                             @remove="curFields.splice(i, 1)"
-                             @edit-column="(ci) => openEdit(f.columns, ci, true)"
-                             @add-column="openAdd(f.columns, true)"
+                             @select="selectInlineField(i)" @update="curFields.splice(i, 1, $event)"
+                             @remove="removeInlineField(i)"
                              @grip-down="startFieldDrag" />
-                  <button class="add-field" @click="openAdd(curFields)">＋ 添加字段</button>
+                  <button class="add-field" @click="addInlineField">＋ 添加字段</button>
                 </div>
+                <p v-if="curFields.length" class="dim drag-tip">拖动 ⠿ 调整字段顺序；点字段展开编辑，与样本对照。</p>
               </template>
 
               <!-- existing_skill: R10 reference (图16) + F-02 §3.18 source/jump/impact -->
@@ -424,14 +421,20 @@
                           placeholder="只作用于该类别的补充说明"></textarea></label>
 
               <details v-if="!activeCat || activeCat.handler === 'inline'" class="rules-fold">
-                <summary>{{ activeCat ? "通用附加规则（可选，没有填写类别附加规则的类别使用）"
-                                     : "附加规则（可选，自由文本，进提示词）" }}</summary>
+                <summary>更多设置 · 输出结构与附加规则</summary>
+                <div class="output-shape"><span class="dim">输出结构</span>
+                  <div class="seg" role="group" aria-label="输出结构">
+                    <button :class="{ on: fieldShape !== 'list' }" @click="fieldShape = 'object'">Object</button>
+                    <button :class="{ on: fieldShape === 'list' }" @click="fieldShape = 'list'">List</button>
+                  </div>
+                </div>
+                <label class="dim">{{ activeCat ? '通用附加规则（未填写类别附加规则时使用）' : '附加规则' }}</label>
                 <textarea v-model="pkg.additional_rules" rows="2"
                           placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea>
               </details>
               <p v-if="activeCat && pkg.fields.length" class="dim" data-testid="top-fields-note">
                 另有 {{ pkg.fields.length }} 个标准模式字段：切回「标准」技能模式或使用极速模式时生效，高级模式下不使用。</p>
-            </div>
+            </fieldset>
           </section>
 
           <!-- —— 文件产出（9.15 WP6，图18-20） —— -->
@@ -522,7 +525,7 @@
                     <li v-if="!pgFilteredSamples.length" class="dim">还没有样本</li>
                   </ul>
                   <button class="primary" data-testid="pg-run"
-                          :disabled="!pgSelected.length || pgPolling" @click="pgRun">
+                          :disabled="!pgSelected.length || pgPolling || pgCreating || fieldTrialStarting" @click="pgRun">
                     运行测试（{{ pgSelected.length }}）</button>
                 </div>
                 <!-- #26: switch between the files of one multi-sample run -->
@@ -756,18 +759,13 @@
       </template>
     </div>
 
-    <FieldEditModal v-if="editing" :field="editing.spec" :is-new="editing.isNew"
-                    :is-column="editing.isColumn"
-                    @save="commitEdit" @cancel="editing = null" />
     <SkillApiModal v-if="apiModal" :skill-code="code" @close="apiModal = false" />
-    <GenerateFieldsModal v-if="genModal" :skill-code="code"
-                         @apply="applyGenerated" @close="genModal = false" />
   </main>
   <main v-else class="editor"><Skeleton :rows="8" /></main>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type Artifact, type CategorySpec,
          type DryRunEntry, type FieldCell,
@@ -775,8 +773,7 @@ import { api, downloadFile, type Artifact, type CategorySpec,
 import AppModal from "../components/AppModal.vue";
 import DocStage from "../components/DocStage.vue";
 import FieldCard from "../components/FieldCard.vue";
-import FieldEditModal from "../components/FieldEditModal.vue";
-import GenerateFieldsModal from "../components/GenerateFieldsModal.vue";
+import GenerateFieldsPanel from "../components/GenerateFieldsPanel.vue";
 import SamplePanel from "../components/SamplePanel.vue";
 import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -813,10 +810,31 @@ const selectedStatus = computed(() =>
 // —— WP3 editor state ——
 const tab = ref<"design" | "test">("design");
 const step = ref<"basic" | "classify" | "fields" | "output">("basic");
-const genModal = ref(false);
+const genPanel = ref(false);
+const samplePanel = ref<InstanceType<typeof SamplePanel>>();
+const skillNameInput = ref<HTMLInputElement>();
+const skillCodeInput = ref<HTMLInputElement>();
+const activeSample = ref<{ id: string; file_name: string } | null>(null);
+const sampleUploading = ref(false);
+const sampleCollapsed = ref(false);
+const mobilePane = ref<"sample" | "fields">("fields");
+const expandedField = ref<number | null>(null);
+const activeFieldName = ref<string | null>(null);
+const fieldActivePage = ref(1);
+const fieldTrialStarting = ref(false);
+const fieldTrial = ref<{ sampleId: string; txnId: string; signature: string } | null>(null);
+const fieldTrialDocIndex = ref(0);
+const fieldTrialStage = ref<Record<string, unknown>>({});
+const fieldTrialPages = ref<{ page_no: number; width: number; height: number }[]>([]);
+const generatedExamples = ref<Record<string, Record<string, unknown>>>({});
+let skillEpoch = 0;
+let loadRequest = 0;
+let runRequest = 0;
+let preservedCreatedCode: string | null = null;
 // one-shot undo for generation merges; `cat` = the category whose list it was
 // (null = top-level fields), so switching tabs never restores into the wrong list
-const undoStack = ref<{ cat: string | null; fields: FieldSpec[] }[]>([]);
+const undoStack = ref<{ cat: string | null; fields: FieldSpec[]; exampleKey: string;
+                       examples: Record<string, unknown> }[]>([]);
 
 function blankPkg(): SkillPackage {
   return { skill_code: "", name: "", description: "", kind: "extract", doc_type_hint: "",
@@ -845,6 +863,21 @@ function catFieldCount(p: SkillPackage): number {
 }
 
 function resetPerSkillState() {
+  skillEpoch++;
+  loadRequest++;
+  runRequest++;
+  activeSample.value = null;
+  sampleUploading.value = false;
+  sampleCollapsed.value = false;
+  mobilePane.value = "fields";
+  expandedField.value = null;
+  activeFieldName.value = null;
+  fieldTrial.value = null;
+  fieldTrialStarting.value = false;
+  fieldTrialStage.value = {};
+  fieldTrialPages.value = [];
+  generatedExamples.value = {};
+  genPanel.value = false;
   changelog.value = "";
   step.value = "basic";
   activeCatId.value = null;
@@ -872,21 +905,28 @@ function resetPerSkillState() {
   pgStageResult.value = {};
   dryRuns.value = [];
   undoStack.value = [];
-  draftText.value = "";
-  textPanel.value = false;
   if (pgTimer) { clearInterval(pgTimer); pgTimer = null; }
   pgPolling.value = false;
+  pgCreating.value = false;
+  importing.value = false;
+  enriching.value = false;
+  saving.value = false;
+  preservedCreatedCode = null;
+  savedSnapshot.value = "";
 }
 
 async function load(version?: number) {
+  const skillCode = props.code;
+  const request = ++loadRequest;
   if (isNew.value) {
     pkg.value = blankPkg();
     versions.value = [];
     selectedVersion.value = null;
-    return;
+    return true;
   }
   try {
-    const d = await api.skillDetail(props.code, version);
+    const d = await api.skillDetail(skillCode, version);
+    if (props.code !== skillCode || request !== loadRequest) return false;
     pkg.value = { ...blankPkg(), ...(d.latest_package ?? {}),
                   skill_code: d.skill_code, name: d.latest_package?.name || d.name };
     // the detail dump of a v1 row fills schema_version with the Loose default 1;
@@ -896,15 +936,26 @@ async function load(version?: number) {
     versions.value = d.versions;
     selectedVersion.value = d.selected_version ?? null;
     changelog.value = d.versions.find((v) => v.version === d.selected_version)?.changelog ?? "";
-  } catch (e) { toast.error(e); }
+    return true;
+  } catch (e) { if (request === loadRequest) toast.error(e); return false; }
 }
-watch(() => props.code, (_code, prev) => {
+watch(() => props.code, (code, prev) => {
+  // Creating a draft changes the URL, but keeps this editing session and its
+  // adopted sample alive so the requested trial can continue on the same file.
+  if (prev === "new" && code === preservedCreatedCode) {
+    preservedCreatedCode = null;
+    return;
+  }
   // #14: reset only on a real switch — the immediate (first) call runs during
   // setup, before the Playground refs below are initialised.
   if (prev !== undefined) resetPerSkillState();
   load();
 }, { immediate: true });
-function selectVersion(v: number) { load(v); }
+function selectVersion(v: number) {
+  if (saving.value || fieldTrialStarting.value) return;
+  fieldTrial.value = null;
+  void load(v);
+}
 
 function goto(k: string) {
   step.value = k as typeof step.value;
@@ -1153,7 +1204,7 @@ const activeCat = computed<CategorySpec | null>(() => {
 /** The list the field tools edit: the active inline category's, else the
  *  skill's top-level fields. */
 const curFields = computed<FieldSpec[]>(() =>
-  activeCat.value?.handler === "inline" ? activeCat.value.fields : pkg.value!.fields);
+  activeCat.value?.handler === "inline" ? activeCat.value.fields : pkg.value?.fields ?? []);
 function setCurFields(v: FieldSpec[]) {
   if (activeCat.value?.handler === "inline") activeCat.value.fields = v;
   else pkg.value!.fields = v;
@@ -1220,6 +1271,7 @@ const pgSearch = ref("");
 const pgSelected = ref<string[]>([]);
 watch(() => pgSelected.value[0], outQueuePreview);
 const pgPolling = ref(false);
+const pgCreating = ref(false);
 const pgHistoryOpen = ref(false);
 const pgDetailOpen = ref(false);
 const pgDetailLoading = ref(false);
@@ -1336,12 +1388,19 @@ async function pgUpload(e: Event) {
 }
 
 async function pgRun() {
-  if (!pgSelected.value.length) return;
+  await startPlaygroundRun([...pgSelected.value]);
+}
+
+async function startPlaygroundRun(sampleIds: string[], version?: number): Promise<string | null> {
+  if (!sampleIds.length || pgPolling.value || pgCreating.value) return null;
   const skillCode = props.code;
+  const request = ++runRequest;
+  pgCreating.value = true;
   try {
-    const r = await api.studioCreateRun({ skill_code: props.code ?? "",
-                                         sample_ids: pgSelected.value });
-    if (props.code !== skillCode) return;
+    const r = await api.studioCreateRun({ skill_code: skillCode,
+                                         ...(version != null ? { version } : {}),
+                                         sample_ids: sampleIds });
+    if (props.code !== skillCode || request !== runRequest) return null;
     pgCurrentRun.value = r.runs[0]?.run_id ?? null;
     pgCurrentTxnId.value = r.transaction_id;
     pgCurrent.value = null;
@@ -1352,6 +1411,7 @@ async function pgRun() {
     pgDetailLoading.value = false;
     pgDetailError.value = "";
     pgRunStatus.value = "queued";
+    pgCurrentMode.value = pkg.value?.processing_mode ?? "balanced";
     pgRunDuration.value = null;
     pgStagePages.value = [];
     pgStageResult.value = {};
@@ -1361,8 +1421,12 @@ async function pgRun() {
       sampleStatus.value[run.sample_id] = "运行中…";
     }
     pgPollTransaction(r.transaction_id);
+    return r.transaction_id;
   } catch (err) {
-    toast.error(`运行失败：${err instanceof Error ? err.message : err}`);
+    if (request === runRequest) toast.error(`运行失败：${err instanceof Error ? err.message : err}`);
+    return null;
+  } finally {
+    if (request === runRequest) pgCreating.value = false;
   }
 }
 
@@ -1615,6 +1679,161 @@ async function pgLoadRun(runId: string) {
   }
 }
 
+// The field workbench uses the same run/polling pipeline as the test tab. Its
+// small context binds values to the selected sample and the saved definition.
+const fieldTrialMatches = computed(() => !!fieldTrial.value
+  && fieldTrial.value.sampleId === activeSample.value?.id
+  && fieldTrial.value.txnId === pgCurrentTxnId.value);
+const fieldTrialRunning = computed(() => fieldTrialMatches.value && pgPolling.value);
+const fieldTrialStale = computed(() => fieldTrialMatches.value
+  && fieldTrial.value!.signature !== JSON.stringify(pkg.value));
+const fieldTrialDocs = computed(() => {
+  if (!fieldTrialMatches.value) return [];
+  const cat = activeCat.value;
+  return cat ? pgVisibleDocs.value.filter((d) => d.category_id === cat.id
+    || (!d.category_id && d.doc_type === cat.doc_type)) : pgVisibleDocs.value;
+});
+const fieldTrialDoc = computed(() => fieldTrialDocs.value[fieldTrialDocIndex.value]
+  ?? fieldTrialDocs.value[0]);
+const fieldTrialError = computed(() => {
+  if (!fieldTrialMatches.value || fieldTrialRunning.value) return "";
+  if (pgTimeoutNote.value) return pgTimeoutNote.value;
+  if (pgRunStatus.value === "failed") return "试抽失败，请检查字段配置或稍后重试。";
+  if (fieldTrialDoc.value?.error) return fieldTrialDoc.value.error;
+  if (["completed", "needs_review"].includes(pgRunStatus.value) && !fieldTrialDocs.value.length)
+    return activeCat.value ? "当前样本未识别到这个类别，请切换类别或样本。" : "本次试抽没有返回字段结果。";
+  return "";
+});
+const fieldTrialReady = computed(() => fieldTrialMatches.value && !fieldTrialRunning.value
+  && !fieldTrialError.value && !!fieldTrialDoc.value);
+const exampleScope = computed(() => `${activeCat.value?.id ?? 'standard'}:${activeSample.value?.id ?? ''}`);
+
+function trialValue(name: string): unknown {
+  const data = fieldTrialDoc.value?.data;
+  if (Array.isArray(data)) return data.map((row) => (row as Record<string, unknown> | null)?.[name]);
+  return data?.[name];
+}
+function fieldValue(name: string): unknown {
+  return fieldTrialReady.value ? trialValue(name) : generatedExamples.value[exampleScope.value]?.[name];
+}
+function hasFieldValue(value: unknown): boolean {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.some(hasFieldValue);
+  if (typeof value === "object") return Object.values(value).some(hasFieldValue);
+  return true; // 0 and false are valid extracted values.
+}
+const fieldTrialFilled = computed(() => curFields.value.filter((f) => hasFieldValue(trialValue(f.name))).length);
+function fieldResultStatus(name: string): string {
+  if (fieldTrialRunning.value || fieldTrialStarting.value) return "running";
+  if (fieldTrialReady.value) {
+    if (fieldTrialStale.value) return "stale";
+    if (!hasFieldValue(trialValue(name))) return "missing";
+    if (fieldTrialDoc.value?.review_fields?.includes(name)
+        || fieldTrialDoc.value?.field_sources?.[name] === "review") return "review";
+    return fieldTrialBoxes.value.some((b) => b.key === name) ? "已定位" : "已提取";
+  }
+  return Object.prototype.hasOwnProperty.call(generatedExamples.value[exampleScope.value] ?? {}, name)
+    ? "generated" : "idle";
+}
+const fieldStageResult = computed(() => fieldTrialDoc.value?.file_id === pgCurrent.value?.file_id
+  ? pgStageResult.value : fieldTrialStage.value);
+const fieldTrialBoxes = computed(() => {
+  if (!fieldTrialReady.value || fieldTrialStale.value || pgFast.value) return [];
+  const sourcePages = fieldTrialDoc.value?.source_pages ?? [];
+  return Object.entries(fieldStageResult.value).flatMap(([key, value]) => {
+    const cell = value as Record<string, unknown> | null;
+    const bbox = cell?.$bbox;
+    const page = Number(cell?.$pages);
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(Number.isFinite)
+        || !Number.isFinite(page) || page < 1) return [];
+    return [{ key, label: key, page: sourcePages[page - 1] ?? page, bbox: bbox as number[] }];
+  });
+});
+watch(() => [fieldTrial.value?.txnId, fieldTrialDoc.value?.file_id] as const, async ([txnId, fileId]) => {
+  fieldTrialStage.value = {};
+  fieldTrialPages.value = [];
+  if (!fileId || !txnId || !fieldTrialMatches.value || pgFast.value) return;
+  try {
+    // Root page dimensions stay aligned with the original sample. Split child
+    // results map their local page numbers through source_pages above.
+    const d = await api.detail(fileId);
+    if (fieldTrial.value?.txnId !== txnId || fieldTrialDoc.value?.file_id !== fileId) return;
+    fieldTrialStage.value = (d.result ?? {}) as Record<string, unknown>;
+    fieldTrialPages.value = fileId === pgCurrent.value?.file_id ? d.pages ?? [] : pgStagePages.value;
+  } catch { /* values remain useful when no coordinates are available */ }
+});
+watch(pgStagePages, (pages) => {
+  if (fieldTrialMatches.value && fieldTrialDoc.value?.file_id !== pgCurrent.value?.file_id)
+    fieldTrialPages.value = pages;
+});
+watch(() => activeCat.value?.id, () => {
+  expandedField.value = null;
+  activeFieldName.value = null;
+  fieldTrialDocIndex.value = 0;
+  genPanel.value = false;
+});
+
+function selectFieldSample(sample: { id: string; file_name: string } | null) {
+  if (sample?.id !== activeSample.value?.id) {
+    if (fieldTrialMatches.value) {
+      pgStopPolling();
+      pgCurrentTxnId.value = null;
+    }
+    if (fieldTrialStarting.value) { runRequest++; pgCreating.value = false; }
+    fieldTrial.value = null;
+    fieldTrialStage.value = {};
+    fieldTrialPages.value = [];
+    fieldTrialDocIndex.value = 0;
+    activeFieldName.value = null;
+    fieldActivePage.value = 1;
+  }
+  activeSample.value = sample;
+}
+function selectInlineField(index: number) {
+  expandedField.value = expandedField.value === index ? null : index;
+  activeFieldName.value = curFields.value[index]?.name ?? null;
+  const box = fieldTrialBoxes.value.find((b) => b.key === activeFieldName.value);
+  if (box) fieldActivePage.value = box.page;
+}
+function pickFieldBox(key: string) {
+  const index = curFields.value.findIndex((f) => f.name === key);
+  if (index < 0) return;
+  expandedField.value = index;
+  activeFieldName.value = key;
+  mobilePane.value = "fields";
+}
+function addInlineField() {
+  curFields.value.push(blankField());
+  expandedField.value = curFields.value.length - 1;
+  activeFieldName.value = null;
+  mobilePane.value = "fields";
+}
+function removeInlineField(index: number) {
+  curFields.value.splice(index, 1);
+  expandedField.value = null;
+  activeFieldName.value = null;
+}
+async function runFieldTrial() {
+  if (!activeSample.value || !curFields.value.length || saving.value
+      || fieldTrialStarting.value || sampleUploading.value || pgPolling.value || pgCreating.value) return;
+  const epoch = skillEpoch;
+  const sampleId = activeSample.value.id;
+  fieldTrialStarting.value = true;
+  try {
+    if (!await save() || epoch !== skillEpoch || activeSample.value?.id !== sampleId) return;
+    if (selectedVersion.value == null) return;
+    const signature = JSON.stringify(pkg.value);
+    const txnId = await startPlaygroundRun([sampleId], selectedVersion.value);
+    if (!txnId || epoch !== skillEpoch || activeSample.value?.id !== sampleId) return;
+    fieldTrial.value = { sampleId, txnId, signature };
+    fieldTrialDocIndex.value = 0;
+    fieldTrialStage.value = {};
+    activeFieldName.value = null;
+  } finally {
+    if (epoch === skillEpoch) fieldTrialStarting.value = false;
+  }
+}
+
 // —— flow rail: nodes with live subtitles; bad dots from light client checks ——
 const flowNodes = computed(() => {
   const p = pkg.value!;
@@ -1677,6 +1896,9 @@ function beforeUnload(ev: BeforeUnloadEvent) {
 }
 onMounted(() => window.addEventListener("beforeunload", beforeUnload));
 onBeforeUnmount(() => {
+  skillEpoch++;
+  loadRequest++;
+  runRequest++;
   window.removeEventListener("beforeunload", beforeUnload);
   pgStopPolling();
   pgCurrentTxnId.value = null;
@@ -1693,42 +1915,41 @@ const treeEl = ref<HTMLElement>();
 const reorder = useListReorder();
 function startFieldDrag(i: number, ev: PointerEvent) {
   reorder.start(i, ev, treeEl.value,
-                (f, t) => { if (pkg.value) moveItem(curFields.value, f, t); });
-}
-
-// —— field modal editing ——
-const editing = ref<{ list: FieldSpec[]; index: number; spec: FieldSpec;
-                      isNew: boolean; isColumn: boolean } | null>(null);
-function openEdit(list: FieldSpec[], index: number, isColumn = false) {
-  editing.value = { list, index, spec: list[index], isNew: false, isColumn };
-}
-function openAdd(list: FieldSpec[], isColumn = false) {
-  editing.value = { list, index: -1, spec: blankField(), isNew: true, isColumn };
-}
-function commitEdit(spec: FieldSpec) {
-  if (!editing.value) return;
-  const { list, index, isNew: adding } = editing.value;
-  if (adding) list.push(spec);
-  else list.splice(index, 1, spec);
-  editing.value = null;
+                (f, t) => {
+                  if (pkg.value) moveItem(curFields.value, f, t);
+                  expandedField.value = null;
+                });
 }
 
 // —— generation (R05/图13): snapshot → apply suggested fields → undoable ——
 function pushUndo() {
   undoStack.value.push({ cat: activeCat.value?.id ?? null,
-                         fields: JSON.parse(JSON.stringify(curFields.value)) });
+                         fields: JSON.parse(JSON.stringify(curFields.value)),
+                         exampleKey: exampleScope.value,
+                         examples: { ...generatedExamples.value[exampleScope.value] } });
 }
-function applyGenerated(fields: FieldSpec[], replaceAll: boolean) {
+function applyGenerated(fields: FieldSpec[], replaceAll: boolean, examples: Record<string, unknown> = {}) {
   if (!pkg.value) return;
   pushUndo();
+  genPanel.value = false;
+  expandedField.value = null;
+  activeFieldName.value = null;
   if (replaceAll) {
     setCurFields(fields.map((f) => ({ ...blankField(), ...f })));
+    generatedExamples.value[exampleScope.value] = Object.fromEntries(
+      fields.filter((f) => Object.prototype.hasOwnProperty.call(examples, f.name))
+        .map((f) => [f.name, examples[f.name]]));
     return;
   }
   const existing = new Set(curFields.value.map((f) => f.name));
   const fresh = fields.filter((f) => !existing.has(f.name));
   const skipped = fields.length - fresh.length;
   curFields.value.push(...fresh.map((f) => ({ ...blankField(), ...f })));
+  generatedExamples.value[exampleScope.value] = {
+    ...generatedExamples.value[exampleScope.value],
+    ...Object.fromEntries(fresh.filter((f) => Object.prototype.hasOwnProperty.call(examples, f.name))
+      .map((f) => [f.name, examples[f.name]])),
+  };
   if (skipped) toast.ok(`跳过 ${skipped} 个同名字段（未覆盖你的修改）`);
 }
 function undoGenerate() {
@@ -1742,6 +1963,9 @@ function undoGenerate() {
   } else {
     pkg.value.fields = last.fields;
   }
+  generatedExamples.value[last.exampleKey] = last.examples;
+  expandedField.value = null;
+  activeFieldName.value = null;
   toast.ok("已撤销上一次生成");
 }
 function clearFields() {
@@ -1749,6 +1973,8 @@ function clearFields() {
   if (!confirm(`清空全部 ${curFields.value.length} 个字段？可用「撤销上次生成」恢复。`)) return;
   pushUndo();
   setCurFields([]);
+  generatedExamples.value[exampleScope.value] = {};
+  expandedField.value = null;
 }
 
 /** Save = update the draft on screen (P04). Outbound payloads are always v2. */
@@ -1756,44 +1982,81 @@ const saveLabel = computed(() =>
   selectedStatus.value && selectedStatus.value !== "draft" ? "另存为新草稿" : "保存");
 const saving = ref(false);
 function outbound(): SkillPackage {
-  return { ...pkg.value!, schema_version: 2 };
+  return JSON.parse(JSON.stringify({ ...pkg.value!, schema_version: 2 }));
 }
 
 function validPkg(): boolean {
   if (!pkg.value) return false;
-  if (!pkg.value.skill_code) { toast.error("请填写 skill_code"); return false; }
+  if (!pkg.value.name.trim() || !pkg.value.skill_code.trim()) {
+    const missingName = !pkg.value.name.trim();
+    toast.error(missingName ? "请先填写技能名称，再保存或试抽" : "请先填写 skill_code，再保存或试抽");
+    tab.value = "design";
+    step.value = "basic";
+    void nextTick(() => (missingName ? skillNameInput.value : skillCodeInput.value)?.focus());
+    return false;
+  }
   if (!pkg.value.fields.length && pkg.value.skill_mode !== "advanced") {
     toast.error("至少定义一个字段"); return false;
   }
-  return true;
+  const checkFields = (fields: FieldSpec[]): boolean => {
+    const names = new Set<string>();
+    for (const field of fields) {
+      if (!field.name.trim()) { toast.error("请填写所有字段名称"); step.value = "fields"; return false; }
+      if (names.has(field.name.trim())) { toast.error(`字段名称重复：${field.name}`); step.value = "fields"; return false; }
+      names.add(field.name.trim());
+      if (field.type === "table" && !checkFields(field.columns ?? [])) return false;
+    }
+    return true;
+  };
+  return checkFields(pkg.value.fields) && (pkg.value.categories ?? [])
+    .every((cat) => cat.handler !== "inline" || checkFields(cat.fields));
 }
 
-async function save() {
-  if (!validPkg() || !pkg.value) return;
+async function save(): Promise<boolean> {
+  if (saving.value || sampleUploading.value || importing.value || enriching.value || !validPkg() || !pkg.value) return false;
+  const epoch = skillEpoch;
+  const payload = outbound();
+  const skillCode = props.code;
   saving.value = true;
   try {
     if (isNew.value) {
-      await api.skillCreate(outbound(), changelog.value);
+      await api.skillCreate(payload, changelog.value);
+      if (epoch !== skillEpoch) return false;
+      let adopted = true;
+      try { await samplePanel.value?.adoptSamples(payload.skill_code); }
+      catch (e) { adopted = false; toast.error(`技能已创建，样本关联失败：${e instanceof Error ? e.message : e}`); }
+      if (epoch !== skillEpoch) return false;
+      preservedCreatedCode = payload.skill_code;
+      markClean();
+      await router.replace(`/skills/${payload.skill_code}`);
+      await nextTick();
+      if (epoch !== skillEpoch || props.code !== payload.skill_code) return false;
+      if (!await load(1)) return false;
       toast.ok("技能已创建（v1 草稿）");
-      router.push(`/skills/${pkg.value.skill_code}`);
+      markClean();
+      return adopted;
     } else if (selectedStatus.value === "draft" && selectedVersion.value) {
-      const r = await api.skillSaveDraft(props.code, selectedVersion.value,
-                                         outbound(), changelog.value);
+      const version = selectedVersion.value;
+      const r = await api.skillSaveDraft(skillCode, version, payload, changelog.value);
+      if (epoch !== skillEpoch) return false;
       toast.ok(`v${selectedVersion.value} 草稿已保存（未新增版本）`);
       for (const w of r.warnings ?? []) toast.ok(w);
-      await load(selectedVersion.value);
+      if (!await load(version)) return false;
     } else {
-      const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
+      const r = await api.skillNewDraft(skillCode, payload, changelog.value);
+      if (epoch !== skillEpoch) return false;
       toast.ok(`已以 v${selectedVersion.value} 为底新建 v${r.version} 草稿`);
-      await load(r.version);
+      if (!await load(r.version)) return false;
     }
+    if (epoch !== skillEpoch) return false;
     markClean();
-  } catch (e) { toast.error(e); }
-  finally { saving.value = false; }
+    return true;
+  } catch (e) { if (epoch === skillEpoch) toast.error(e); return false; }
+  finally { if (epoch === skillEpoch) saving.value = false; }
 }
 
 async function newVersion() {
-  if (!validPkg() || !pkg.value) return;
+  if (sampleUploading.value || saving.value || fieldTrialStarting.value || !validPkg() || !pkg.value) return;
   try {
     const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
     toast.ok(`已新建 v${r.version} 草稿`);
@@ -1802,7 +2065,7 @@ async function newVersion() {
   } catch (e) { toast.error(e); }
 }
 async function publishSelected() {
-  if (!selectedVersion.value) return;
+  if (sampleUploading.value || saving.value || fieldTrialStarting.value || !selectedVersion.value) return;
   try {
     await api.skillPublish(props.code, selectedVersion.value);
     toast.ok(`v${selectedVersion.value} 已发布（旧版本自动归档）`);
@@ -1850,7 +2113,6 @@ async function copyCode() {
 }
 
 // —— draft channels ——
-const probing = ref(false);
 function mergeDraft(fields: FieldSpec[], docType?: string): number {
   if (!pkg.value) return 0;
   pushUndo();
@@ -1861,53 +2123,33 @@ function mergeDraft(fields: FieldSpec[], docType?: string): number {
   if (docType && !activeCat.value && !pkg.value.doc_type_hint) pkg.value.doc_type_hint = docType;
   return fresh.length;
 }
-async function probe(ev: Event) {
-  const file = (ev.target as HTMLInputElement).files?.[0];
-  if (!file || !pkg.value) return;
-  probing.value = true;
-  try {
-    const r = await api.skillProbe(file);
-    toast.ok(`预标注完成：新增 ${mergeDraft(r.fields, r.doc_type)} 个字段草稿（${r.provider_used}），请核对后保存`);
-  } catch (e) { toast.error(e); }
-  finally { probing.value = false; (ev.target as HTMLInputElement).value = ""; }
-}
-const textPanel = ref(false);
-const morePopEl = ref<HTMLDetailsElement>();
-const draftText = ref("");
-
-/** #18: choose a drafting method and collapse the dropdown behind it. */
-function openTextPanel() {
-  textPanel.value = !textPanel.value;
-  if (morePopEl.value) morePopEl.value.open = false;
-}
-const drafting = ref(false);
-async function draftFromText() {
-  if (!draftText.value.trim()) return;
-  drafting.value = true;
-  try {
-    const r = await api.skillDraftFromText(draftText.value);
-    toast.ok(`已从描述起草 ${mergeDraft(r.fields, r.doc_type)} 个字段（${r.provider_used}），请核对后保存`);
-    textPanel.value = false;
-    draftText.value = "";
-  } catch (e) { toast.error(e); }
-  finally { drafting.value = false; }
-}
+const importing = ref(false);
 async function tableImport(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0];
-  if (!file) return;
+  if (!file || importing.value) return;
+  const epoch = skillEpoch;
+  const targetFields = curFields.value;
+  importing.value = true;
   try {
     const r = await api.skillDraftFromTable(file);
+    if (epoch !== skillEpoch || targetFields !== curFields.value) return;
     toast.ok(`表格导入完成：新增 ${mergeDraft(r.fields)} 个字段。可用「✨ AI 补全说明」扩写规则`);
-  } catch (e) { toast.error(e); }
-  finally { (ev.target as HTMLInputElement).value = ""; }
+  } catch (e) { if (epoch === skillEpoch) toast.error(e); }
+  finally {
+    if (epoch === skillEpoch) importing.value = false;
+    (ev.target as HTMLInputElement).value = "";
+  }
 }
 const enriching = ref(false);
 async function enrich() {
   if (!pkg.value || !curFields.value.length) return;
+  const epoch = skillEpoch;
+  const targetFields = curFields.value;
   enriching.value = true;
   try {
     const r = await api.skillEnrich(curFields.value,
                                     activeCat.value?.doc_type || pkg.value.doc_type_hint);
+    if (epoch !== skillEpoch || targetFields !== curFields.value) return;
     let n = 0;
     const apply = (specs: FieldSpec[], patches: { name: string; instruction: string;
                                                   columns?: { name: string; instruction: string }[] }[]) => {
@@ -1921,8 +2163,8 @@ async function enrich() {
     };
     apply(curFields.value, r.fields);
     toast.ok(`已补全 ${n} 处字段说明（${r.provider_used}），请核对后保存`);
-  } catch (e) { toast.error(e); }
-  finally { enriching.value = false; }
+  } catch (e) { if (epoch === skillEpoch) toast.error(e); }
+  finally { if (epoch === skillEpoch) enriching.value = false; }
 }
 
 // —— studio: dry-run + golden ——
@@ -1976,7 +2218,7 @@ async function goldenCheck() {
 
 <style scoped>
 .editor { min-height: calc(100vh - 52px); display: flex; justify-content: center; }
-.main-col { width: 100%; max-width: 1200px; padding: 16px 20px 40px;
+.main-col { width: 100%; max-width: 1560px; padding: 16px 24px 40px;
   display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 /* top bar */
@@ -2020,31 +2262,24 @@ async function goldenCheck() {
   font-weight: 700; }
 
 .ver-note { margin: -6px 0 0; font-size: 12px; }
-.guide { display: flex; gap: 14px; align-items: center; justify-content: center;
-  padding: 14px; border-style: dashed; flex-wrap: wrap; font-size: 13px;
-  color: var(--text-dim); }
-.guide b { display: inline-flex; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--accent); color: var(--accent-text); align-items: center;
-  justify-content: center; margin-right: 6px; }
-.arrow { color: var(--accent); }
-
 /* flow rail + step panels */
-.design-body { display: grid; grid-template-columns: 190px minmax(0, 1fr);
+.design-body { display: grid; grid-template-columns: minmax(0, 1fr);
   gap: 16px; align-items: start; }
-.flow-rail { position: sticky; top: 66px; display: flex; flex-direction: column;
-  gap: 6px; }
+.flow-rail { display: flex; gap: 8px; border-bottom: 1px solid var(--border);
+  padding-bottom: 12px; }
 .node { display: flex; flex-direction: column; align-items: flex-start;
-  gap: 1px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg-panel); padding: 9px 12px; cursor: pointer; text-align: left; }
+  gap: 5px; border: 1px solid transparent; border-radius: 9px; flex: 1;
+  background: transparent; padding: 10px 14px; cursor: pointer; text-align: left; }
 .node:hover { border-color: var(--accent); }
 .node.on { border-color: var(--accent); background: var(--bg-raised); }
-.node .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
-  background: var(--border); }
+.step-number { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--bg-raised); border: 1px solid var(--border); display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px; color: var(--text-dim); }
 .node .lbl { font-weight: 700; font-size: 13.5px; display: flex; gap: 6px;
   align-items: center; }
-.node.on .dot { background: var(--accent); }   /* #17: current step reads */
+.node.on .step-number { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .node.on .lbl { color: var(--accent); }
-.node .sub { font-size: 11.5px; }
+.node .sub { font-size: 11.5px; padding-left: 28px; }
 .node.bad .lbl::after { content: "●"; color: var(--red); font-size: 10px; }
 .step-panel { padding: 14px 16px; }
 .block-title { margin: 0 0 10px; font-size: 14px; color: var(--accent); }
@@ -2077,22 +2312,33 @@ async function goldenCheck() {
 .thr select, .adv-settings select { max-width: 100%; }
 
 /* fields step */
-/* #11 (走查): this rule sits BEFORE the generic `.block{flex-direction:column}`
-   below, so the sample panel ended up stacked on top (320px tall) and the field
-   list half width. Same specificity + later source order = the column rule won;
-   with two classes it now wins where the layout is side-by-side. */
-.fields-step.block { display: flex; flex-direction: row; gap: 14px;
-  align-items: flex-start; }
-.fields-step > .sample-col { flex: 0 0 320px; width: 320px; max-width: 320px;
-  align-self: stretch; height: auto; max-height: none; }
-.fields-step > .sample-col .sample-panel { max-width: none; height: auto;
-  max-height: 100%; }
-/* #11: the sample list scrolls instead of being clipped at a fixed height */
-.fields-step .sp-list { max-height: min(46vh, 420px); }
-.fields-step > .fields-col { flex: 1 1 auto; min-width: 0; display: flex;
-  flex-direction: column; gap: 8px; }
-.sample-col { flex: 0 0 320px; }
-.fields-col { flex: 1; min-width: 0; }
+.fields-step { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 18px; align-items: start; min-width: 0; }
+.fields-step.sample-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+.fields-step > .sample-col { min-width: 0; width: 100%; max-width: none;
+  position: sticky; top: 70px; height: min(740px, calc(100vh - 280px)); min-height: 460px; }
+.fields-col { min-width: 0; margin: 0; padding: 18px; display: flex;
+  flex-direction: column; gap: 12px; border: 1px solid var(--border); }
+.field-heading { display: flex; gap: 10px; align-items: start; justify-content: space-between; }
+.field-heading h3 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; }
+.field-heading p { margin: 6px 0 0; font-size: 12px; }
+.field-count { font-size: 11px; color: var(--text-dim); font-weight: 500;
+  padding: 2px 7px; border: 1px solid var(--border); border-radius: 20px; }
+.save-state { font-size: 11px; white-space: nowrap; padding-top: 5px; }
+.field-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.field-actions button { font-size: 12px; }
+.field-more { margin-left: auto; }
+.trial-banner { padding: 10px 12px; font-size: 12px; line-height: 1.6;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trial-banner.stale { border-color: var(--accent); color: var(--accent); }
+.trial-banner.failed { border-color: var(--red); color: var(--red); }
+.trial-banner select { max-width: 100%; font-size: 12px; }
+.field-list-head { display: grid;
+  grid-template-columns: 16px minmax(0, 1.35fr) 48px minmax(0, 1fr) 48px 24px 10px;
+  padding: 0 12px; gap: 8px; color: var(--text-dim); font-size: 11px; }
+.output-shape { display: flex; align-items: center; gap: 12px; margin: 14px 0; font-size: 12px; }
+.mobile-panes { display: none; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden; }
 .seg button { border: 0; background: var(--bg-raised); padding: 4px 12px;
@@ -2119,15 +2365,10 @@ async function goldenCheck() {
 .more-menu .more-pop button.danger { color: var(--red); }
 .mini { padding: 2px 10px; font-size: 12px; }
 .file-btn .btn-like:hover { border-color: var(--accent); }
-.text-panel { border: 1px solid var(--border); border-radius: 8px; padding: 12px;
-  display: flex; flex-direction: column; gap: 8px; background: var(--bg-raised);
-  margin-bottom: 10px; }
-.text-panel-act { display: flex; gap: 12px; align-items: center;
-  justify-content: space-between; font-size: 12px; }
 .pad { padding: 4px 0; margin: 0; }
 .drag-tip { margin: 0 0 8px; font-size: 12px; }
-.field-tree { display: flex; flex-direction: column; gap: 10px; }
-.add-field { border-style: dashed; padding: 8px; }
+.field-tree { display: flex; flex-direction: column; gap: 0; }
+.add-field { border-style: dashed; padding: 10px; margin-top: 10px; }
 .rules-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px;
   padding: 10px 12px; }
 .rules-fold summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
@@ -2330,12 +2571,36 @@ async function goldenCheck() {
   text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1100px) {
-  .design-body { grid-template-columns: 1fr; }
-  .flow-rail { position: static; flex-direction: row; flex-wrap: wrap; }
-  .fields-step.block { flex-direction: column; }
-  .fields-step > .sample-col { flex: 1 1 auto; width: auto; max-width: none; }
-  .sample-col { flex: 1 1 auto; max-width: none; width: 100%; }
   .test-grid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
+}
+@media (max-width: 959px) {
+  .fields-step, .fields-step.sample-collapsed { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .mobile-panes { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 8px; }
+  .mobile-panes button { flex: 1; border: none; background: transparent; }
+  .mobile-panes .on { background: var(--bg-raised); color: var(--accent); }
+  .fields-step > .sample-col { display: none; position: static; height: 65vh; min-height: 400px; }
+  .fields-step.show-sample > .sample-col { display: flex; }
+  .fields-step.show-sample > .fields-col { display: none; }
+  .fields-col { padding: 14px; }
+}
+@media (max-width: 580px) {
+  .main-col { padding: 12px 12px 28px; }
+  .ident { min-width: 160px; }
+  .ident h1 { font-size: 18px; }
+  .toolbar { gap: 9px; }
+  .acts { width: 100%; }
+  .acts > .primary { margin-left: auto; }
+  .flow-rail { gap: 4px; }
+  .node { padding: 8px 6px; min-width: 0; }
+  .node .lbl { font-size: 12px; gap: 4px; }
+  .node .sub { display: none; }
+  .step-number { width: 18px; height: 18px; font-size: 10px; }
+  .basic-grid { grid-template-columns: minmax(0, 1fr); }
+  .span2 { grid-column: auto; }
+  .field-heading h3 { font-size: 16px; }
+  .field-actions { gap: 6px; }
+  .field-actions button { padding: 6px 9px; }
+  .field-list-head { display: none; }
 }
 </style>
