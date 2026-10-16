@@ -13,11 +13,6 @@
         <router-link to="/cabinet">数据柜</router-link>
         <router-link to="/dashboard">看板</router-link>
       </nav>
-      <!-- upload is an action, not a place: it stays a primary button reachable
-           from every page instead of joining the navigation tabs -->
-      <router-link to="/upload" class="upload-cta">
-        <button class="primary">＋ 上传文档</button>
-      </router-link>
       <div class="user-menu" @click.stop="menuOpen = !menuOpen">
         <span class="avatar">{{ initial }}</span>
         <span class="uname">{{ displayName }}</span>
@@ -84,9 +79,7 @@ nav a { display: inline-flex; align-items: center; padding: 0 14px; color: var(-
 nav a:hover { color: var(--accent); }
 nav a.router-link-active { color: var(--accent); font-weight: 600;
   border-bottom-color: var(--accent); }
-.upload-cta { margin-left: auto; display: inline-flex; }
-.upload-cta button { padding: 5px 14px; font-size: 13px; }
-.user-menu { display: flex; align-items: center; gap: 8px;
+.user-menu { display: flex; align-items: center; gap: 8px; margin-left: auto;
   cursor: pointer; position: relative; padding: 4px; }
 .avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
   color: var(--accent-text); display: inline-flex; align-items: center;
@@ -104,6 +97,5 @@ nav a.router-link-active { color: var(--accent); font-weight: 600;
   .navbar { gap: 10px; padding: 0 10px; overflow-x: auto; }
   nav a { padding: 0 8px; font-size: 13px; }
   .uname { display: none; }
-  .upload-cta button { padding: 5px 10px; font-size: 12px; }
 }
 </style>
