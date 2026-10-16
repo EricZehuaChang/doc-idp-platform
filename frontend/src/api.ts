@@ -308,15 +308,17 @@ export interface AuditRow {
 export interface AuditPage { total: number; page: number; limit: number; data: AuditRow[] }
 /** Task-list narrowing (P09). One field per column of the task table, so the
  *  UI can sit each control on the column it narrows. Dates are inclusive
- *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none. */
+ *  `YYYY-MM-DD` days; `verify` ∈ verified | error | none.
+ *  Enumeration columns are multi-select (2026-10-15): they carry the picked
+ *  values and each one is sent as its own repeated query param. */
 export interface FileFilters {
   source?: "manual" | "api";
-  status?: string; q?: string; skill_code?: string;
+  status?: string[]; q?: string; skill_code?: string[];
   /** 发起人 column filter: `user:<label>` / `api_key:<label>` / `unknown` /
    *  `anonymous` — the same values the /files/initiators options carry. */
-  initiator?: string;
-  file_name?: string; file_type?: string;
-  pages_min?: number; pages_max?: number; verify?: string;
+  initiator?: string[];
+  file_name?: string; file_type?: string[];
+  pages_min?: number; pages_max?: number; verify?: string[];
   date_from?: string; date_to?: string;
   updated_from?: string; updated_to?: string;
 }
@@ -623,8 +625,13 @@ export const api = {
    *  so paging counts stay honest — never fetch-all-then-filter-in-the-browser. */
   files: (page: number, f: FileFilters = {}) => {
     const q = new URLSearchParams({ page: String(page), page_size: "20" });
-    for (const [k, v] of Object.entries(f))
-      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    for (const [k, v] of Object.entries(f)) {
+      if (v === undefined || v === null || v === "") continue;
+      // a multi-select column sends one repeated param per picked value; the
+      // server unions them (`?skill_code=a&skill_code=b`)
+      for (const pick of Array.isArray(v) ? v : [v])
+        if (pick !== "") q.append(k, String(pick));
+    }
     return req<FilesPage>("GET", `/api/v1/files?${q}`);
   },
   /** 发起人 filter vocabulary for this tenant (2026-09-19): distinct initiator

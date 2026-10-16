@@ -204,59 +204,28 @@
           <label>止<input type="date" v-model="f.updated_to"
                           :min="f.updated_from || undefined" /></label>
         </template>
-        <template v-else-if="openCol === 'skill'">
-          <select v-model="f.skill_code" size="8" class="listbox">
-            <option value="">全部技能</option>
-            <option v-for="s in skillList" :key="s.skill_code" :value="s.skill_code">
-              {{ s.name || s.skill_code }}（{{ s.skill_code }}）{{ s.state === "deleted" ? " · 已删除" : "" }}
-            </option>
-          </select>
-        </template>
-        <!-- 2026-09-19 需求: 发起人列可筛选。选项来自本租户台账的去重清单
-             （带条数），不用当前这一页去凑，选任何一项都不会筛出 0 条。 -->
-        <template v-else-if="openCol === 'initiator'">
-          <select v-model="f.initiator" size="8" class="listbox"
-                  data-testid="initiator-listbox">
-            <option value="">全部发起人</option>
-            <option v-for="o in initiatorList" :key="o.value" :value="o.value">
-              {{ o.label }}（{{ o.count }}）
-            </option>
-          </select>
-          <p v-if="!initiatorList.length && initiatorLoading" class="dim fmenu-note">
-            正在读取发起人…</p>
-          <p v-else-if="!initiatorList.length" class="dim fmenu-note">
-            暂无发起人可筛选（该租户的任务都早于发起人记录功能）。</p>
+        <template v-else-if="MULTI_COLS[openCol]">
+          <!-- 「全部」是复位动作而不是一个勾选项：勾选态只能由选项决定，做成
+               checkbox 时「已全不选还去点它」会留下对不上的勾 -->
+          <button type="button" class="fall" :class="{ on: !picked(openCol).length }"
+                  :data-testid="`fmenu-all-${openCol}`"
+                  @click="clearPicked(openCol)">{{ MULTI_COLS[openCol].all }}</button>
+          <div class="mlist" :data-testid="`fmenu-${openCol}`">
+            <label v-for="o in menuOptions" :key="o.value">
+              <input type="checkbox" :checked="isPicked(openCol, o.value)"
+                     @change="togglePicked(openCol, o.value)" />
+              <span>{{ o.label }}</span>
+            </label>
+          </div>
+          <p v-if="menuNote" class="dim fmenu-note">{{ menuNote }}</p>
         </template>
         <template v-else-if="openCol === 'file_name'">
           <input type="search" v-model="f.file_name" placeholder="文件名包含…"
                  @keyup.enter="closeMenu" />
         </template>
-        <template v-else-if="openCol === 'file_type'">
-          <select v-model="f.file_type" size="6" class="listbox">
-            <option value="">全部类型</option>
-            <!-- /formats ships suffixes with the dot; show them bare -->
-            <option v-for="t in typeOptions" :key="t" :value="t">
-              {{ t.replace(".", "").toUpperCase() }}</option>
-          </select>
-        </template>
         <template v-else-if="openCol === 'pages'">
           <label>最少<input type="number" min="0" v-model="f.pages_min" placeholder="不限" /></label>
           <label>最多<input type="number" min="0" v-model="f.pages_max" placeholder="不限" /></label>
-        </template>
-        <template v-else-if="openCol === 'status'">
-          <select v-model="f.status" size="7" class="listbox">
-            <option value="">全部状态</option>
-            <option v-for="(label, key) in STATUS_LABELS" :key="key" :value="key">
-              {{ label }}</option>
-          </select>
-        </template>
-        <template v-else-if="openCol === 'verify'">
-          <select v-model="f.verify" size="4" class="listbox">
-            <option value="">全部</option>
-            <option value="verified">已校验</option>
-            <option value="error">有错误</option>
-            <option value="none">未校验</option>
-          </select>
         </template>
         <div class="fmenu-act">
           <button class="ghost slim" @click="clearCol(openCol)">清除本列</button>
@@ -308,50 +277,72 @@ const COLUMNS = [
   { key: "act", label: "", filter: false, keys: [] },
 ] as const;
 
-type FilterKey = "q" | "date_from" | "date_to" | "skill_code" | "initiator" | "file_name"
-  | "file_type" | "pages_min" | "pages_max" | "status" | "updated_from"
-  | "updated_to" | "verify";
-const EMPTY: Record<FilterKey, string> = {
-  q: "", date_from: "", date_to: "", skill_code: "", initiator: "", file_name: "",
-  file_type: "", pages_min: "", pages_max: "", status: "", updated_from: "",
-  updated_to: "", verify: "",
-};
-const KEYS = Object.keys(EMPTY) as FilterKey[];
+type ScalarKey = "q" | "date_from" | "date_to" | "file_name" | "pages_min"
+  | "pages_max" | "updated_from" | "updated_to";
+/** Enumeration columns are multi-select (2026-10-15): their state is the list of
+ *  picked values (empty list = no filter), and every pick becomes its own
+ *  repeated query param. The scalar columns keep one string each. */
+type MultiKey = "skill_code" | "initiator" | "file_type" | "status" | "verify";
+type FilterKey = ScalarKey | MultiKey;
+const SCALAR_KEYS: ScalarKey[] = ["q", "date_from", "date_to", "file_name",
+  "pages_min", "pages_max", "updated_from", "updated_to"];
+const MULTI_KEYS: MultiKey[] = ["skill_code", "initiator", "file_type", "status", "verify"];
+const isMulti = (k: FilterKey): k is MultiKey => (MULTI_KEYS as string[]).includes(k);
+/** Repeated params arrive as an array (`?skill_code=a&skill_code=b`); a single
+ *  value or none must land in the same shape, blanks dropped. */
+const asList = (raw: unknown): string[] =>
+  (Array.isArray(raw) ? raw.map(String) : raw == null ? [] : [String(raw)])
+    .filter((v) => v !== "");
 
 // seeded from the URL so refresh, back, a shared link and the Home CTA
 // (/tasks?status=…) all reproduce the same view
-const f = reactive<Record<FilterKey, string>>(
-  Object.fromEntries(KEYS.map((k) => [k, String(route.query[k] ?? "")])) as
-    Record<FilterKey, string>);
-const applied = ref<Record<FilterKey, string>>({ ...f });
+const f = reactive<Record<ScalarKey, string>>(Object.fromEntries(
+  SCALAR_KEYS.map((k) => [k, String(route.query[k] ?? "")])) as Record<ScalarKey, string>);
+const m = reactive<Record<MultiKey, string[]>>(Object.fromEntries(
+  MULTI_KEYS.map((k) => [k, asList(route.query[k])])) as Record<MultiKey, string[]>);
+
+/** Applied conditions. Copied field by field — handing the reactive arrays to
+ *  `applied` by reference would make the two impossible to tell apart. */
+type Applied = { s: Record<ScalarKey, string>; m: Record<MultiKey, string[]> };
+const snapshot = (): Applied => ({
+  s: { ...f }, m: Object.fromEntries(
+    MULTI_KEYS.map((k) => [k, [...m[k]]])) as Record<MultiKey, string[]> });
+const applied = ref<Applied>(snapshot());
 
 // free text debounces; pickers apply the moment they change
-const TEXT_KEYS: FilterKey[] = ["q", "file_name", "pages_min", "pages_max"];
+const TEXT_KEYS: ScalarKey[] = ["q", "file_name", "pages_min", "pages_max"];
+/** Comparable signature of a multi-select value: two lists with the same picks
+ *  must read as equal (a fresh [] is never `===`). */
+const sig = (v: string[]): string => v.join("\u0000");
 let timer: ReturnType<typeof setTimeout> | undefined;
-watch(f, () => {
-  const instant = KEYS.some((k) => !TEXT_KEYS.includes(k) && f[k] !== applied.value[k]);
+watch([f, m], () => {
+  const instant = SCALAR_KEYS.some((k) =>
+    !TEXT_KEYS.includes(k) && f[k] !== applied.value.s[k])
+    || MULTI_KEYS.some((k) => sig(m[k]) !== sig(applied.value.m[k]));
   clearTimeout(timer);
-  if (instant) applied.value = { ...f };
-  else timer = setTimeout(() => { applied.value = { ...f }; }, 350);
+  if (instant) applied.value = snapshot();
+  else timer = setTimeout(() => { applied.value = snapshot(); }, 350);
 }, { deep: true });
 function applyNow() {
   clearTimeout(timer);
-  applied.value = { ...f };
+  applied.value = snapshot();
 }
 onUnmounted(() => clearTimeout(timer));
 
-watch(source, () => { page.value = 1; f.initiator = ""; });
+watch(source, () => { page.value = 1; m.initiator = []; });
 watch(applied, () => { page.value = 1; }, { deep: true });
 watch([page, applied], () => {
-  const q: Record<string, string> = { source: source.value };
+  const q: Record<string, string | string[]> = { source: source.value };
   if (showCalls.value) q.api_tab = "calls";
-  for (const k of KEYS) if (f[k]) q[k] = applied.value[k];
-  for (const k of Object.keys(q)) if (!q[k]) delete q[k];
+  for (const k of SCALAR_KEYS) if (f[k]) q[k] = applied.value.s[k];
+  for (const k of MULTI_KEYS) if (m[k].length) q[k] = applied.value.m[k];
   if (page.value > 1) q.page = String(page.value);
   router.replace({ path: "/tasks", query: q });
 }, { deep: true });
 watch(() => route.query.status, (v) => {
-  if (route.path === "/tasks" && String(v || "") !== f.status) f.status = String(v || "");
+  if (route.path !== "/tasks") return;
+  const next = asList(v);
+  if (sig(next) !== sig(m.status)) m.status = next;
 });
 
 // —— per-column filter menus ——
@@ -362,10 +353,14 @@ const menuStyle = ref<Record<string, string>>({});
 function setTrigger(key: string, el: HTMLElement | null) {
   if (el) triggers.set(key, el);
 }
+/** Is this column narrowing anything? — a raw [] is truthy to JS. */
+const isSet = (k: string): boolean => isMulti(k as FilterKey)
+  ? (m[k as MultiKey] ?? []).length > 0
+  : !!(f[k as ScalarKey]);
 const activeCols = computed(() => {
   const s = new Set<string>();
   for (const c of COLUMNS)
-    if (c.keys.some((k) => f[k as FilterKey])) s.add(c.key);
+    if (c.keys.some((k) => isSet(k))) s.add(c.key);
   return s;
 });
 function place(key: string) {
@@ -391,13 +386,81 @@ function closeMenu() {
 }
 function clearCol(key: string) {
   const col = COLUMNS.find((c) => c.key === key);
-  for (const k of col?.keys ?? []) f[k as FilterKey] = "";
+  for (const k of col?.keys ?? []) {
+    if (isMulti(k as FilterKey)) m[k as MultiKey] = [];
+    else f[k as ScalarKey] = "";
+  }
   closeMenu();
+}
+
+// —— 枚举列的多选菜单（2026-10-15）——
+// 技能 / 发起人 / 类型 / 状态 / 校验 都是可枚举的列，菜单改成复选清单：一列里可以
+// 同时挑多项，列内取并集、列间取交集——与台账接口的重复查询参数同一套契约。
+const MULTI_COLS: Record<string, { key: MultiKey; all: string }> = {
+  skill: { key: "skill_code", all: "全部技能" },
+  initiator: { key: "initiator", all: "全部发起人" },
+  file_type: { key: "file_type", all: "全部类型" },
+  status: { key: "status", all: "全部状态" },
+  verify: { key: "verify", all: "全部" },
+};
+const VERIFY_LABELS: Record<string, string> = {
+  verified: "已校验", error: "有错误", none: "未校验",
+};
+/** Options of the open menu — only one menu is open at a time, so one computed
+ *  serves all five columns. */
+const menuOptions = computed<{ value: string; label: string }[]>(() => {
+  switch (openCol.value) {
+    case "skill":
+      // deleted skills stay listed: the ledger still holds their rows, so a
+      // visible value must remain selectable (9.15 R20)
+      return skillList.value.map((s) => ({
+        value: s.skill_code,
+        label: `${s.name || s.skill_code}（${s.skill_code}）`
+          + (s.state === "deleted" ? " · 已删除" : ""),
+      }));
+    case "initiator":
+      return initiatorList.value.map((o) => ({
+        value: o.value, label: `${o.label}（${o.count}）` }));
+    case "file_type":
+      // /formats ships suffixes with the dot; show them bare
+      return typeOptions.value.map((t) => ({
+        value: t, label: t.replace(".", "").toUpperCase() }));
+    case "status":
+      return Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }));
+    case "verify":
+      return Object.entries(VERIFY_LABELS).map(([value, label]) => ({ value, label }));
+    default:
+      return [];
+  }
+});
+/** Why the open menu has no option to offer (发起人 list is fetched). */
+const menuNote = computed(() => {
+  if (openCol.value !== "initiator" || initiatorList.value.length) return "";
+  return initiatorLoading.value
+    ? "正在读取发起人…"
+    : "暂无发起人可筛选（该租户的任务都早于发起人记录功能）。";
+});
+const picked = (colKey: string): string[] => {
+  const col = MULTI_COLS[colKey];
+  return col ? m[col.key] : [];
+};
+const isPicked = (colKey: string, value: string) => picked(colKey).includes(value);
+function togglePicked(colKey: string, value: string) {
+  const col = MULTI_COLS[colKey];
+  if (!col) return;
+  const cur = m[col.key];
+  // always a fresh array: `applied` compares by value, and mutating in place
+  // would leave the debounce watcher comparing a list with itself
+  m[col.key] = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
+}
+function clearPicked(colKey: string) {
+  const col = MULTI_COLS[colKey];
+  if (col) m[col.key] = [];
 }
 function onEsc(e: KeyboardEvent) { if (e.key === "Escape") closeMenu(); }
 /** The catch-all scroll closer must ignore scrolls INSIDE the open menu: the
- *  multi-row <select> listboxes scroll, and treating them as "scrolled away"
- *  closed the menu mid-scroll — wheel and scrollbar drag both died (需求2). */
+ *  option list scrolls, and treating that as "scrolled away" closed the menu
+ *  mid-scroll — wheel and scrollbar drag both died (需求2). */
 function onScroll(e: Event) {
   if (menuEl.value && e.target instanceof Node && menuEl.value.contains(e.target)) return;
   closeMenu();
@@ -416,42 +479,55 @@ onUnmounted(() => {
 });
 
 // —— applied conditions, as removable chips in the top bar ——
-const VERIFY_LABELS: Record<string, string> = {
-  verified: "已校验", error: "有错误", none: "未校验",
-};
+/** Chip wording for a multi-select column: the single pick itself, otherwise
+ *  the first one plus how many — a chip has to stay on one line. */
+function pickText(names: string[]): string {
+  return names.length > 1 ? `${names[0]} 等 ${names.length} 项` : names[0];
+}
 const chips = computed(() => {
   const out: { key: string; text: string; clear: () => void }[] = [];
-  const range = (key: string, label: string, a: FilterKey, b: FilterKey) => {
+  const range = (key: string, label: string, a: ScalarKey, b: ScalarKey) => {
     if (!f[a] && !f[b]) return;
     out.push({ key, text: `${label} ${f[a] || "不限"} ~ ${f[b] || "不限"}`,
                clear: () => { f[a] = ""; f[b] = ""; } });
   };
   if (f.q) out.push({ key: "q", text: `关键字「${f.q}」`, clear: () => { f.q = ""; } });
   range("created", "时间", "date_from", "date_to");
-  if (f.skill_code) {
-    const s = skillList.value.find((x) => x.skill_code === f.skill_code);
-    out.push({ key: "skill", text: `技能 ${s?.name || f.skill_code}`,
-               clear: () => { f.skill_code = ""; } });
+  if (m.skill_code.length) {
+    out.push({ key: "skill",
+               text: `技能 ${pickText(m.skill_code.map((code) =>
+                 skillList.value.find((x) => x.skill_code === code)?.name || code))}`,
+               clear: () => { m.skill_code = []; } });
   }
-  if (f.initiator) {
+  if (m.initiator.length) {
     // the option list may not have loaded yet (deep link) — fall back to the
     // raw value's label part instead of showing "user:alice@x.com"
-    const o = initiatorList.value.find((x) => x.value === f.initiator);
-    const label = o?.label ?? f.initiator.replace(/^(user|api_key):/, "");
-    out.push({ key: "initiator", text: `发起人 ${initiatorLabel(label)}`,
-               clear: () => { f.initiator = ""; } });
+    out.push({ key: "initiator",
+               text: `发起人 ${pickText(m.initiator.map((v) =>
+                 initiatorLabel(initiatorList.value.find((x) => x.value === v)?.label
+                                ?? v.replace(/^(user|api_key):/, ""))))}`,
+               clear: () => { m.initiator = []; } });
   }
   if (f.file_name) out.push({ key: "file_name", text: `文件名含「${f.file_name}」`,
                               clear: () => { f.file_name = ""; } });
-  if (f.file_type) out.push({ key: "file_type",
-                              text: `类型 ${f.file_type.replace(".", "").toUpperCase()}`,
-                              clear: () => { f.file_type = ""; } });
+  if (m.file_type.length) {
+    out.push({ key: "file_type",
+               text: `类型 ${pickText(m.file_type.map((t) =>
+                 t.replace(".", "").toUpperCase()))}`,
+               clear: () => { m.file_type = []; } });
+  }
   range("pages", "页数", "pages_min", "pages_max");
-  if (f.status) out.push({ key: "status", text: `状态 ${STATUS_LABELS[f.status] ?? f.status}`,
-                           clear: () => { f.status = ""; } });
+  if (m.status.length) {
+    out.push({ key: "status",
+               text: `状态 ${pickText(m.status.map((s) => STATUS_LABELS[s] ?? s))}`,
+               clear: () => { m.status = []; } });
+  }
   range("updated", "更新时间", "updated_from", "updated_to");
-  if (f.verify) out.push({ key: "verify", text: `校验 ${VERIFY_LABELS[f.verify] ?? f.verify}`,
-                           clear: () => { f.verify = ""; } });
+  if (m.verify.length) {
+    out.push({ key: "verify",
+               text: `校验 ${pickText(m.verify.map((v) => VERIFY_LABELS[v] ?? v))}`,
+               clear: () => { m.verify = []; } });
+  }
   return out;
 });
 
@@ -480,11 +556,11 @@ const initiatorList = computed(() => initiatorData.value?.initiators ?? []);
 
 /** One place for the ledger query so the delete flow can re-read the page it
  *  just changed without duplicating the filter plumbing. */
-function filesPage(p: number, cond: Record<FilterKey, string>) {
+function filesPage(p: number, cond: Applied) {
   return api.files(p, {
-    ...cond, source: source.value,
-    pages_min: cond.pages_min ? Number(cond.pages_min) : undefined,
-    pages_max: cond.pages_max ? Number(cond.pages_max) : undefined,
+    ...cond.s, ...cond.m, source: source.value,
+    pages_min: cond.s.pages_min ? Number(cond.s.pages_min) : undefined,
+    pages_max: cond.s.pages_max ? Number(cond.s.pages_max) : undefined,
   });
 }
 
@@ -498,7 +574,8 @@ const total = computed(() => files.value?.total ?? 0);
 const totalPages = computed(() => files.value?.total_pages ?? 1);
 
 function clearFilters() {
-  Object.assign(f, EMPTY);
+  for (const k of SCALAR_KEYS) f[k] = "";
+  for (const k of MULTI_KEYS) m[k] = [];
   applyNow();
 }
 function reload() { qc.invalidateQueries({ queryKey: ["files"] }); }
@@ -740,7 +817,23 @@ function speedTitle(r: FileRow): string {
   color: var(--text-dim); }
 .fmenu label input { flex: 1; min-width: 0; }
 .fmenu input, .fmenu select { font-size: 12px; padding: 3px 6px; }
-.fmenu .listbox { width: 100%; }
+/* 多选清单（枚举列）：勾选项多时清单自己滚动，菜单高度不跟着涨 */
+.fmenu .mlist { display: flex; flex-direction: column; max-height: 220px;
+  overflow: auto; }
+.fmenu .mlist label, .fmenu .fall { color: var(--text); gap: 6px;
+  padding: 3px 5px; border-radius: 4px; cursor: pointer; }
+.fmenu .mlist label:hover, .fmenu .fall:hover { background: var(--bg-panel); }
+/* 「全部X」= 复位本列：读起来像清单首行，不是又一个按钮 */
+.fmenu .fall { display: flex; align-items: center; justify-content: flex-start;
+  width: 100%; background: transparent; border: none;
+  border-bottom: 1px solid var(--border); border-radius: 0;
+  padding: 2px 5px 7px; font-size: 12px; text-align: left; }
+.fmenu .fall:hover { border-color: var(--border); border-radius: 4px; }
+.fmenu .fall.on { color: var(--accent); }
+/* checkbox keeps its own size: the rule above stretches inputs to fill */
+.fmenu label input[type="checkbox"] { flex: 0 0 auto; }
+.fmenu .mlist span { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 .fmenu-note { font-size: 12px; line-height: 1.5; margin: 0; }
 .fmenu-act { display: flex; gap: 8px; justify-content: space-between;
   border-top: 1px solid var(--border); padding-top: 8px; }

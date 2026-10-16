@@ -12,7 +12,7 @@ from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, delete, func, or_, select
 
@@ -57,6 +57,17 @@ def _like(term: str) -> str:
     return f"%{esc}%"
 
 
+def _picked(values: list[str] | None) -> list[str] | None:
+    """The picked values of one multi-select column filter, blanks dropped.
+
+    Repeated query params arrive as a list; `?skill_code=` (empty) means "no
+    filter" exactly as the single-value params did before 2026-10-15, and a
+    selection that is empty after cleaning must not become `IN ('')`.
+    """
+    kept = [v for v in (values or []) if v.strip()]
+    return kept or None
+
+
 def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
@@ -90,12 +101,14 @@ def _initiator_cond(value: str):
 
 
 @router.get("/files")
-async def list_files(source: Literal["manual", "api"] | None = None, status: str | None = None, q: str | None = None,
-                     skill_code: str | None = None,
-                     file_name: str | None = None, file_type: str | None = None,
-                     initiator: str | None = None,
+async def list_files(source: Literal["manual", "api"] | None = None,
+                     status: list[str] | None = Query(None), q: str | None = None,
+                     skill_code: list[str] | None = Query(None),
+                     file_name: str | None = None,
+                     file_type: list[str] | None = Query(None),
+                     initiator: list[str] | None = Query(None),
                      pages_min: int | None = None, pages_max: int | None = None,
-                     verify: str | None = None,
+                     verify: list[str] | None = Query(None),
                      date_from: str | None = None, date_to: str | None = None,
                      updated_from: str | None = None, updated_to: str | None = None,
                      page: int = 1, page_size: int = 20):
@@ -111,16 +124,26 @@ async def list_files(source: Literal["manual", "api"] | None = None, status: str
     `q` is the cross-column keyword (name or skill); `file_name` / `skill_code`
     are the per-column ones. `file_type` is the extension without the dot.
     `verify` ∈ {verified, error, none}. Date params are inclusive `YYYY-MM-DD`.
+
+    多选（2026-10-15）: the enumeration columns (`skill_code` / `initiator` /
+    `file_type` / `status` / `verify`) take repeated query parameters, e.g.
+    `?skill_code=a&skill_code=b`. Values inside one column are OR-ed (union),
+    columns stay AND-ed. A single value still works, so old links keep behaving.
     """
     tenant = current_tenant()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
+    skill_code = _picked(skill_code)
+    file_type = _picked(file_type)
+    initiator = _picked(initiator)
+    status = _picked(status)
+    verify = _picked(verify)
     try:
         lo, hi = _day_bounds(date_from, date_to)
         ulo, uhi = _day_bounds(updated_from, updated_to)
     except ValueError as e:
         raise HTTPException(400, "日期参数需为 YYYY-MM-DD 格式") from e
-    if verify and verify not in ("verified", "error", "none"):
+    if verify and set(verify) - {"verified", "error", "none"}:
         raise HTTPException(400, "verify 只能是 verified / error / none")
     sf = session_factory()
     async with sf() as s:
@@ -139,20 +162,20 @@ async def list_files(source: Literal["manual", "api"] | None = None, status: str
                        _NOT_DELETED))
         conds = []
         if skill_code:
-            conds.append(Transaction.skill_code == skill_code)
+            conds.append(Transaction.skill_code.in_(skill_code))
         if file_name and file_name.strip():
             conds.append(FileRecord.file_name.ilike(_like(file_name), escape="\\"))
-        if file_type and file_type.strip():
+        if file_type:
             # `type` is derived from the extension at read time, so filtering on
             # it means matching the suffix — there is no column to index
-            suffix = file_type.strip().lstrip(".").lower()
-            conds.append(FileRecord.file_name.ilike(f"%.{suffix}", escape="\\"))
+            conds.append(or_(*[FileRecord.file_name.ilike(
+                f"%.{t.strip().lstrip('.').lower()}", escape="\\") for t in file_type]))
         if pages_min is not None:
             conds.append(FileRecord.page_count >= pages_min)
         if pages_max is not None:
             conds.append(FileRecord.page_count <= pages_max)
-        if initiator and initiator.strip():
-            conds.append(_initiator_cond(initiator))
+        if initiator:
+            conds.append(or_(*[_initiator_cond(v) for v in initiator]))
         if q and q.strip():
             conds.append(or_(FileRecord.file_name.ilike(_like(q), escape="\\"),
                              Transaction.skill_code.ilike(_like(q), escape="\\"),
@@ -179,7 +202,7 @@ async def list_files(source: Literal["manual", "api"] | None = None, status: str
         for f, sc, sname, itype, ilabel in rows:
             children = children_by_parent.get(f.id, [])
             meta = task_summary(f, children)
-            if status and meta["status"] != status:
+            if status and meta["status"] not in status:
                 continue
             updated_at = _utc(meta["updated_at"])
             if ulo is not None and updated_at < ulo:
@@ -187,11 +210,10 @@ async def list_files(source: Literal["manual", "api"] | None = None, status: str
             if uhi is not None and updated_at > uhi:
                 continue
             any_verified = bool(f.verified_by or any(c.verified_by for c in children))
-            if verify == "verified" and not meta["verified_by"]:
-                continue
-            if verify == "error" and not meta["error"]:
-                continue
-            if verify == "none" and (any_verified or meta["error"]):
+            # 多选: one row qualifies when it matches ANY of the picked values
+            if verify and not (("verified" in verify and meta["verified_by"])
+                               or ("error" in verify and meta["error"])
+                               or ("none" in verify and not (any_verified or meta["error"]))):
                 continue
             size = None
             try:

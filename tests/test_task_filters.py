@@ -1,10 +1,13 @@
-"""发起人列筛选（2026-09-19 需求：任务清单的发起人列支持筛选）.
+"""任务清单列筛选（2026-09-19 发起人列 / 2026-10-15 多选）.
 
 Two surfaces:
 - `GET /api/v1/files/initiators` — the选项 list (value/label/type/count), built
   from the same population the ledger shows;
 - `GET /api/v1/files?initiator=…` — the filter itself, matching the values that
   endpoint hands out (`user:<label>`, `api_key:<label>`, `unknown`, `anonymous`).
+
+The enumeration columns also take repeated params (`?skill_code=a&skill_code=b`):
+picked values inside one column are unioned, columns stay intersected.
 
 Rows are inserted directly: this is about the task-ledger read surface, not
 about how submissions are made (test_initiator covers that).
@@ -164,3 +167,92 @@ async def test_initiator_filter_is_tenant_scoped(client):
     assert (await _ledger(client, initiator="user:alice@example.com"))["total"] == 2
     opts = (await client.get("/api/v1/files/initiators")).json()["initiators"]
     assert [o["count"] for o in opts if o["value"] == "user:alice@example.com"] == [2]
+
+
+# —— 多选（2026-10-15）——
+async def _seed_multi() -> None:
+    """Every enumeration column spread over ≥3 values, so a multi-select can be
+    told apart from an intersection or from "first value wins".
+
+    6 rows: skills alpha×3 / beta×2 / gamma×1; types pdf×3 / docx×2 / png×1;
+    verification verified×2 / error×1 / none×3 (b2 carries the error, so it is
+    not "none"); initiators alice×5 + one legacy row without a snapshot.
+    """
+    from app.db import session_factory
+    from app.models import FileRecord, Transaction
+
+    rows = [
+        # (skill, file_name, status, initiator_label, verified_by, error)
+        ("alpha", "a1.pdf", "completed", "alice@example.com", None, None),
+        ("alpha", "a2.docx", "completed", "alice@example.com", "alice@example.com", None),
+        ("alpha", "a3.pdf", "completed", "alice@example.com", "alice@example.com", None),
+        ("beta", "b1.pdf", "pending_verification", "alice@example.com", None, None),
+        ("beta", "b2.png", "failed", "alice@example.com", None, "坏文件"),
+        ("gamma", "c1.docx", "completed", None, None, None),
+    ]
+    sf = session_factory()
+    async with sf() as s:
+        for i, (skill, name, status, label, verified_by, error) in enumerate(rows):
+            txn = Transaction(id=f"m{i:031d}", tenant_id="default", skill_code=skill,
+                              skill_version=1, status=status, purpose="production",
+                              initiator_type="user" if label else None,
+                              initiator_label=label)
+            s.add(txn)
+            await s.flush()
+            s.add(FileRecord(id=f"mf{i:031d}", tenant_id="default",
+                             transaction_id=txn.id, file_name=name,
+                             storage_path=f"files/default/{txn.id}/{name}",
+                             status=status, page_count=1, verified_by=verified_by,
+                             error=error))
+        await s.commit()
+
+
+async def test_multi_select_unions_inside_a_column(client):
+    """Picking several values of one column returns their union — the whole
+    point of the feature; a single value must keep behaving as it did."""
+    await _seed_multi()
+    assert (await _ledger(client))["total"] == 6
+    assert (await _ledger(client, skill_code="alpha"))["total"] == 3
+    page = await _ledger(client, skill_code=["alpha", "beta"])
+    assert page["total"] == 5
+    assert {r["skill_code"] for r in page["data"]} == {"alpha", "beta"}
+
+    assert (await _ledger(client, file_type=[".pdf", ".png"]))["total"] == 4
+    assert (await _ledger(client, file_type=["pdf", "docx"]))["total"] == 5
+    assert (await _ledger(client, status=["completed", "failed"]))["total"] == 5
+    assert (await _ledger(client, status=["pending_verification", "failed"]))["total"] == 2
+    # 免登录/历史任务 bucket unions with a named user instead of replacing it
+    assert (await _ledger(client, initiator=["user:alice@example.com"]))["total"] == 5
+    assert (await _ledger(client, initiator=["user:alice@example.com",
+                                             "unknown"]))["total"] == 6
+
+
+async def test_multi_select_union_does_not_intersect(client):
+    """Guard against AND-ing the picked values (`skill = alpha AND skill = beta`
+    is always empty) — the classic way a multi-select looks broken."""
+    await _seed_multi()
+    assert (await _ledger(client, skill_code=["alpha", "beta"]))["total"] != 0
+    assert (await _ledger(client, verify=["verified", "none"]))["total"] == 5
+    assert (await _ledger(client, verify=["verified", "error"]))["total"] == 3
+    assert (await _ledger(client, verify=["none"]))["total"] == 3
+
+
+async def test_multi_select_still_intersects_across_columns(client):
+    await _seed_multi()
+    assert (await _ledger(client, skill_code=["alpha", "beta"],
+                          file_type=[".docx"]))["total"] == 1
+    assert (await _ledger(client, skill_code=["alpha", "gamma"],
+                          verify=["verified", "error"]))["total"] == 2
+    assert (await _ledger(client, status=["completed"], verify=["error"]))["total"] == 0
+    # a picked value that matches nothing is not an error
+    assert (await _ledger(client, skill_code=["alpha", "nope"]))["total"] == 3
+
+
+async def test_multi_select_rejects_unknown_verify_value(client):
+    await _seed_multi()
+    r = await client.get("/api/v1/files", params={"verify": ["verified", "maybe"]})
+    assert r.status_code == 400, r.text
+    # a blank repeated param means "no filter", exactly like the old `verify=`
+    assert (await _ledger(client, verify=["", ""]))["total"] == 6
+    assert (await _ledger(client, skill_code=["", "alpha"]))["total"] == 3
+    assert (await _ledger(client, skill_code=[""]))["total"] == 6
