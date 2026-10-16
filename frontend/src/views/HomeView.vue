@@ -40,6 +40,9 @@
       </div>
       <div class="table-scroll" v-if="rows.length">
         <table class="data-table">
+          <colgroup><col style="width: 18%" /><col style="width: 20%" />
+            <col style="width: 32%" /><col style="width: 7%" />
+            <col style="width: 15%" /><col style="width: 8%" /></colgroup>
           <thead>
             <tr><th>时间</th><th>技能</th><th>文件名</th><th>页数</th><th>状态</th><th></th></tr>
           </thead>
@@ -48,7 +51,7 @@
               <td class="dim nowrap">{{ ts(r.created_at) }}</td>
               <td>{{ r.skill_code }}</td>
               <td class="fname" :title="r.file_name">
-                {{ r.file_name }}
+                <span class="file-label">{{ r.file_name }}</span>
                 <span v-if="r.child_count" class="split-note">内含 {{ r.child_count }} 份单据</span>
               </td>
               <td>{{ r.page_count }}</td>
@@ -125,8 +128,11 @@ const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
 .live { font-size: 12px; }
 .more { margin-left: auto; font-size: 13px; }
 .table-scroll { overflow-x: auto; }
-.fname { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.split-note { margin-left: 6px; color: var(--accent); font-size: 11px; }
+.data-table { table-layout: fixed; min-width: 720px; }
+.data-table td { overflow: hidden; text-overflow: ellipsis; }
+.fname, .file-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-label { display: block; }
+.split-note { display: block; margin-top: 3px; color: var(--accent); font-size: 11px; }
 .nowrap { white-space: nowrap; }
 .row-act { text-align: right; }
 .slim { padding: 2px 12px; font-size: 12px; }

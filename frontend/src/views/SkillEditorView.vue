@@ -566,7 +566,7 @@
                   <button class="btn-like" @click="pgHistoryOpen = true; pgLoadHistory()"
                           data-testid="pg-history">运行历史</button>
                   <button v-if="pgCurrentRun" class="btn-like"
-                          data-testid="pg-detail-btn" @click="pgDetailOpen = true">详情</button>
+                          data-testid="pg-detail-btn" @click="pgOpenDetail">详情</button>
                 </div>
                 <p v-if="pgTimeoutNote" class="err-text" data-testid="pg-timeout">
                   {{ pgTimeoutNote }}</p>
@@ -674,10 +674,12 @@
               </div>
             </AppModal>
 
-            <AppModal v-if="pgDetailOpen && pgDetail" @close="pgDetailOpen = false">
+            <AppModal v-if="pgDetailOpen" @close="pgDetailOpen = false">
               <div class="pg-modal" data-testid="pg-detail">
                 <h4>运行详情</h4>
-                <ul class="pg-detail">
+                <p v-if="pgDetailLoading" class="dim">正在加载运行详情…</p>
+                <p v-else-if="pgDetailError" class="err-text">{{ pgDetailError }}</p>
+                <ul v-else-if="pgDetail" class="pg-detail">
                   <li>技能版本：<strong>v{{ pgDetail.version }}</strong></li>
                   <li>处理模式：{{ pgDetail.processing_mode === "fast" ? "极速" : "均衡" }}</li>
                   <li>状态：{{ runLabel(pgDetail.status) }}</li>
@@ -847,10 +849,14 @@ function resetPerSkillState() {
   activeCatId.value = null;
   sampleStatus.value = {};
   runBySample.value = {};
+  pgSamples.value = [];
   pgDocs.value = [];
   pgFiles.value = [];
   pgHistory.value = [];
   pgDetail.value = null;
+  pgDetailOpen.value = false;
+  pgDetailLoading.value = false;
+  pgDetailError.value = "";
   pgCurrent.value = null;
   pgCurrentRun.value = null;
   pgCurrentTxnId.value = null;
@@ -1026,7 +1032,6 @@ function insertToken(t: string) {
 watch(() => pkg.value?.output?.naming_rule, outQueuePreview);
 watch(() => pkg.value?.output?.searchable_pdf, outQueuePreview);
 watch(() => pkg.value?.output?.action, outQueuePreview);
-watch(() => pgSelected.value[0], outQueuePreview);
 // entering the step (or loading a package) seeds tokens + preview once
 watch(() => [step.value, pkg.value?.skill_code], ([st]) => {
   if (st === "output") outQueuePreview();
@@ -1212,9 +1217,12 @@ interface PgSample { id: string; file_name: string; skill_code: string | null; c
 const pgSamples = ref<PgSample[]>([]);
 const pgSearch = ref("");
 const pgSelected = ref<string[]>([]);
+watch(() => pgSelected.value[0], outQueuePreview);
 const pgPolling = ref(false);
 const pgHistoryOpen = ref(false);
 const pgDetailOpen = ref(false);
+const pgDetailLoading = ref(false);
+const pgDetailError = ref("");
 const pgHistory = ref<{ run_id: string; sample_id: string; version: number;
                         status: string; duration_ms: number | null;
                         created_by: string; created_at: string }[]>([]);
@@ -1252,7 +1260,9 @@ const pgFileArtifacts = computed(() =>
 // #5: results belong to the SELECTED file (multi-sample runs share one txn)
 const pgVisibleDocs = computed(() => {
   const fid = pgActiveFileId.value;
-  return fid ? pgDocs.value.filter((d) => d.file_id === fid) : pgDocs.value;
+  // Advanced-mode documents have CHILD file IDs. Their root file's grouping
+  // is the contract that associates all split documents with this sample.
+  return fid ? pgFiles.value.find((f) => f.file_id === fid)?.documents ?? [] : pgDocs.value;
 });
 const pgReviewCount = computed(() =>
   pgVisibleDocs.value.reduce((n, d) => n + (d.review_fields?.length ?? 0), 0));
@@ -1304,7 +1314,7 @@ function pgStatus(sampleId: string): string {
   return sampleStatus.value[sampleId] ?? "";
 }
 
-watch([tab, props.code], async ([t]) => {
+watch([tab, () => props.code], async ([t]) => {
   if (t !== "test" || pgSamples.value.length) return;
   try {
     pgSamples.value = (await api.studioSamples(props.code)).samples;
@@ -1326,11 +1336,27 @@ async function pgUpload(e: Event) {
 
 async function pgRun() {
   if (!pgSelected.value.length) return;
+  const skillCode = props.code;
   try {
     const r = await api.studioCreateRun({ skill_code: props.code ?? "",
                                          sample_ids: pgSelected.value });
+    if (props.code !== skillCode) return;
+    pgCurrentRun.value = r.runs[0]?.run_id ?? null;
+    pgCurrentTxnId.value = r.transaction_id;
+    pgCurrent.value = null;
+    pgDocs.value = [];
+    pgFiles.value = [];
+    pgDetail.value = null;
+    pgDetailOpen.value = false;
+    pgDetailLoading.value = false;
+    pgDetailError.value = "";
+    pgRunStatus.value = "queued";
+    pgRunDuration.value = null;
+    pgStagePages.value = [];
+    pgStageResult.value = {};
     for (const run of r.runs) {
-      runBySample.value[run.sample_id] = { runId: run.run_id, txnId: r.transaction_id };
+      runBySample.value[run.sample_id] = { runId: run.run_id, txnId: r.transaction_id,
+                                         fileId: run.file_id ?? undefined };
       sampleStatus.value[run.sample_id] = "运行中…";
     }
     pgPollTransaction(r.transaction_id);
@@ -1344,7 +1370,9 @@ function pgPollTransaction(txnId: string) {
   pgTimeoutNote.value = "";
   pgStartedAt = Date.now();
   if (pgTimer) clearInterval(pgTimer);
+  let inFlight = false;
   pgTimer = setInterval(async () => {
+    if (inFlight) return;
     // #5: a test run never reaches the review queue, so `pending_verification`
     // IS a finished state here; and the poll stops after 10 minutes instead of
     // spinning forever with the results pane empty.
@@ -1354,8 +1382,10 @@ function pgPollTransaction(txnId: string) {
         "运行超时（超过 10 分钟仍未结束），已停止轮询。请到「运行历史」查看，或稍后重试。";
       return;
     }
+    inFlight = true;
     try {
       const st = await api.txnStatus(txnId);
+      if (pgCurrentTxnId.value !== txnId) return;
       pgFiles.value = st.files.map((f) => ({
         file_id: f.file_id, file_name: f.file_name, status: f.status,
         artifacts: [], documents: [] }));
@@ -1378,11 +1408,17 @@ function pgPollTransaction(txnId: string) {
       if (terminal) {
         pgStopPolling();
         await pgLoadDocuments(txnId);
+        if (pgCurrentTxnId.value !== txnId) return;
         await pgLoadRunState(txnId);
+        if (pgCurrentTxnId.value !== txnId) return;
         pgLoadHistory();
       }
-    } catch {
+    } catch (err) {
+      if (pgCurrentTxnId.value !== txnId) return;
       pgStopPolling();
+      pgTimeoutNote.value = `测试状态或结果加载失败：${err instanceof Error ? err.message : err}。请在运行历史中重试查看。`;
+    } finally {
+      inFlight = false;
     }
   }, 2000);
 }
@@ -1409,12 +1445,13 @@ function pgUpdateSampleStatuses(files: { file_id: string; status: string }[],
       f.status === "error" || f.status === "rejected" ? "失败"
         : f.status === "pending_verification"
           ? (reviews ? `完成（待复核 ${reviews}）` : "完成（待复核）")
-          : ["completed", "passed"].includes(f.status) ? "完成" : "运行中…";
+          : f.status === "split" ? (reviews ? `完成（待复核 ${reviews}）` : "完成")
+            : ["completed", "passed"].includes(f.status) ? "完成" : "运行中…";
   }
 }
 
 function pgDocsForFile(fileId: string): TxnDocument[] {
-  return pgDocs.value.filter((d) => d.file_id === fileId);
+  return pgFiles.value.find((f) => f.file_id === fileId)?.documents ?? [];
 }
 
 function pgSelectFile(fileId: string) {
@@ -1424,13 +1461,16 @@ function pgSelectFile(fileId: string) {
                       status: f.status };
   pgActiveField.value = null;
   pgActiveBox.value = null;
+  const run = Object.values(runBySample.value).find((r) => r.fileId === fileId);
+  if (run) pgCurrentRun.value = run.runId;
+  if (pgCurrentTxnId.value) void pgLoadRunState(pgCurrentTxnId.value);
   void pgLoadStage(pgCurrentRun.value ? pgCurrentTxnId.value : null, fileId);
 }
 
 async function pgLoadDocuments(txnId: string) {
   try {
     const d = await api.txnDocuments(txnId);
-    pgCurrentTxnId.value = txnId;
+    if (pgCurrentTxnId.value !== txnId) return;
     pgFiles.value = d.files.map((f) => ({
       file_id: f.file_id, file_name: f.file_name, status: f.status,
       artifacts: f.artifacts ?? [], documents: f.documents }));
@@ -1453,7 +1493,11 @@ async function pgLoadDocuments(txnId: string) {
     pgCurrentMode.value =
       pgDocs.value.some((x) => x.metrics?.parse_route === "vision") ? "fast" : pgCurrentMode.value;
     if (pgCurrent.value && !pgFast.value) await pgLoadStage(txnId, active);
-  } catch { /* keep previous view */ }
+  } catch (err) {
+    if (pgCurrentTxnId.value !== txnId) return;
+    pgTimeoutNote.value = `提取结果加载失败：${err instanceof Error ? err.message : err}`;
+    throw err;
+  }
 }
 
 /** #26: highlight needs the FULL result (with $bbox) and page dimensions —
@@ -1462,9 +1506,12 @@ async function pgLoadStage(txnId: string | null, fileId: string | undefined) {
   if (!fileId || pgFast.value) { pgStagePages.value = []; return; }
   try {
     const d = await api.detail(fileId);
+    if (pgCurrentTxnId.value !== txnId || pgCurrent.value?.file_id !== fileId) return;
     pgStagePages.value = d.pages ?? [];
     pgStageResult.value = (d.result ?? {}) as Record<string, unknown>;
-  } catch { pgStagePages.value = []; }
+  } catch {
+    if (pgCurrentTxnId.value === txnId && pgCurrent.value?.file_id === fileId) pgStagePages.value = [];
+  }
 }
 
 async function pgLoadRunState(txnId: string) {
@@ -1476,11 +1523,29 @@ async function pgLoadRunState(txnId: string) {
   if (!runId) return;
   try {
     const d = await api.studioRun(runId);
+    if (pgCurrentTxnId.value !== txnId || pgCurrent.value?.file_id !== activeFile) return;
     pgCurrentRun.value = runId;
+    pgDetail.value = d;
     pgRunStatus.value = d.status;
     pgRunDuration.value = d.duration_ms;
     pgCurrentMode.value = d.processing_mode;
   } catch { /* the run record is best-effort */ }
+}
+
+async function pgOpenDetail() {
+  const runId = pgCurrentRun.value;
+  if (!runId || pgDetailLoading.value) return;
+  pgDetailOpen.value = true;
+  pgDetailLoading.value = true;
+  pgDetailError.value = "";
+  try {
+    const detail = await api.studioRun(runId);
+    if (pgCurrentRun.value === runId) pgDetail.value = detail;
+  } catch (err) {
+    if (pgCurrentRun.value === runId) pgDetailError.value = `详情加载失败：${err instanceof Error ? err.message : err}`;
+  } finally {
+    if (pgCurrentRun.value === runId) pgDetailLoading.value = false;
+  }
 }
 
 function pgPickField(key: string) {
@@ -1512,8 +1577,10 @@ async function pgRunCurrent() {
 }
 
 async function pgLoadHistory() {
+  const skillCode = props.code;
   try {
-    pgHistory.value = (await api.studioRuns({ skill_code: props.code })).runs;
+    const history = await api.studioRuns({ skill_code: skillCode });
+    if (props.code === skillCode) pgHistory.value = history.runs;
   } catch { /* history is best-effort */ }
 }
 
@@ -1523,19 +1590,24 @@ function pgSampleName(id: string): string {
 
 async function pgLoadRun(runId: string) {
   pgHistoryOpen.value = false;
+  pgStopPolling();
+  pgCurrentTxnId.value = null;
+  pgCurrentRun.value = runId;
+  pgDetailLoading.value = false;
   try {
     const d = await api.studioRun(runId);
+    if (pgCurrentRun.value !== runId) return;
     pgDetail.value = d;
-    pgCurrentRun.value = runId;
+    pgCurrentTxnId.value = d.transaction_id;
     pgRunStatus.value = d.status;          // same source as the history row (#6)
     pgRunDuration.value = d.duration_ms;
     pgCurrentMode.value = d.processing_mode;
     pgDetailOpen.value = true;
     await pgLoadDocuments(d.transaction_id);
+    if (pgCurrentRun.value !== runId) return;
     if (d.file_id) {
       const f = pgFiles.value.find((x) => x.file_id === d.file_id);
-      if (f) pgCurrent.value = { file_id: f.file_id, file_name: f.file_name,
-                                status: f.status };
+      if (f && pgCurrent.value?.file_id !== f.file_id) pgSelectFile(f.file_id);
     }
   } catch (err) {
     toast.error(`载入运行失败：${err instanceof Error ? err.message : err}`);
@@ -1603,7 +1675,12 @@ function beforeUnload(ev: BeforeUnloadEvent) {
   if (dirty.value) { ev.preventDefault(); ev.returnValue = ""; }
 }
 onMounted(() => window.addEventListener("beforeunload", beforeUnload));
-onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", beforeUnload);
+  pgStopPolling();
+  pgCurrentTxnId.value = null;
+  pgCurrentRun.value = null;
+});
 onBeforeRouteLeave(() => {
   if (!dirty.value) return true;
   // synchronous confirm is the only browser-native option here

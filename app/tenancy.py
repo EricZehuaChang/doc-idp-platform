@@ -183,6 +183,15 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
             "allowed_skill_codes": intersect_skills(row.allowed_skill_codes, grants.allowed_skill_codes),
         }
 
+    # An explicitly account-owned application key cannot outlive a disabled,
+    # deleted or cross-tenant owner. Ownerless integration keys keep their
+    # existing key-only identity; they never inherit administrator authority.
+    if row.owner_user_id:
+        async with sf() as s:
+            owner = await s.get(User, row.owner_user_id)
+        if owner is None or not owner.active or owner.tenant_id != row.tenant_id:
+            return None
+
     if (row.last_used_at is None or (_dt.datetime.now(_dt.timezone.utc)
             - row.last_used_at.replace(tzinfo=_dt.timezone.utc)).total_seconds() >= _LAST_USED_THROTTLE):
         async with sf() as s:

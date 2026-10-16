@@ -239,6 +239,17 @@ async def test_agent_key_submit_scope_and_viewer_role(auth_env, seeded_skill):
     row = next(x for x in r.json()["data"] if x["transaction_id"] == tid)
     assert row["initiator_type"] == "api_key"
     assert row["initiator_label"] == "op3@example.com（财务终端2）"
+    # New API submissions pin the account as well as the immutable key ID.
+    # The owner can read this task in the UI; an unrelated account cannot.
+    from app.db import session_factory
+    from app.models import ApiKey, Transaction
+    async with session_factory()() as s:
+        txn = await s.get(Transaction, tid)
+        owner_key = await s.get(ApiKey, txn.api_key_id)
+        assert txn.initiator_user_id == owner_key.owner_user_id
+        assert txn.initiator_user_id is not None
+    assert (await auth_env.get(f"/api/v1/status/{tid}", headers=o_hdr)).status_code == 200
+    assert (await auth_env.get(f"/api/v1/status/{tid}", headers=v_hdr)).status_code == 404
     await fresh.aclose()
 
 

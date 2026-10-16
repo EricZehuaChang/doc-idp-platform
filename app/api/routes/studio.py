@@ -357,7 +357,8 @@ async def _rows_for_runs(s, runs: list[StudioRun]) -> dict[str, list]:
     if not ids:
         return {}
     rows = (await s.execute(
-        select(_FR).where(or_(_FR.id.in_(ids), _FR.parent_file_id.in_(ids)))
+        select(_FR).where(visible_file_cond(),
+                          or_(_FR.id.in_(ids), _FR.parent_file_id.in_(ids)))
     )).scalars().all()
     by_id = {f.id: f for f in rows}
     out: dict[str, list] = {}
@@ -431,7 +432,7 @@ async def create_run(payload: RunRequest,
                           skill_version=ver.version, purpose="test",
                           initiator_type="user", initiator_id=actor["name"],
                           initiator_label=actor["name"],
-                          initiator_user_id=actor.get("user_id"),
+                          initiator_user_id=actor.get("user_id") or actor.get("owner_user_id"),
                           # R5: a key's own Playground runs stay visible to it
                           api_key_id=actor.get("api_key_id"))
         s.add(txn)
@@ -585,7 +586,8 @@ async def naming_preview(payload: dict):
                 ).scalars().first()
                 children = (await s.execute(
                     select(FileRecord)
-                    .where(FileRecord.parent_file_id == (f.id if f else ""))
+                    .where(visible_file_cond(),
+                           FileRecord.parent_file_id == (f.id if f else ""))
                     .order_by(FileRecord.created_at))
                 ).scalars().all() if f else []
                 for row in ([f] if f else []) + list(children):
