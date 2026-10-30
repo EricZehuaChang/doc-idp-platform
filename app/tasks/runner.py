@@ -56,6 +56,15 @@ def skill_expects_tables(pkg: SkillPackage, deps: dict | None = None) -> bool:
             return True
     return False
 
+def parser_pin_for(pkg: SkillPackage) -> str | None:
+    """Parse route of a skill: an explicit package pin always wins; layout
+    skills default to the glyph-first route (router.LayoutAutoParser) so
+    electronic PDFs come back with line regions and per-character boxes."""
+    if pkg.parser:
+        return pkg.parser
+    return "layout-auto" if getattr(pkg, "kind", "extract") == "layout" else None
+
+
 log = logging.getLogger("idp.runner")
 
 
@@ -86,7 +95,7 @@ async def process_transaction(transaction_id: str) -> None:
     async def _one(file_id: str) -> None:
         async with sem:
             try:
-                await parse_stage(file_id, pkg.parser,
+                await parse_stage(file_id, parser_pin_for(pkg),
                                   skill_expects_tables(pkg, deps),
                                   getattr(pkg, "processing_mode", "balanced"))
                 await extract_stage(file_id, pkg, deps)
@@ -298,6 +307,12 @@ async def extract_stage(file_id: str, pkg: SkillPackage,
         # JSON object keys are strings — page numbers must come back as ints
         page_images = {int(k): v for k, v in raw_images.items()}
 
+    if getattr(pkg, "kind", "extract") == "layout":
+        # layout skill: the caller wants THIS file's region map, so no
+        # classification and no multi-doc split — one file, one layout
+        await _extract_one(file_id, udr, pkg, deps or {})
+        return
+
     advanced = (getattr(pkg, "skill_mode", "standard") == "advanced"
                 and not fast)   # fast mode executes as standard (§WP5)
     classify_ms: int | None = None
@@ -439,8 +454,14 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         tenant = f.tenant_id
         meta = dict(f.document_meta or {})
     _x0 = datetime.now(timezone.utc)
-    result, usage, needs_review = await asyncio.to_thread(
-        extract, udr, pkg, page_images=page_images, fast=fast)
+    if getattr(pkg, "kind", "extract") == "layout" and not pkg.fields:
+        # pure layout skill: the parsed regions (served by /status from the
+        # persisted UDR) ARE the product — no model call, nothing to review;
+        # pages still bill at settle because the file completes
+        result, usage, needs_review = {}, {}, False
+    else:
+        result, usage, needs_review = await asyncio.to_thread(
+            extract, udr, pkg, page_images=page_images, fast=fast)
     if fast and not usage.get("review_misses"):
         # 极速模式 executes as standard: no review, no scoring (§WP5)
         needs_review = False

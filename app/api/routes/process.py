@@ -431,6 +431,28 @@ async def preview(file_id: str):
                         headers=immutable)
 
 
+def _is_layout_txn(txn: Transaction) -> bool:
+    """kind="layout" skills return the parsed region map next to `result`.
+    Layout skills postdate WP4, so the submit-time snapshot always exists."""
+    pkg = (txn.execution_snapshot or {}).get("package") or {}
+    return pkg.get("kind") == "layout"
+
+
+def _file_layout(f: FileRecord) -> dict | None:
+    """Region map of one file, read back from the UDR the parse stage
+    persisted (no re-parse, no extra charge). None until the parse landed,
+    and for error rows — those bill nothing, so they return nothing."""
+    if not f.udr_path or f.status == "error":
+        return None
+    from app.extraction.layout import layout_view
+    from app.parsers.base import UDR
+    try:
+        udr = UDR.model_validate_json(get_storage().read_bytes(f.udr_path))
+    except Exception:
+        return None
+    return layout_view(udr)
+
+
 @router.get("/transactions/{transaction_id}/documents")
 async def transaction_documents(transaction_id: str):
     """9.15 WP5 (§3.5): per-root-file document view with clean data.
@@ -496,6 +518,7 @@ async def transaction_documents(transaction_id: str):
                     SkillVersion.skill_code == txn.skill_code,
                     SkillVersion.version == txn.skill_version))).scalars().first()
             snapshot_pkg = (ver.package or {}) if ver else {}
+        layout_txn = _is_layout_txn(txn)
         threshold = 2
         output_shape = "object"
         if snapshot_pkg:
@@ -553,7 +576,8 @@ async def transaction_documents(transaction_id: str):
                         **({"field_sources": k.document_meta["field_sources"]} if (k.document_meta or {}).get("field_sources") else {}),
                         "review_fields": _review_fields(k.result or {}),
                         "metrics": (k.document_meta or {}).get("metrics"),
-                        "artifacts": artifacts_by_file.get(k.id, [])})
+                        "artifacts": artifacts_by_file.get(k.id, []),
+                        **({"layout": _file_layout(k)} if layout_txn else {})})
                 return docs
             pages = list(range(1, (f.page_count or 0) + 1))
             return [{
@@ -569,7 +593,9 @@ async def transaction_documents(transaction_id: str):
                 **({"field_sources": f.document_meta["field_sources"]} if (f.document_meta or {}).get("field_sources") else {}),
                 "review_fields": _review_fields(f.result or {}),
                 "metrics": (f.document_meta or {}).get("metrics"),
-                "artifacts": artifacts_by_file.get(f.id, [])}]
+                "artifacts": artifacts_by_file.get(f.id, []),
+                # new key only, layout skills only: existing callers unchanged
+                **({"layout": _file_layout(f)} if layout_txn else {})}]
 
         def _clean_data(f: FileRecord):
             result = f.result
@@ -611,6 +637,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
             raise HTTPException(404, "transaction not found")
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond()))).scalars().all()
+        layout_txn = _is_layout_txn(txn)
 
         def file_payload(f: FileRecord) -> dict:
             result = f.result
@@ -635,6 +662,9 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
                 # 9.15 WP4 (§3.6): per-document view, new key only — absent for
                 # legacy/standard files without classification metadata
                 "document": document_view(f),
+                # layout skills: parser text + boxes + page dims, outside
+                # `result` so the field contract and review UI stay untouched
+                **({"layout": _file_layout(f)} if layout_txn else {}),
             }
 
         # One API row per uploaded file. Internal split jobs remain available as

@@ -43,10 +43,11 @@ def run_transaction(transaction_id: str, tenant: str) -> None:
     pkg, deps, file_ids = plan
     pkg_dict = pkg.model_dump()
     deps_dict = {k: v for k, v in deps.items()}
-    q = parse_queue_for(pkg.parser)
+    pin = runner.parser_pin_for(pkg)
+    q = parse_queue_for(pin)
     expects_tables = runner.skill_expects_tables(pkg, deps)
     header = [
-        chain(parse_file.si(fid, pkg.parser, tenant, expects_tables,
+        chain(parse_file.si(fid, pin, tenant, expects_tables,
                             getattr(pkg, "processing_mode", "balanced")
                             ).set(queue=q),
               extract_file.si(fid, pkg_dict, tenant, deps_dict))

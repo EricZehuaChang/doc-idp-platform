@@ -142,7 +142,7 @@ class _SkillPackageCore(BaseModel):
     schema_version: int = 1              # 9.15: stored v1 rows stay 1; editor saves 2
     name: str = ""
     description: str = ""                # editor "描述" (human context, not prompt)
-    kind: str = "extract"                # extract|audit (§5.5, audit lands M3)
+    kind: str = "extract"                # extract|audit (§5.5, audit lands M3)|layout (region map)
     doc_type_hint: str = ""
     # —— v2 execution shape ——
     extraction_channel: Literal["model", "rules_first"] = "model"
