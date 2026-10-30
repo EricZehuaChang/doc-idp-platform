@@ -45,8 +45,9 @@ _PROMPT = (
 @registry.register("parser", "vlm-deepseek")
 @registry.register("parser", "vlm-glm")
 @registry.register("parser", "vlm-deepseek-pro")
+@registry.register("parser", "vlm-gpt")
 class VlmOcrParser:
-    """One class, three registered names. Which model each name uses comes from
+    """One class, one registered name per vision channel. Which model each name uses comes from
     configs/parsers.yaml (`provider:`), resolved against providers.yaml — so
     swapping the model behind a parser is a config edit, not a release."""
 

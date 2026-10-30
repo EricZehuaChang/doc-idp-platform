@@ -410,7 +410,7 @@
 
               <label v-if="activeCat && !activeCat.is_other && activeCat.handler !== 'classify_only'"
                      class="cat-rules">{{ $t('skillEditor.category_specific_additional_rules_optional_if_filled_replaces') }}{{ activeCat.handler === 'inline' ? $t('skillEditor.the_general_additional_rules_below') : $t('skillEditor.original_skill_s_additional_rules') }}）
-                <textarea v-model="activeCat.additional_rules" rows="1"
+                <textarea v-model="activeCat.additional_rules" v-autosize rows="1"
                           :placeholder="$t('skillEditor.supplementary_notes_that_apply_only_to_this_category')"></textarea></label>
 
               <details v-if="!activeCat || activeCat.handler === 'inline'" class="rules-fold">
@@ -422,7 +422,7 @@
                   </div>
                 </div>
                 <label class="dim">{{ activeCat ? $t('skillEditor.general_additional_rules_used_when_no_category_specific_rules') : $t('skillEditor.additional_rules') }}</label>
-                <textarea v-model="pkg.additional_rules" rows="2"
+                <textarea v-model="pkg.additional_rules" v-autosize rows="2"
                           :placeholder="$t('skillEditor.e_g_amounts_always_keep_two_decimal_places_dates')"></textarea>
               </details>
               <p v-if="activeCat && pkg.fields.length" class="dim" data-testid="top-fields-note">
@@ -776,6 +776,7 @@ import SkillApiModal from "../components/SkillApiModal.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { RUN_STATUS_LABELS, STATUS_LABELS, VERSION_LABELS,
          initiatorLabel } from "../labels";
+import { vAutosize } from "../autosize";
 import { copyText } from "../clipboard";
 import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";

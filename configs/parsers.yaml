@@ -42,6 +42,10 @@ parsers:
     type: cloud_vlm
     provider: vision-deepseek-pro
     description: DeepSeek V4-Pro · 1.6T MoE 原生多模态（更强更慢）
+  - name: vlm-gpt             # GPT gpt-6-luna（HopBase 中转，2026-10-30 加入，未实测）
+    type: cloud_vlm
+    provider: vision-gpt
+    description: OpenAI GPT-6 Luna · 多模态
   # M2: glm-ocr-local (vLLM + PP-DocLayoutV3), monkeyocr (optional, weights research-licensed), rapidocr (CPU fallback)
 default_parser:
   lite: glm-ocr-cloud
