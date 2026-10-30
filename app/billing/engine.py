@@ -38,8 +38,10 @@ SETTING_KEY = "billing"
 # BYOK columns (BYOK tenants pay their own model bills -> discounted platform fee)
 DEFAULTS = {
     "mode": "shadow",                     # shadow | live
-    "rates": {"extract": 1.0, "audit": 2.0},
-    "rates_byok": {"extract": 0.5, "audit": 1.0},
+    # layout (region map, optional fields) bills like extract; BYOK gets no
+    # discount there — the OCR engine behind it is the platform's, not BYOK
+    "rates": {"extract": 1.0, "audit": 2.0, "layout": 1.0},
+    "rates_byok": {"extract": 0.5, "audit": 1.0, "layout": 1.0},
     "gift_review_threshold": 1000.0,      # gifts above this need a second admin (§12.7)
     "gift_monthly_cap": 10000.0,          # per-operator monthly grant ceiling (§12.7)
 }

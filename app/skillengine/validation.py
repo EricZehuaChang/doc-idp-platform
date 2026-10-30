@@ -85,6 +85,16 @@ def validate_package(pkg: SkillPackage, stage: str = "save",
             errors.append({"path": "additional_rules",
                            "message": f"附加规则超过 {MAX_RULES} 字"})
 
+    if pkg.kind == "layout":
+        # layout skills return the parsed region map of the whole file: the
+        # fast route keeps no regions for scans, advanced mode splits the file
+        if pkg.skill_mode == "advanced":
+            errors.append({"path": "skill_mode", "code": "layout_requires_standard",
+                           "message": "版面坐标技能只支持标准提取，不能用高级模式"})
+        if pkg.processing_mode == "fast":
+            errors.append({"path": "processing_mode", "code": "layout_requires_balanced",
+                           "message": "版面坐标技能不支持极速模式（极速路线不保留区域坐标）"})
+
     if pkg.skill_mode != "advanced":
         if pkg.processing_mode == "fast" and stage == "publish":
             if not pkg.fields:

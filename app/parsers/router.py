@@ -81,6 +81,26 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
     raise ParserUnavailable(f"unsupported file type: {suffix}")
 
 
+@registry.register("parser", "layout-auto")
+class LayoutAutoParser:
+    """Default route of kind="layout" skills (runner.parser_pin_for): an
+    electronic PDF goes to pdfplumber FIRST — one region per line with
+    per-glyph boxes, so the region map and field hits are value-tight;
+    opendataloader merges loose lines into paragraphs (a synthetic resume came
+    back as ONE box for the whole page). A PDF without a text layer goes
+    straight to the OCR chain; every other format keeps the normal auto route.
+    Trade-off: electronic tables arrive as text lines, not table blocks — a
+    skill that needs them pins `opendataloader` explicitly."""
+
+    def parse(self, path: str) -> UDR:
+        if Path(path).suffix.lower() == ".pdf":
+            try:
+                return _make("pdfplumber").parse(path)
+            except ParserUnavailable:
+                return _scan_parse(path)
+        return parse_document(path)
+
+
 def escalate_if_tables_missing(path: str, udr: UDR) -> UDR:
     """Economic escalation (measured on Huaqin SGS-CN samples): opendataloader
     detects bordered tables only — a borderless table degrades to reading-order

@@ -1,0 +1,74 @@
+skill_code: resume_layout
+name: 简历识别（含坐标）
+description: 中文简历：姓名、联系方式、求职意向、教育、证书、工作与项目经历，每个字段带原件坐标；同时返回整份文档的区域坐标（原文、区域框、每页尺寸），调用方可自行高亮或裁剪。
+kind: layout
+doc_type_hint: resume / CV
+fields:
+- name: 姓名
+  instruction: 候选人姓名，只取姓名本身，不带后面的字母或符号。
+  mode: verbatim
+  required: true
+- name: 性别
+  instruction: 性别，按原文输出（男 / 女）；未写则输出空值。
+  mode: verbatim
+- name: 年龄
+  instruction: 年龄，按原文写法输出，如「24岁」；未写则输出空值，不要按出生年份推算。
+  mode: verbatim
+- name: 手机号
+  instruction: 手机号码，按原文输出，不加空格或连字符。
+  mode: verbatim
+- name: 邮箱
+  instruction: 电子邮箱地址。
+  mode: verbatim
+- name: 求职意向
+  instruction: 期望职位，取「求职意向」或「期望职位」后面的内容，不带标签本身。
+  mode: verbatim
+- name: 毕业院校
+  instruction: 最高学历对应的学校名称。
+  mode: verbatim
+- name: 学历
+  instruction: 最高学历，按原文输出，如「本科」「硕士」「大专」。
+  mode: verbatim
+- name: 专业
+  instruction: 最高学历对应的专业名称。
+  mode: verbatim
+- name: 在校时间
+  instruction: 最高学历的起止时间，按原文写法输出，如「2020-2024」。
+  mode: verbatim
+- name: 资格证书
+  type: table
+  instruction: 资格证书与技能证书，每张证书一行；没有则输出空列表。
+  mode: verbatim
+  columns:
+  - name: 证书名称
+    instruction: 证书名称，按原文输出。
+    mode: verbatim
+- name: 工作经历
+  type: table
+  instruction: 工作经历，每段任职一行，按简历中的先后顺序；不要把项目经历放进来。
+  mode: verbatim
+  columns:
+  - name: 公司
+    instruction: 公司全称，按原文输出。
+    mode: verbatim
+  - name: 职位
+    instruction: 担任职位，按原文输出。
+    mode: verbatim
+  - name: 起止时间
+    instruction: 任职起止时间，按原文写法输出，如「2024.07-2025.11」。
+    mode: verbatim
+- name: 项目经历
+  type: table
+  instruction: 项目经历，每个项目一行，按简历中的先后顺序。
+  mode: verbatim
+  columns:
+  - name: 项目名称
+    instruction: 项目名称，按原文输出。
+    mode: verbatim
+  - name: 担任角色
+    instruction: 在项目中的角色或职位，按原文输出。
+    mode: verbatim
+  - name: 起止时间
+    instruction: 项目起止时间，按原文写法输出。
+    mode: verbatim
+additional_rules: 招聘网站下载的简历常带防泄露水印，会以零散字母、数字混在正文行首行尾（如「卢传良 P」「x F 广州…」），提取时一律去掉这些水印字符，只保留真实内容。
