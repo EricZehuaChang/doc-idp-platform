@@ -17,3 +17,8 @@ frontend/node_modules/
 # real sample documents (may contain sensitive invoice data) never enter git
 samples/
 *.tsbuildinfo
+
+# Generated i18n extraction plans and translation caches
+scripts/i18n/extraction-plan.json
+scripts/i18n/inventory.json
+scripts/i18n/translations.json

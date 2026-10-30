@@ -4,64 +4,67 @@
   <div class="mask" @click.self="$emit('close')">
     <div class="drawer">
       <header>
-        <strong>🔌 API 接入 — {{ skillCode }}</strong>
+        <strong>{{ $t('skillApiModal.api_access') }} {{ skillCode }}</strong>
         <button class="ghost" @click="$emit('close')">✕</button>
       </header>
 
       <section>
-        <h3>接入地址与认证</h3>
+        <h3>{{ $t('skillApiModal.endpoint_and_authentication') }}</h3>
         <div class="kv"><span class="dim">Base URL</span>
           <code>{{ base }}</code><CopyBtn :text="base" /></div>
-        <p class="dim">
-          所有请求携带 <code>Authorization: Bearer &lt;API密钥&gt;</code>。
-          密钥由管理员在 <router-link to="/settings" @click="$emit('close')">设置 → API 密钥</router-link>
-          创建（仅创建时显示一次）。
-        </p>
+        <I18nT keypath="skillApiModal.authentication_guide" tag="p" scope="global" class="dim">
+          <template #authorization><code>Authorization: Bearer &lt;{{ $t('skillApiModal.api_key_placeholder') }}&gt;</code></template>
+          <template #settings><router-link to="/settings" @click="$emit('close')">{{ $t('skillApiModal.settings_api_keys') }}</router-link></template>
+        </I18nT>
       </section>
 
       <section>
-        <h3>① 提交文档处理</h3>
-        <p class="dim">POST /api/v1/process — multipart 上传一个或多个文件，绑定本技能；返回 transaction_id。</p>
+        <h3>{{ $t('skillApiModal.submit_document_processing') }}</h3>
+        <p class="dim">{{ $t('skillApiModal.post_api_v1_process_multipart_upload_one_or_more') }}</p>
         <pre>{{ curlSubmit }}</pre><CopyBtn :text="curlSubmit" block />
         <pre>{{ pySubmit }}</pre><CopyBtn :text="pySubmit" block />
       </section>
 
       <section>
-        <h3>② 轮询结果</h3>
-        <p class="dim">GET /api/v1/status/{transaction_id} — 文件级状态与抽取结果。</p>
+        <h3>{{ $t('skillApiModal.poll_results') }}</h3>
+        <p class="dim">{{ $t('skillApiModal.get_api_v1_status_transaction_id_file_level_status') }}</p>
         <pre>{{ curlStatus }}</pre><CopyBtn :text="curlStatus" block />
-        <p class="dim schema-head">结果字段结构（每个字段是一个对象）：</p>
+        <p class="dim schema-head">{{ $t('skillApiModal.result_field_structure_each_field_is_an_object') }}</p>
         <pre>{{ SCHEMA }}</pre>
         <ul class="legend dim">
-          <li><code>$confidence</code> 0-3 置信分级：3=原文精确定位；&lt;2 会进人工校验；极速模式返回 null（未评分，无定位）</li>
-          <li><code>$bbox</code>/<code>$pages</code> 字段在原件中的位置（校验界面高亮同源）</li>
-          <li><code>inferred: true</code> 为模型推断值，附 <code>$reasoning</code> 理由</li>
-          <li>明细表字段的值是行对象数组</li>
-          <li>状态机：queued → processing → pending_verification/completed → passed/rejected</li>
+          <I18nT keypath="skillApiModal.confidence_legend" tag="li" scope="global"><template #confidence><code>$confidence</code></template></I18nT>
+          <I18nT keypath="skillApiModal.position_legend" tag="li" scope="global"><template #bbox><code>$bbox</code></template><template #pages><code>$pages</code></template></I18nT>
+          <I18nT keypath="skillApiModal.inference_legend" tag="li" scope="global"><template #inferred><code>inferred: true</code></template><template #reasoning><code>$reasoning</code></template></I18nT>
+          <li>{{ $t('skillApiModal.the_value_of_a_detail_table_field_is_an') }}</li>
+          <li>{{ $t('skillApiModal.state_machine_queued_processing_pending_verification_completed_passed_rejected') }}</li>
         </ul>
       </section>
 
       <section>
-        <h3>③ Webhook 推送（免轮询）</h3>
-        <p class="dim">注册回调后，文件完成/待审/通过/拒绝/失败/分割时主动 POST 到你的地址（HMAC-SHA256 签名头 X-IDP-Signature）。</p>
+        <h3>{{ $t('skillApiModal.webhook_push_no_polling') }}</h3>
+        <p class="dim">{{ $t('skillApiModal.after_registering_a_callback_actively_post_to_your_address') }}</p>
         <pre>{{ curlHook }}</pre><CopyBtn :text="curlHook" block />
       </section>
 
       <section>
-        <h3>④ 数据导出</h3>
-        <p class="dim">已通过数据可拉平导出：
-          <code>GET /api/v1/cabinet/{{ skillCode }}</code>（JSON）或
-          <code>GET /api/v1/cabinet/{{ skillCode }}/export.csv</code></p>
+        <h3>{{ $t('skillApiModal.data_export') }}</h3>
+        <I18nT keypath="skillApiModal.export_guide" tag="p" scope="global" class="dim">
+          <template #json><code>GET /api/v1/cabinet/{{ skillCode }}</code></template>
+          <template #csv><code>GET /api/v1/cabinet/{{ skillCode }}/export.csv</code></template>
+        </I18nT>
       </section>
 
-      <footer class="dim">
-        完整 OpenAPI 交互文档：<a :href="base + '/docs'" target="_blank">{{ base }}/docs</a>
-      </footer>
+      <I18nT keypath="skillApiModal.openapi_guide" tag="footer" scope="global" class="dim">
+        <template #link><a :href="base + '/docs'" target="_blank">{{ base }}/docs</a></template>
+      </I18nT>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { I18nT, useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { computed, defineComponent, h, ref } from "vue";
 import { copyText } from "../clipboard";
 import { toast } from "../toast";
@@ -86,7 +89,7 @@ r = requests.post(f"{BASE}/api/v1/process", headers=KEY,
                   data={"skill_code": "${props.skillCode}"})
 tid = r.json()["transaction_id"]
 
-while True:                                   # 或注册 Webhook 免轮询
+while True:                                   # ${t('skillApiModal.webhook_poll_comment')}
     st = requests.get(f"{BASE}/api/v1/status/{tid}", headers=KEY).json()
     if st["status"] not in ("queued", "processing"):
         break
@@ -98,15 +101,15 @@ const curlStatus = computed(() =>
 
 const curlHook = computed(() => `curl -X POST ${base}/api/v1/webhooks \\
   -H "Authorization: Bearer $IDP_API_KEY" -H "Content-Type: application/json" \\
-  -d '{"url": "https://你的系统/callback", "secret": "共享密钥",
+  -d '{"url": "https://example.com/callback", "secret": "EXAMPLE_SHARED_SECRET",
        "events": ["file.completed", "file.pending_verification", "file.passed"]}'`);
 
-const SCHEMA = `"invoice_no": {
-  "$value": "INV-2026-001",   // 抽取值
-  "$confidence": 3,           // 0-3 置信；极速模式为 null
+const SCHEMA = computed(() => `"invoice_no": {
+  "$value": "INV-2026-001",   // ${t('skillApiModal.extracted_value_comment')}
+  "$confidence": 3,           // ${t('skillApiModal.confidence_comment')}
   "$bbox": [413, 265, 616, 274],
   "$pages": 1
-}`;
+}`);
 
 /** small copy-to-clipboard button */
 const CopyBtn = defineComponent({
@@ -119,11 +122,11 @@ const CopyBtn = defineComponent({
         await copyText(p.text);
         done.value = true;
         setTimeout(() => (done.value = false), 1500);
-      } catch { toast.error("复制失败，请手动选择文本"); }
+      } catch { toast.error(t('skillApiModal.copy_failed_please_select_the_text_manually')); }
     };
     return () => h("button", { class: ["copy", p.block ? "copy-block" : ""],
                                onClick: copy },
-                   done.value ? "✓ 已复制" : "复制");
+                   done.value ? t('skillApiModal.copied') : t('skillApiModal.copy'));
   },
 });
 </script>

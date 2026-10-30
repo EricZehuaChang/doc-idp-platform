@@ -3,45 +3,48 @@
   <div class="mask" @click.self="$emit('close')">
     <div class="panel">
       <header>
-        <strong>帮助</strong>
+        <strong>{{ $t('helpPanel.help') }}</strong>
         <button @click="$emit('close')">✕</button>
       </header>
       <section>
-        <h3>基本流程</h3>
+        <h3>{{ $t('helpPanel.basic_workflow') }}</h3>
         <ol>
-          <li>技能中心：定义要抽取的字段并发布技能版本</li>
-          <li>通过 API 或队列上传文档，平台自动解析并抽取</li>
-          <li>待审队列：低置信文件进入人工校验</li>
-          <li>校验页：核对字段、框选定位、确认或拒绝</li>
-          <li>数据柜：已通过数据可浏览与导出 CSV</li>
+          <li>{{ $t('helpPanel.skill_center_define_fields_to_extract_and_publish_a') }}</li>
+          <li>{{ $t('helpPanel.upload_documents_via_api_or_queue_the_platform_automatically') }}</li>
+          <li>{{ $t('helpPanel.review_queue_low_confidence_files_go_to_manual_verification') }}</li>
+          <li>{{ $t('helpPanel.verification_page_check_fields_box_select_to_locate_confirm') }}</li>
+          <li>{{ $t('helpPanel.data_cabinet_browse_approved_data_and_export_csv') }}</li>
         </ol>
       </section>
       <section>
-        <h3>审单快捷键</h3>
+        <h3>{{ $t('helpPanel.review_shortcuts') }}</h3>
         <table>
           <tbody>
-            <tr><td><kbd>J</kbd> / <kbd>K</kbd></td><td>下一个 / 上一个字段</td></tr>
-            <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>编辑字段 / 退出编辑</td></tr>
-            <tr><td><kbd>T</kbd></td><td>切换 全部/待复核 页签</td></tr>
-            <tr><td><kbd>B</kbd></td><td>框选标注模式</td></tr>
-            <tr><td><kbd>L</kbd></td><td>锁定开始校验</td></tr>
-            <tr><td><kbd>S</kbd> / <kbd>Ctrl+S</kbd></td><td>保存修正</td></tr>
-            <tr><td><kbd>C</kbd> / <kbd>X</kbd></td><td>确认通过 / 拒绝</td></tr>
-            <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>上一份 / 下一份文档</td></tr>
+            <tr><td><kbd>J</kbd> / <kbd>K</kbd></td><td>{{ $t('helpPanel.next_previous_field') }}</td></tr>
+            <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>{{ $t('helpPanel.edit_field_exit_editing') }}</td></tr>
+            <tr><td><kbd>T</kbd></td><td>{{ $t('helpPanel.switch_all_to_review_tab') }}</td></tr>
+            <tr><td><kbd>B</kbd></td><td>{{ $t('helpPanel.box_selection_annotation_mode') }}</td></tr>
+            <tr><td><kbd>L</kbd></td><td>{{ $t('helpPanel.lock_and_start_validation') }}</td></tr>
+            <tr><td><kbd>S</kbd> / <kbd>Ctrl+S</kbd></td><td>{{ $t('helpPanel.save_corrections') }}</td></tr>
+            <tr><td><kbd>C</kbd> / <kbd>X</kbd></td><td>{{ $t('helpPanel.confirm_pass_reject') }}</td></tr>
+            <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>{{ $t('helpPanel.previous_next_document') }}</td></tr>
           </tbody>
         </table>
       </section>
       <section>
-        <h3>字段标记</h3>
-        <p><span class="badge-r">R</span> 需人工复核
-           <span class="badge-inferred">参考结果</span> 模型推断值（非原文抄录）
-           <code>c0-c3</code> 置信等级</p>
+        <h3>{{ $t('helpPanel.field_marker') }}</h3>
+        <I18nT keypath="helpPanel.field_marker_legend" tag="p" scope="global">
+          <template #review><span class="badge-r">R</span></template>
+          <template #inferred><span class="badge-inferred">{{ $t('helpPanel.inferred_result') }}</span></template>
+          <template #confidence><code>c0-c3</code></template>
+        </I18nT>
       </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { I18nT } from "vue-i18n";
 defineEmits<{ (e: "close"): void }>();
 </script>
 

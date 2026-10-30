@@ -5,25 +5,25 @@
       <div class="doc-head">
         <!-- explicit way back: the review page used to be a one-way door
              (browser back was the only exit) — P10 -->
-        <button class="back" title="返回上级列表" @click="goBack">‹ 返回</button>
+        <button class="back" :title="$t('review.back_to_list')" @click="goBack">{{ $t('review.back') }}</button>
         <div class="nav-group">
-          <button :disabled="queuePos <= 0" title="上一文件 (←)" @click="goSibling(-1)">←</button>
+          <button :disabled="queuePos <= 0" :title="$t('review.previous_file')" @click="goSibling(-1)">←</button>
           <span class="pos dim" v-if="queueIds.length">{{ queueLabel }}</span>
-          <button :disabled="nextDisabled" title="下一文件 (→)" @click="goSibling(1)">→</button>
-          <button class="fid" :title="`复制 file_id：${detail.file_id}`"
+          <button :disabled="nextDisabled" :title="$t('review.next_file')" @click="goSibling(1)">→</button>
+          <button class="fid" :title="t('review.copy-file-id', { id: detail.file_id })"
                   @click="copyFid">⧉</button>
         </div>
         <strong class="fname-head" :title="detail.file_name">{{ detail.file_name }}</strong>
         <span class="chip" :class="`chip-${detail.status}`">{{ statusLabel }}</span>
         <button class="anno" :class="{ primary: annotate }" :disabled="!locked"
-                @click="annotate = !annotate" title="拖拽框选字段位置 (B)">
-          ▣ 框选{{ annotate ? "中" : "" }}
+                @click="annotate = !annotate" :title="$t('review.drag_to_select_field_area_b')">
+          {{ $t(annotate ? 'review.annotation_active' : 'review.annotation_inactive') }}
         </button>
         <button class="anno" :class="{ primary: !!sealRegions }"
                 :disabled="detecting || !detectSupported" @click="toggleDetect"
-                :title="detectSupported ? '检测印章/签名并在原图上叠框（再点一次清除）'
-                                        : '该格式不支持印章检测（仅 PDF 与图片）'">
-          ◉ 印章{{ detecting ? "…" : sealRegions ? ` ×${sealRegions.length}` : "" }}
+                :title="detectSupported ? $t('review.detect_seals_signatures_and_overlay_boxes_on_the_original')
+                                        : $t('review.seal_detection_is_not_supported_for_this_format_pdf')">
+          {{ $t('review.seals') }}{{ detecting ? "…" : sealRegions ? ` ×${sealRegions.length}` : "" }}
         </button>
       </div>
       <div class="doc-body">
@@ -40,27 +40,26 @@
     <section class="field-pane">
       <div v-if="detail.children.length" class="parts">
         <div class="parts-head">
-          <strong>识别为 {{ detail.child_count }} 份单据</strong>
-          <span class="dim">当前第 {{ activePartIdx + 1 }} / {{ detail.children.length }} 份
-            · 原件第 {{ partRange(activeItem!) }} 页 · 同一原文件 {{ detail.page_count }} 页</span>
+          <strong>{{ $t('review.recognized_as') }} {{ detail.child_count }} {{ $t('review.documents') }}</strong>
+          <span class="dim">{{ $t('review.current') }} {{ activePartIdx + 1 }} / {{ detail.children.length }} {{ $t('review.copies_original_page') }} {{ partRange(activeItem!) }} {{ $t('review.same_original_file') }} {{ detail.page_count }} {{ $t('review.page') }}</span>
         </div>
         <div class="part-list">
           <button v-for="(part, i) in detail.children" :key="part.file_id"
                   :class="['part', { active: activeFileId === part.file_id }]"
                   @click="switchPart(part.file_id)">
-            <span class="part-name" :title="part.document?.doc_type ?? ''">单据 {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
-            <small>第 {{ partRange(part) }} 页</small>
+            <span class="part-name" :title="part.document?.doc_type ?? ''">{{ $t('review.document') }} {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
+            <small>{{ $t('review.page_af50a0') }} {{ partRange(part) }} {{ $t('review.page') }}</small>
             <span class="chip" :class="`chip-${part.status}`">{{ stLabel(part.status) }}</span>
           </button>
         </div>
       </div>
       <div class="tabs">
-        <button :class="{ primary: tab === 'all' }" @click="tab = 'all'">全部字段</button>
+        <button :class="{ primary: tab === 'all' }" @click="tab = 'all'">{{ $t('review.all_fields') }}</button>
         <button :class="{ primary: tab === 'review' }" @click="tab = 'review'">
-          待复核 <span v-if="reviewCount" class="badge-r">{{ reviewCount }}</span>
+          {{ $t('review.pending_review') }} <span v-if="reviewCount" class="badge-r">{{ reviewCount }}</span>
         </button>
         <button v-if="detectMeta" :class="{ primary: tab === 'seal' }" @click="tab = 'seal'">
-          印章/签名 <span class="badge-r">{{ detectMeta.regions.length }}</span>
+          {{ $t('review.seals_signatures') }} <span class="badge-r">{{ detectMeta.regions.length }}</span>
         </button>
         <span class="lock-state dim">{{ lockMsg }}</span>
       </div>
@@ -70,44 +69,41 @@
            data, and an explicit "text not readable" state instead of a guess -->
       <div v-if="tab === 'seal'" class="fields">
         <p class="dim seal-note">
-          检测器：{{ detectMeta?.detector }} · 扫描 {{ detectMeta?.pages_scanned }}/{{
-            detectMeta?.page_count }} 页<template v-if="detectMeta?.truncated">（已达页数上限，
-          其余页未检测）</template>
+          {{ $t('review.detector') }}{{ detectMeta?.detector }} {{ $t('review.scan') }} {{ detectMeta?.pages_scanned }}/{{
+            detectMeta?.page_count }} {{ $t('review.page') }}<template v-if="detectMeta?.truncated">{{ $t('review.page_limit_reached_remaining_pages_not_detected') }}</template>
         </p>
-        <p v-if="!detectMeta?.regions.length" class="dim">未检测到印章或签名。</p>
+        <p v-if="!detectMeta?.regions.length" class="dim">{{ $t('review.no_seals_or_signatures_detected') }}</p>
         <div v-for="(r, i) in detectMeta?.regions ?? []" :key="`seal-${i}`" class="field"
              :class="{ active: activeKey === `r:${i}` }" @click="pickBox(`r:${i}`)">
           <div class="field-head">
-            <span class="fname">{{ r.label === "seal" ? "印章" : "签名" }} #{{ i + 1 }}</span>
-            <span class="dim">第 {{ r.page }} 页</span>
-            <span class="conf dim">置信 {{ (r.score * 100).toFixed(0) }}%</span>
+            <span class="fname">{{ r.label === "seal" ? $t('review.seal') : $t('review.signature') }} #{{ i + 1 }}</span>
+            <span class="dim">{{ $t('review.page_af50a0') }} {{ r.page }} {{ $t('review.page') }}</span>
+            <span class="conf dim">{{ $t('review.confidence') }} {{ (r.score * 100).toFixed(0) }}%</span>
           </div>
           <p class="seal-pos dim">
-            位置 x {{ r.x.toFixed(1) }}% · y {{ r.y.toFixed(1) }}% ·
-            宽 {{ r.w.toFixed(1) }}% · 高 {{ r.h.toFixed(1) }}%
+            {{ $t('review.position_x') }} {{ r.x.toFixed(1) }}% · y {{ r.y.toFixed(1) }}{{ $t('review.width') }} {{ r.w.toFixed(1) }}{{ $t('review.height') }} {{ r.h.toFixed(1) }}%
           </p>
           <p class="seal-text dim">
-            {{ r.label === "seal" ? "印章文字" : "签字人" }}：未识别（当前通道只做版面检测，
-            不做文字提取；不推测内容以免写入不实信息）</p>
+            {{ r.label === "seal" ? $t('review.seal_text') : $t('review.signer') }}{{ $t('review.not_recognized_current_channel_only_performs_layout_detection_not') }}</p>
         </div>
         <p v-if="detectMeta?.misses?.length" class="rulefail">
-          未启用的检测器：{{ detectMeta.misses.join("、") }}
+          {{ $t('review.disabled_detectors') }}{{ detectMeta.misses.join("、") }}
         </p>
       </div>
 
       <p v-if="classifyOnly && tab !== 'seal'" class="dim co-note">
-        仅分类文档：没有需要校验的字段，直接「通过」即可。</p>
+        {{ $t('review.classification_only_document_no_fields_to_validate_simply_click') }}</p>
       <div v-else class="fields" ref="fieldsEl">
         <div v-for="(f, i) in visibleFields" :key="f.name" class="field"
              :class="{ active: activeKey === `f:${f.name}` }" :data-key="`f:${f.name}`"
              @click="focusField(f)">
           <div class="field-head">
             <span class="fname">{{ f.name }}</span>
-            <span v-if="f.cell.$source" class="dim">{{ ({rule: "规则", model: "模型", review: "待复核"} as Record<string, string>)[f.cell.$source] }}</span>
-            <span v-if="f.cell.inferred" class="badge-inferred">参考结果</span>
+            <span v-if="f.cell.$source" class="dim">{{ ({rule: $t('review.rule'), model: $t('review.model'), review: $t('review.pending_review')} as Record<string, string>)[f.cell.$source] }}</span>
+            <span v-if="f.cell.inferred" class="badge-inferred">{{ $t('review.reference_result') }}</span>
             <span v-if="f.cell.$confidence !== null && f.cell.$confidence < 2" class="badge-r">R</span>
-            <span v-if="pendingBoxes[f.name]" class="badge-box" title="已重画定位框，待保存">▣</span>
-            <span class="conf dim">{{ f.cell.$confidence === null ? "未评分" : `c${f.cell.$confidence}` }}</span>
+            <span v-if="pendingBoxes[f.name]" class="badge-box" :title="$t('review.bounding_boxes_redrawn_pending_save')">▣</span>
+            <span class="conf dim">{{ f.cell.$confidence === null ? $t('review.unscored') : `c${f.cell.$confidence}` }}</span>
           </div>
           <textarea v-model="edits[f.name]" :disabled="!locked" rows="2" wrap="soft"
                     :ref="(el) => setInput(i, el as HTMLTextAreaElement)"
@@ -121,9 +117,9 @@
         <div v-for="t in tableNames" :key="t" class="field">
           <div class="field-head">
             <span class="fname">{{ t }}</span>
-            <span class="dim">明细表 {{ tableEdits[t]?.length ?? 0 }} 行</span>
-            <span v-if="tableDirty(t)" class="badge-box" title="明细已修改，待保存">✎</span>
-            <button v-if="locked" class="mini" @click.stop="addRow(t)">＋ 行</button>
+            <span class="dim">{{ $t('review.detail_table') }} {{ tableEdits[t]?.length ?? 0 }} {{ $t('review.row') }}</span>
+            <span v-if="tableDirty(t)" class="badge-box" :title="$t('review.details_modified_pending_save')">✎</span>
+            <button v-if="locked" class="mini" @click.stop="addRow(t)">{{ $t('review.row_bc9735') }}</button>
           </div>
           <div class="table-scroll" v-if="tableEdits[t]?.length">
             <table>
@@ -142,20 +138,20 @@
                     :data-key="`t:${t}:${ri}`">
                   <td v-for="c in tableCols(t)" :key="c"
                       :class="{ 'cell-hit': hasHit(t, ri, c) }"
-                      :title="hasHit(t, ri, c) ? '点击定位到原件中的位置' : ''"
+                      :title="hasHit(t, ri, c) ? $t('review.click_to_locate_in_the_original_document') : ''"
                       @click="pickCell(t, ri, c)">
                     <input v-if="locked" v-model="row[c]" class="cell-input"
                            @focus="pickCell(t, ri, c)" />
                     <template v-else>{{ row[c] }}</template>
                   </td>
                   <td v-if="locked" class="row-ops">
-                    <button class="mini danger" title="删除行" @click.stop="delRow(t, ri)">✕</button>
+                    <button class="mini danger" :title="$t('review.delete_row')" @click.stop="delRow(t, ri)">✕</button>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <p v-else class="dim empty-rows">无明细行<template v-if="locked">，点“＋ 行”添加</template></p>
+          <p v-else class="dim empty-rows">{{ $t('review.no_detail_rows') }}<template v-if="locked">{{ $t('review.click_row_to_add') }}</template></p>
         </div>
       </div>
 
@@ -163,43 +159,43 @@
         <!-- export is read-only and independent of the lock: an already-decided
              document is exactly the one people want to hand downstream -->
         <button class="ghost" :disabled="!activeItem"
-                title="导出当前单据识别结果（JSON：字段值与明细行，不含引擎元数据）"
-                @click="exportResult('json')">导出 JSON</button>
+                :title="$t('review.export_current_document_recognition_results_json_field_values_and')"
+                @click="exportResult('json')">{{ $t('review.export_json') }}</button>
         <details v-if="artifacts.length" class="art-dropdown"
                  data-testid="art-dropdown">
-          <summary>产出文件（{{ artifacts.length }}）</summary>
+          <summary>{{ $t('review.output_files') }}{{ artifacts.length }}）</summary>
           <ul>
             <li v-for="a in artifacts" :key="a.artifact_id"
                 :title="a.error ?? ''">
               <span class="art-name">{{ a.name }}</span>
               <span class="dim">{{ a.size != null ? Math.round(a.size / 1024) + " KB" : "" }}
-                {{ a.status === "error" ? "失败" : a.searchable ? "可检索" : "" }}</span>
+                {{ a.status === "error" ? $t('review.failed') : a.searchable ? $t('review.searchable') : "" }}</span>
               <button v-if="a.status === 'ready'" class="ghost"
-                      @click="api.artifactDownload(a.artifact_id, a.name)">下载</button>
+                      @click="api.artifactDownload(a.artifact_id, a.name)">{{ $t('review.download') }}</button>
             </li>
           </ul>
         </details>
         <button class="ghost" :disabled="!activeItem"
-                title="导出当前单据识别结果（Markdown 表格，便于阅读与转贴）"
-                @click="exportResult('md')">导出 MD</button>
+                :title="$t('review.export_current_document_recognition_results_markdown_table_easy_to')"
+                @click="exportResult('md')">{{ $t('review.export_md') }}</button>
         <button v-if="!locked && reviewable" class="primary big" @click="acquire">
-          开始校验（锁定） L</button>
-        <span v-else-if="!locked" class="dim decided-note">当前单据已处理，可只读查看</span>
+          {{ $t('review.start_validation_lock_l') }}</button>
+        <span v-else-if="!locked" class="dim decided-note">{{ $t('review.this_document_has_been_processed_and_is_read_only') }}</span>
         <template v-else>
           <button class="ghost" @click="saveEdits" :disabled="!dirty">
-            保存修正 S<span v-if="dirty" class="dot">●</span></button>
+            {{ $t('review.save_corrections_s') }}<span v-if="dirty" class="dot">●</span></button>
           <!-- non-conclusive exits: a reviewer who is not ready to judge must
                not be forced to press 通过/拒绝 just to get out (P03) -->
           <button class="ghost" @click="exitReview()" :title="dirty
-            ? '保存已做的修正，退出但不改变审核状态' : '解除锁定并返回，不改变审核状态'">
-            {{ dirty ? "保存并退出" : "退出校验" }}</button>
-          <button v-if="dirty" class="ghost" title="丢弃本次修改并退出"
-                  @click="exitReview(true)">放弃修改退出</button>
+            ? $t('review.save_the_corrections_made_exit_without_changing_the_review') : $t('review.unlock_and_return_without_changing_the_review_status')">
+            {{ dirty ? $t('review.save_and_exit') : $t('review.exit_verification') }}</button>
+          <button v-if="dirty" class="ghost" :title="$t('review.discard_this_change_and_exit')"
+                  @click="exitReview(true)">{{ $t('review.discard_changes_and_exit') }}</button>
           <span class="spacer" />
-          <button class="danger" @click="decide('reject')">拒绝 X</button>
+          <button class="danger" @click="decide('reject')">{{ $t('review.reject_x') }}</button>
           <button class="confirm big" @click="decide('confirm')">✓ {{ confirmLabel }} C</button>
         </template>
-        <span class="keys dim" title="J/K 字段 · Enter 编辑 · Esc 退出编辑 · T 页签 · B 框选 · L 锁定 · S 保存 · Q 退出 · C 通过 · X 拒绝 · ←/→ 上下份">⌨</span>
+        <span class="keys dim" :title="$t('review.j_k_field_enter_edit_esc_exit_edit_t')">⌨</span>
       </div>
     </section>
   </main>
@@ -211,13 +207,16 @@
       <Skeleton :rows="8" />
     </template>
     <div v-else class="empty-state">
-      <p>文件不存在或已被处理。</p>
-      <router-link to="/tasks"><button class="primary">返回任务列表</button></router-link>
+      <p>{{ $t('review.the_file_does_not_exist_or_has_already_been') }}</p>
+      <router-link to="/tasks"><button class="primary">{{ $t('review.back_to_task_list') }}</button></router-link>
     </div>
   </main>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
@@ -256,18 +255,18 @@ const queuePos = computed(() => queueIds.value.indexOf(detail.value?.file_id ?? 
  *  says so instead of showing a meaningless dash. */
 const queueLabel = computed(() =>
   queuePos.value >= 0
-    ? `待审批次 ${queuePos.value + 1} / ${queueIds.value.length}`
-    : "当前文件不在待审批次");
+    ? t('review.queue-position', { position: queuePos.value + 1, total: queueIds.value.length })
+    : t('review.the_current_file_is_not_in_a_pending_approval'));
 const nextDisabled = computed(() => {
   if (queuePos.value < 0) return queueIds.value.length === 0;   // not in list: jump to first
   return queuePos.value >= queueIds.value.length - 1;
 });
 
-const STATUS_LABELS: Record<string, string> = {
-  pending_verification: "待校验", completed: "已完成", passed: "已通过",
-  rejected: "已拒绝", error: "处理失败", processing: "处理中", split: "已拆分",
-};
-const stLabel = (status: string) => STATUS_LABELS[status] ?? status;
+const STATUS_LABELS = computed<Record<string, string>>(() => ({
+  pending_verification: t('review.pending_validation'), completed: t('review.completed'), passed: t('review.approved'),
+  rejected: t('review.rejected'), error: t('review.processing_failed'), processing: t('review.processing'), split: t('review.split'),
+}));
+const stLabel = (status: string) => STATUS_LABELS.value[status] ?? status;
 const statusLabel = computed(() =>
   stLabel(detail.value?.status ?? ""));
 
@@ -290,8 +289,8 @@ const activePartIdx = computed(() => {
 async function copyFid() {
   try {
     await copyText(detail.value?.file_id ?? props.fileId);
-    toast.ok("已复制 file_id");
-  } catch { toast.error("复制失败，请手动从任务列表复制"); }
+    toast.ok(t('review.copied_file_id'));
+  } catch { toast.error(t('review.copy_failed_please_copy_manually_from_the_task_list')); }
 }
 const pageOffset = computed(() => activeItem.value?.page_offset ?? 0);
 // 9.15 WP4: advanced children carry source_pages (original-file pages, maybe
@@ -380,11 +379,11 @@ async function toggleDetect() {
     });
     const seals = res.regions.filter((r) => r.label === "seal").length;
     const sigs = res.regions.filter((r) => r.label === "signature").length;
-    const cut = res.truncated ? `；文档共 ${res.page_count} 页，仅检测前 ${res.pages_scanned} 页` : "";
+    const cut = res.truncated ? t('review.detection-limit', { total: res.page_count, scanned: res.pages_scanned }) : "";
     if (res.regions.length) tab.value = "seal";
     toast.ok(res.regions.length
-      ? `检测到 ${seals} 处印章、${sigs} 处签名（${res.detector}）${cut}`
-      : `未检测到印章/签名${cut}`);
+      ? t('review.detection-result', { seals, signatures: sigs, detector: res.detector, limit: cut })
+      : t('review.detection-empty', { limit: cut }));
   } catch (e) {
     if (detail.value?.file_id === fid) toast.error(e);
   } finally {
@@ -452,9 +451,9 @@ const dirty = computed(() =>
   || Object.keys(pendingBoxes.value).length > 0
   || tableNames.value.some((t) => tableDirty(t)));
 const lockMsg = computed(() => {
-  if (locked.value) return "已锁定（15 分钟）";
+  if (locked.value) return t('review.locked_15_minutes');
   const by = activeItem.value?.locked_by;
-  return by && by !== api.currentUser ? `被 ${by} 锁定` : "未锁定";
+  return by && by !== api.currentUser ? t('review.locked-by', { name: by }) : t('review.unlocked');
 });
 
 function fieldPage(cell: FieldCell): number {
@@ -542,21 +541,21 @@ function onBoxDrawn(page: number, bbox: number[]) {
     pendingBoxes.value = { ...pendingBoxes.value, [name]: { page, bbox } };
     activeBox.value = bbox;
     activePage.value = page;
-    toast.ok(`已为 ${name} 重画定位框（保存后生效）`);
+    toast.ok(t('review.field-box-redrawn', { name }));
     return;
   }
   if (key.startsWith("t:")) {
-    const [, t, ri, col] = key.split(":");
-    if (!setCellHit(t, Number(ri), col, page, bbox)) {
-      toast.error("该单元格没有可写入的定位结构，无法保存框选");
+    const [, tableName, ri, col] = key.split(":");
+    if (!setCellHit(tableName, Number(ri), col, page, bbox)) {
+      toast.error(t('review.this_cell_has_no_writable_localization_structure_so_the'));
       return;
     }
     activeBox.value = bbox;
     activePage.value = page;
-    toast.ok(`已为第 ${Number(ri) + 1} 行「${col}」重画定位框（保存后生效）`);
+    toast.ok(t('review.cell-box-redrawn', { row: Number(ri) + 1, column: col }));
     return;
   }
-  toast.error("先在右侧选中一个字段或明细单元格，再框选它的位置");
+  toast.error(t('review.first_select_a_field_or_detail_cell_on_the'));
 }
 
 /** Write a redrawn box back into the row's $cells metadata. Rows are PATCHed
@@ -595,7 +594,7 @@ function restoreDraft() {
     const draft = JSON.parse(raw) as Record<string, string>;
     for (const k of Object.keys(edits.value))
       if (k in draft && draft[k] !== edits.value[k]) edits.value[k] = draft[k];
-    toast.ok("已恢复未保存的草稿");
+    toast.ok(t('review.restored_unsaved_draft'));
   } catch { sessionStorage.removeItem(draftKey()); }
 }
 
@@ -668,10 +667,10 @@ const confirmLabel = computed(() => {
   const cur = activeItem.value?.file_id;
   const hasSiblingPart = !!detail.value?.children.some(
     (c) => c.status === "pending_verification" && c.file_id !== cur);
-  if (hasSiblingPart) return "通过并校验下一单据";
+  if (hasSiblingPart) return t('review.approve_and_validate_next_document');
   const rootId = detail.value?.file_id ?? props.fileId;
   return resolveDestination("afterDecision", 0, rootId)
-    ? "通过并打开下一文件" : "通过并返回列表";
+    ? t('review.approve_and_open_next_file') : t('review.approve_and_return_to_list');
 });
 
 async function acquire() {
@@ -699,7 +698,7 @@ async function saveEdits(): Promise<boolean> {
     if (activeItem.value?.file_id !== fileId) return true;   // switched away: never
     sessionStorage.removeItem(dkey);                         // touch the NEW part's state
     pendingBoxes.value = {};
-    toast.ok(`已保存 ${changed.length} 处修正`);
+    toast.ok(t('review.corrections-saved', { count: changed.length }));
     await refetch();
     return true;
   } catch (e) { toast.error(e); return false; }
@@ -733,7 +732,7 @@ function exportResult(format: "json" | "md") {
   const input = exportInput();
   if (!input) return;
   downloadResult(input, format);
-  toast.ok(format === "json" ? "已导出 JSON" : "已导出 Markdown");
+  toast.ok(format === "json" ? t('review.json_exported') : t('review.markdown_exported'));
 }
 
 // —— exits (P03) ——
@@ -777,7 +776,7 @@ async function switchPart(fileId: string) {
  *  are persisted first. Neither path touches the review status. */
 async function exitReview(discard = false) {
   if (discard) {
-    if (!confirm("放弃本次未保存的修改并退出？")) return;
+    if (!confirm(t('review.discard_unsaved_changes_and_exit'))) return;
     sessionStorage.removeItem(draftKey());
     pendingBoxes.value = {};
     syncFromDetail();
@@ -811,7 +810,7 @@ async function decide(kind: "confirm" | "reject") {
     // the reviewer may have ←/→-ed away while the request flew: a settling
     // stale decision must never navigate or reset the NEW file (WP3)
     if ((detail.value?.file_id ?? props.fileId) !== rootAtStart) return;
-    toast.ok(kind === "confirm" ? "已通过" : "已拒绝");
+    toast.ok(kind === "confirm" ? t('review.approved') : t('review.rejected'));
     locked.value = false;
     qc.invalidateQueries({ queryKey: ["queue"] });
     // Keep reviewing the same original file until all of its internal units
@@ -826,7 +825,7 @@ async function decide(kind: "confirm" | "reject") {
       activePage.value = toRootPage(1);
       await nextTick();
       stage.value?.gotoPage(activePage.value);   // 需求5: 跳到下一份的原件首页
-      toast.ok(`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`);
+      toast.ok(t('review.pending-documents', { count: refreshed.data?.pending_children ?? 0 }));
       return;
     }
     const next = resolveDestination("afterDecision", 0, rootAtStart, await api.queue());
@@ -852,13 +851,13 @@ function goSibling(delta: number) {
 // leaving with unsaved work (browser back, nav click) must not silently drop it
 onBeforeRouteLeave(() => {
   if (leavingCleanly || !dirty.value) return true;
-  return confirm("有未保存的修改，确定离开？（点“取消”可返回并保存）");
+  return confirm(t('review.unsaved-leave'));
 });
 // same-route param change (←/→ 文件) reuses this component — the guard must
 // cover it too, or the arrows would bypass the unsaved-changes protection (WP3)
 onBeforeRouteUpdate(() => {
   if (leavingCleanly || !dirty.value) return true;
-  return confirm("有未保存的修改，确定切换文件？（点“取消”可返回并保存）");
+  return confirm(t('review.unsaved-switch'));
 });
 // closing the tab / reloading with unsaved work
 function beforeUnload(ev: BeforeUnloadEvent) {

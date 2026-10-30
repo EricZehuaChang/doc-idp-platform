@@ -1,17 +1,17 @@
 <template>
   <main class="page">
-    <PageHeader title="上传文档"
-                desc="选择技能、投放文件，平台自动解析并送入校验队列。">
-      <router-link to="/tasks"><button class="ghost">去任务列表 →</button></router-link>
+    <PageHeader :title="$t('upload.upload_document')"
+                :desc="$t('upload.select_a_skill_and_drop_files_the_platform_parses')">
+      <router-link to="/tasks"><button class="ghost">{{ $t('upload.go_to_task_list') }}</button></router-link>
     </PageHeader>
 
     <!-- no publishable skill: uploading would 400 on every file, so send the
          user to the place that fixes it instead of letting them try -->
     <section v-if="skillsLoaded && usableSkills.length === 0" class="card-panel block">
-      <EmptyState title="还没有可用的技能" glyph="🧩">
-        上传前需要先有一个<strong>已发布</strong>的技能——技能决定从文档里抽取哪些字段。
+      <EmptyState :title="t('upload.no-skills')" glyph="🧩">
+        <I18nT keypath="upload.published-skill-required" tag="span" scope="global"><template #published><strong>{{ t('upload.published') }}</strong></template></I18nT>
         <template #action>
-          <router-link to="/skills"><button class="primary">去技能中心</button></router-link>
+          <router-link to="/skills"><button class="primary">{{ t('upload.go-to-skills') }}</button></router-link>
         </template>
       </EmptyState>
     </section>
@@ -19,28 +19,27 @@
     <template v-else>
       <!-- 1. skill -->
       <section class="card-panel block">
-        <h3><span class="step-n">1</span>选择技能</h3>
+        <h3><span class="step-n">1</span>{{ $t('upload.select_skill') }}</h3>
         <div class="skill-row">
           <select v-model="skillCode" :disabled="uploading">
-            <option value="" disabled>请选择一个技能…</option>
+            <option value="" disabled>{{ $t('upload.please_select_a_skill') }}</option>
             <option v-for="s in usableSkills" :key="s.skill_code" :value="s.skill_code">
               {{ s.name }}（{{ s.skill_code }} · v{{ s.published_version }}）
             </option>
           </select>
           <div v-if="selectedSkill" class="skill-meta">
             <span class="tag">{{ selectedSkill.kind }}</span>
-            <span class="tag ok">v{{ selectedSkill.published_version }} 已发布</span>
+            <span class="tag ok">v{{ selectedSkill.published_version }} {{ $t('upload.published') }}</span>
           </div>
         </div>
       </section>
 
       <!-- 2. intake -->
       <section class="card-panel block">
-        <h3><span class="step-n">2</span>投放文件</h3>
+        <h3><span class="step-n">2</span>{{ $t('upload.upload_files') }}</h3>
         <DropZone :accept="accept" :disabled="uploading" @add="addFiles">
           <template #limits>
-            单文件 ≤ {{ limits.max_size_mb }}MB ｜
-            超过 {{ limits.max_files }} 个或 {{ limits.max_batch_mb }}MB 会自动分批提交
+            {{ $t('upload.single_file') }} {{ limits.max_size_mb }}{{ $t('upload.mb_over') }} {{ limits.max_files }} {{ $t('upload.files_or') }} {{ limits.max_batch_mb }}{{ $t('upload.mb_will_be_submitted_in_batches_automatically') }}
           </template>
         </DropZone>
       </section>
@@ -48,12 +47,12 @@
       <!-- 3. pending list -->
       <section v-if="items.length" class="card-panel list-block">
         <h3 class="pad">
-          <span class="step-n">3</span>待上传（{{ items.length }} 个 · 合计 {{ human(totalBytes) }}）
+          <span class="step-n">3</span>{{ $t('upload.pending_upload') }}{{ items.length }} {{ $t('upload.files_total') }} {{ human(totalBytes) }}）
         </h3>
         <div class="table-scroll">
           <table class="data-table">
             <thead>
-              <tr><th>文件名</th><th>类型</th><th>大小</th><th>页数</th><th>校验</th><th class="th-act"></th></tr>
+              <tr><th>{{ $t('upload.file_name') }}</th><th>{{ $t('upload.type') }}</th><th>{{ $t('upload.size') }}</th><th>{{ $t('upload.pages') }}</th><th>{{ $t('upload.validation') }}</th><th class="th-act"></th></tr>
             </thead>
             <tbody>
               <tr v-for="it in items" :key="it.id" :class="{ rowbad: !!it.problem }">
@@ -63,11 +62,11 @@
                 <td class="dim">{{ human(it.file.size) }}</td>
                 <td>{{ it.problem ? "—" : (it.pages ?? "…") }}</td>
                 <td>
-                  <span v-if="it.problem" class="reason">{{ it.problem }}</span>
-                  <span v-else class="dim">✓ 可提交</span>
+                  <span v-if="it.problem" class="reason">{{ translateMessage(it.problem) }}</span>
+                  <span v-else class="dim">{{ $t('upload.ready_to_submit') }}</span>
                 </td>
                 <td class="row-act">
-                  <button class="x" :disabled="uploading" title="移除"
+                  <button class="x" :disabled="uploading" :title="$t('upload.remove')"
                           @click="remove(it.id)">✕</button>
                 </td>
               </tr>
@@ -78,18 +77,18 @@
         <!-- submit bar -->
         <div class="submit-bar">
           <div class="est">
-            预估 <b>{{ estPages }} 页</b>
-            <span v-if="batchCountPreview > 1"> · 自动分 <b>{{ batchCountPreview }}</b> 批提交</span>
+            <I18nT keypath="upload.estimated-pages" tag="span" scope="global"><template #count><b>{{ estPages }}</b></template></I18nT>
+            <I18nT v-if="batchCountPreview > 1" keypath="upload.batch-count" tag="span" scope="global"><template #count><b>{{ batchCountPreview }}</b></template></I18nT>
             <span class="sub">
-              可提交 {{ okItems.length }} 个<template v-if="badItems.length">，
-                {{ badItems.length }} 个不受支持将被跳过</template>
-              <template v-if="credits !== null"> ｜ 剩余 {{ credits }} credits</template>
+              {{ t('upload.ready-count', { count: okItems.length }) }}
+              <template v-if="badItems.length">{{ t('upload.skip-count', { count: badItems.length }) }}</template>
+              <template v-if="credits !== null">{{ t('upload.remaining-credits', { count: credits }) }}</template>
             </span>
           </div>
           <div class="right">
-            <button class="ghost" :disabled="uploading" @click="clearAll">清空</button>
+            <button class="ghost" :disabled="uploading" @click="clearAll">{{ $t('upload.clear') }}</button>
             <button class="primary" :disabled="!canSubmit" @click="submit">
-              {{ uploading ? "提交中…" : "提交处理 →" }}</button>
+              {{ uploading ? $t('upload.submitting') : $t('upload.submit_for_processing') }}</button>
           </div>
         </div>
       </section>
@@ -97,7 +96,7 @@
       <!-- upload progress -->
       <section v-if="uploading" class="card-panel block">
         <div class="prog-head">
-          <span>正在上传<template v-if="batchTotal > 1">（第 {{ batchIndex }}/{{ batchTotal }} 批）</template>…</span>
+          <span>{{ $t('upload.uploading') }}<template v-if="batchTotal > 1">{{ $t('upload.batch') }} {{ batchIndex }}/{{ batchTotal }} {{ $t('upload.message') }}</template>…</span>
           <span class="dim">{{ human(sentBytes) }} / {{ human(uploadBytes) }}</span>
           <span class="pct">{{ pct }}%</span>
         </div>
@@ -107,35 +106,33 @@
       <!-- results -->
       <section v-if="rows.length || txnIds.length" class="card-panel list-block">
         <div class="pad">
-          <div class="notice">
-            ✅ 已受理 <b>{{ rows.length }}</b> 个文件，正在后台处理——可以留在本页看进度，也可以去任务列表。
-          </div>
+          <I18nT class="notice" keypath="upload.accepted-notice" tag="div" scope="global"><template #count><b>{{ rows.length }}</b></template></I18nT>
           <div class="txn">
-            <span class="dim">事务号</span>
+            <span class="dim">{{ $t('upload.transaction_no') }}</span>
             <code v-for="t in txnIds" :key="t">{{ t }}</code>
-            <span class="dim">技能</span><span>{{ skillCode }}</span>
-            <span v-if="polling" class="dim">· 每 2 秒刷新</span>
+            <span class="dim">{{ $t('upload.skills') }}</span><span>{{ skillCode }}</span>
+            <span v-if="polling" class="dim">{{ $t('upload.refreshes_every_2_seconds') }}</span>
           </div>
         </div>
         <div class="table-scroll">
           <table class="data-table">
             <thead>
-              <tr><th>文件名</th><th>页数</th><th>状态</th><th>说明</th><th class="th-act"></th></tr>
+              <tr><th>{{ $t('upload.file_name') }}</th><th>{{ $t('upload.pages') }}</th><th>{{ $t('upload.status') }}</th><th>{{ $t('upload.description') }}</th><th class="th-act"></th></tr>
             </thead>
             <tbody>
               <tr v-for="r in rows" :key="r.file_id">
                 <td class="fname" :title="r.file_name">
                   {{ r.file_name }}
-                  <span v-if="r.child_count" class="split-badge">拆分 {{ r.child_count }} 份</span>
+                  <span v-if="r.child_count" class="split-badge">{{ $t('upload.split_into') }} {{ r.child_count }} {{ $t('upload.documents') }}</span>
                 </td>
                 <td>{{ r.page_count || "—" }}</td>
                 <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
                 <td>
                   <span v-if="r.msg" class="err-msg" :title="r.msg">⚠ {{ r.msg }}</span>
                   <details v-else-if="r.children.length" class="child-info">
-                    <summary>后台按 {{ r.children.length }} 份单据处理</summary>
+                    <summary>{{ $t('upload.processed_in_the_background_as') }} {{ r.children.length }} {{ $t('upload.documents_f8daf7') }}</summary>
                     <div v-for="(c, i) in r.children" :key="c.file_id" class="child-line">
-                      单据 {{ i + 1 }} · {{ c.page_count }} 页 · {{ stLabel(c.status) }}
+                      {{ $t('upload.document') }} {{ i + 1 }} · {{ c.page_count }} {{ $t('upload.pages_c53d75') }} {{ stLabel(c.status) }}
                     </div>
                   </details>
                   <span v-else class="dim">—</span>
@@ -143,10 +140,10 @@
                 <td class="row-act">
                   <router-link v-if="r.status === 'pending_verification'"
                                :to="`/review/${r.file_id}`">
-                    <button class="primary slim">去校验 →</button></router-link>
+                    <button class="primary slim">{{ $t('upload.go_to_validation') }}</button></router-link>
                   <router-link v-else-if="TERMINAL.has(r.status) && r.status !== 'split'"
                                :to="`/review/${r.file_id}`">
-                    <button class="ghost slim">查看</button></router-link>
+                    <button class="ghost slim">{{ $t('upload.view') }}</button></router-link>
                   <button v-else class="ghost slim" disabled>—</button>
                 </td>
               </tr>
@@ -154,10 +151,10 @@
           </table>
         </div>
         <div class="submit-bar">
-          <span class="dim note">失败的文件不计费。</span>
+          <span class="dim note">{{ $t('upload.failed_files_are_not_charged') }}</span>
           <div class="right">
-            <router-link to="/tasks"><button class="ghost">去任务列表</button></router-link>
-            <button class="confirm" @click="resetForNextBatch">再传一批</button>
+            <router-link to="/tasks"><button class="ghost">{{ $t('upload.go_to_task_list_939259') }}</button></router-link>
+            <button class="confirm" @click="resetForNextBatch">{{ $t('upload.upload_another_batch') }}</button>
           </div>
         </div>
       </section>
@@ -166,6 +163,10 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT, useI18n } from "vue-i18n";
+const { t } = useI18n();
+import { translateMessage, type MessageDescriptor } from "../i18n";
+
 // Upload page (2026-08-18): the browser-side client of POST /api/v1/process.
 // Product rule from the design review — a bad file never blocks the batch:
 // unsupported/oversized items are marked and skipped, everything else goes
@@ -185,7 +186,7 @@ import { toast } from "../toast";
 interface Pending {
   id: number; file: File; ext: string;
   pages: number | null;          // null while the PDF page count is being read
-  problem: string | null;        // non-null => skipped at submit time
+  problem: MessageDescriptor | null;        // non-null => skipped at submit time
 }
 interface ResultRow {
   file_id: string; file_name: string; status: string;
@@ -241,15 +242,15 @@ function extOf(name: string): string {
   const i = name.lastIndexOf(".");
   return i < 0 ? "" : name.slice(i).toLowerCase();
 }
-function problemOf(file: File, ext: string): string | null {
+function problemOf(file: File, ext: string): MessageDescriptor | null {
   if (!limits.value.extensions.includes(ext)) {
     return ext === ".doc" || ext === ".xls" || ext === ".ppt"
-      ? "暂不支持旧版 Office 格式，请另存为 .docx/.xlsx/.pptx"
-      : "暂不支持该格式";
+      ? { key: 'upload.legacy-office' }
+      : { key: 'upload.unsupported-format' };
   }
-  if (file.size === 0) return "空文件";
+  if (file.size === 0) return { key: 'upload.empty-file' };
   if (file.size > limits.value.max_size_mb * 1024 * 1024) {
-    return `超过单文件 ${limits.value.max_size_mb}MB 上限`;
+    return { key: 'upload.file-too-large', params: { limit: limits.value.max_size_mb } };
   }
   return null;
 }
@@ -258,7 +259,7 @@ function addFiles(files: File[]) {
   for (const file of files) {
     // same name+size twice in one batch is nearly always a mis-drop
     if (items.value.some((i) => i.file.name === file.name && i.file.size === file.size)) {
-      toast.error(`${file.name}：已在待上传列表中`);
+      toast.error(t('upload.duplicate-file', { name: file.name }));
       continue;
     }
     const ext = extOf(file.name);
@@ -325,7 +326,7 @@ const txnIds = ref<string[]>([]);
 const rows = ref<ResultRow[]>([]);
 
 async function submit() {
-  if (!skillCode.value) { toast.error("请先选择一个技能——技能决定抽取哪些字段"); return; }
+  if (!skillCode.value) { toast.error(t('upload.please_select_a_skill_first_the_skill_determines_which')); return; }
   const batches = buildBatches(okItems.value);
   if (!batches.length) return;
   uploading.value = true;
@@ -355,7 +356,7 @@ async function submit() {
   }
   uploading.value = false;
   if (accepted > 0) {
-    toast.ok(`已受理 ${accepted} 个文件`);
+    toast.ok(t('upload.files-accepted', { count: accepted }));
     const submitted = new Set(batches.flat().map((f) => `${f.name}|${f.size}`));
     items.value = items.value.filter((i) => !submitted.has(`${i.file.name}|${i.file.size}`));
     startPolling();
@@ -415,7 +416,7 @@ onBeforeUnmount(() => {
   stopPolling();
 });
 
-const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
+const stLabel = (s: string) => STATUS_LABELS()[s] ?? s;
 function human(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;

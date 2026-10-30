@@ -4,48 +4,48 @@
   <div class="mask" @click.self="$emit('cancel')">
     <div class="modal">
       <header>
-        <strong>{{ isNew ? "添加字段" : "编辑字段" }}</strong>
+        <strong>{{ isNew ? $t('fieldEditModal.add_field') : $t('fieldEditModal.edit_field') }}</strong>
         <button class="ghost x" @click="$emit('cancel')">✕</button>
       </header>
 
-      <label>字段名称 *
-        <input v-model="draft.name" placeholder="例如：invoice_number" autofocus />
-        <span class="hint dim">建议小写字母、数字和下划线；将作为输出 JSON 的键名</span>
+      <label>{{ $t('fieldEditModal.field_name') }}
+        <input v-model="draft.name" :placeholder="$t('fieldEditModal.e_g_invoice_number')" autofocus />
+        <span class="hint dim">{{ $t('fieldEditModal.lowercase_letters_numbers_and_underscores_recommended_used_as_the') }}</span>
       </label>
 
-      <label>字段类型 *
+      <label>{{ $t('fieldEditModal.field_type') }}
         <select v-model="draft.type">
-          <option value="string">字符串</option>
-          <option value="number">数字</option>
-          <option value="date">日期</option>
-          <option value="enum">枚举</option>
-          <option v-if="!isColumn" value="table">明细表（数组）</option>
+          <option value="string">{{ $t('fieldEditModal.string') }}</option>
+          <option value="number">{{ $t('fieldEditModal.number') }}</option>
+          <option value="date">{{ $t('fieldEditModal.date') }}</option>
+          <option value="enum">{{ $t('fieldEditModal.enum') }}</option>
+          <option v-if="!isColumn" value="table">{{ $t('fieldEditModal.detail_table_array') }}</option>
         </select>
       </label>
 
-      <label>抽取模式
+      <label>{{ $t('fieldEditModal.extraction_mode') }}
         <select v-model="draft.mode">
-          <option value="verbatim">原文抄录（值须可在原文定位）</option>
-          <option value="inferred">模型推断（判断/分类/推导，带理由）</option>
+          <option value="verbatim">{{ $t('fieldEditModal.verbatim_transcription_value_must_be_locatable_in_the_source') }}</option>
+          <option value="inferred">{{ $t('fieldEditModal.model_inference_judgment_classification_derivation_with_rationale') }}</option>
         </select>
       </label>
 
-      <label>描述
+      <label>{{ $t('fieldEditModal.description') }}
         <textarea v-model="draft.instruction" rows="5"
-                  placeholder="抽取说明：寻找关键词 → 清洗规则 → 输出格式"></textarea>
-        <span class="hint dim">包含抽取规则与任何特殊说明；可保存后用「✨ AI 补全说明」扩写</span>
+                  :placeholder="$t('fieldEditModal.extraction_instructions_find_keywords_cleaning_rules_output_format')"></textarea>
+        <span class="hint dim">{{ $t('fieldEditModal.include_extraction_rules_and_any_special_notes_save_and') }}</span>
       </label>
 
-      <label v-if="draft.type === 'enum'">枚举值
-        <input :value="draft.enum_values.join(',')" placeholder="逗号分隔，如：USD,EUR,JPY"
+      <label v-if="draft.type === 'enum'">{{ $t('fieldEditModal.enum_values') }}
+        <input :value="draft.enum_values.join(',')" :placeholder="$t('fieldEditModal.comma_separated_e_g_usd_eur_jpy')"
                @input="draft.enum_values = split(($event.target as HTMLInputElement).value)" />
       </label>
 
       <!-- 9.15 R11: finite display format for dates / numbers. The value is
            formatted after confidence scoring; the raw reading stays in $raw. -->
-      <label v-if="draft.type === 'date'">输出格式
+      <label v-if="draft.type === 'date'">{{ $t('fieldEditModal.output_format') }}
         <select v-model="datePattern">
-          <option value="">保持原文写法</option>
+          <option value="">{{ $t('fieldEditModal.keep_original_wording') }}</option>
           <option value="YYYY-MM-DD">2026-09-17</option>
           <option value="YYYY/MM/DD">2026/09/17</option>
           <option value="YYYYMMDD">20260917</option>
@@ -53,58 +53,59 @@
           <option value="DD/MM/YYYY">17/09/2026</option>
           <option value="MM/DD/YYYY">09/17/2026</option>
         </select>
-        <span class="hint dim">解析失败时保留原文并标记低置信，进入人工复核</span>
+        <span class="hint dim">{{ $t('fieldEditModal.if_parsing_fails_keep_the_original_text_mark_it') }}</span>
       </label>
-      <label v-if="draft.type === 'number'">小数位数
+      <label v-if="draft.type === 'number'">{{ $t('fieldEditModal.decimal_places') }}
         <select v-model.number="decimalPlaces">
-          <option :value="null">保持原值</option>
-          <option :value="0">0 位（整数）</option>
-          <option :value="1">1 位</option>
-          <option :value="2">2 位（金额常用）</option>
-          <option :value="3">3 位</option>
-          <option :value="4">4 位</option>
+          <option :value="null">{{ $t('fieldEditModal.keep_original_value') }}</option>
+          <option :value="0">{{ $t('fieldEditModal.0_places_integer') }}</option>
+          <option :value="1">{{ $t('fieldEditModal.1_place') }}</option>
+          <option :value="2">{{ $t('fieldEditModal.2_places_common_for_amounts') }}</option>
+          <option :value="3">{{ $t('fieldEditModal.3_places') }}</option>
+          <option :value="4">{{ $t('fieldEditModal.4_places') }}</option>
         </select>
-        <span class="hint dim">按四舍五入（ROUND_HALF_UP）量化，货币符号与千分位自动去除</span>
+        <span class="hint dim">{{ $t('fieldEditModal.quantize_with_rounding_round_half_up_currency_symbols_and') }}</span>
       </label>
 
-      <label>位置提示
-        <input :value="draft.anchor_hints.join(',')" placeholder="例如：右上角、页脚"
+      <label>{{ $t('fieldEditModal.location_hint') }}
+        <input :value="draft.anchor_hints.join(',')" :placeholder="$t('fieldEditModal.e_g_top_right_footer')"
                @input="draft.anchor_hints = split(($event.target as HTMLInputElement).value)" />
-        <span class="hint dim">关于此字段在文档中典型位置的可选提示</span>
+        <span class="hint dim">{{ $t('fieldEditModal.optional_hint_about_the_field_s_typical_location_in') }}</span>
       </label>
 
       <!-- R1 (2026-09-22): deterministic rule for the rules_first channel -->
-      <fieldset v-if="!isColumn" class="rule-box"><legend>提取规则（规则优先通道使用）</legend>
-        <select :value="draft.rule?.kind ?? ''" @change="setRule(($event.target as HTMLSelectElement).value)" aria-label="提取规则类型">
-          <option value="">未配置</option><option v-if="draft.type !== 'table'" value="anchor">键值锚点</option><option v-if="draft.type !== 'table'" value="regex">正则</option><option v-if="draft.type === 'table'" value="table">表头匹配</option>
+      <fieldset v-if="!isColumn" class="rule-box"><legend>{{ $t('fieldEditModal.extraction_rule_used_by_the_rule_priority_channel') }}</legend>
+        <select :value="draft.rule?.kind ?? ''" @change="setRule(($event.target as HTMLSelectElement).value)" :aria-label="$t('fieldEditModal.extraction_rule_type')">
+          <option value="">{{ $t('fieldEditModal.not_configured') }}</option><option v-if="draft.type !== 'table'" value="anchor">{{ $t('fieldEditModal.key_value_anchor') }}</option><option v-if="draft.type !== 'table'" value="regex">{{ $t('fieldEditModal.regex') }}</option><option v-if="draft.type === 'table'" value="table">{{ $t('fieldEditModal.header_match') }}</option>
         </select>
         <template v-if="draft.rule">
-          <label v-if="draft.rule.kind !== 'table'">标签词（逗号分隔）<input :value="draft.rule.labels.join(',')" @input="draft.rule.labels = split(($event.target as HTMLInputElement).value)" /></label>
-          <button v-if="draft.rule.kind !== 'table'" class="ghost" @click="draft.rule.labels = [...draft.anchor_hints]">从位置提示带入</button>
-          <label v-if="draft.rule.kind === 'regex'">正则（恰好一个捕获组）<input v-model="draft.rule.pattern" placeholder="发票号[:：]\s*(\S+)" /></label>
+          <label v-if="draft.rule.kind !== 'table'">{{ $t('fieldEditModal.label_words_comma_separated') }}<input :value="draft.rule.labels.join(',')" @input="draft.rule.labels = split(($event.target as HTMLInputElement).value)" /></label>
+          <button v-if="draft.rule.kind !== 'table'" class="ghost" @click="draft.rule.labels = [...draft.anchor_hints]">{{ $t('fieldEditModal.populated_from_location_hint') }}</button>
+          <label v-if="draft.rule.kind === 'regex'">{{ $t('fieldEditModal.regex_exactly_one_capture_group') }}<input v-model="draft.rule.pattern" :placeholder="$t('fieldEditModal.invoice_no_s_s')" /></label>
           <template v-if="draft.rule.kind === 'table'">
-            <label>工作表名（可选）<input v-model="draft.rule.sheet_name" /></label>
-            <label v-for="col in draft.columns" :key="col.name">{{ col.name }} 的表头别名<input :value="(draft.rule.column_aliases[col.name] ?? []).join(',')" :placeholder="col.name" @input="draft.rule.column_aliases[col.name] = split(($event.target as HTMLInputElement).value)" /></label>
-            <p v-if="!draft.columns.length" class="dim">保存表格并添加列后，可返回配置各列表头。</p>
-            <label>停止词<input :value="draft.rule.stop_words.join(',')" @input="draft.rule.stop_words = split(($event.target as HTMLInputElement).value)" /></label>
+            <label>{{ $t('fieldEditModal.sheet_name_optional') }}<input v-model="draft.rule.sheet_name" /></label>
+            <label v-for="col in draft.columns" :key="col.name">{{ col.name }} {{ $t('fieldEditModal.header_aliases_for') }}<input :value="(draft.rule.column_aliases[col.name] ?? []).join(',')" :placeholder="col.name" @input="draft.rule.column_aliases[col.name] = split(($event.target as HTMLInputElement).value)" /></label>
+            <p v-if="!draft.columns.length" class="dim">{{ $t('fieldEditModal.after_saving_the_table_and_adding_columns_you_can') }}</p>
+            <label>{{ $t('fieldEditModal.stop_words') }}<input :value="draft.rule.stop_words.join(',')" @input="draft.rule.stop_words = split(($event.target as HTMLInputElement).value)" /></label>
           </template>
-          <label>规则没取到时<select v-model="draft.rule.on_miss"><option value="model">交给模型补</option><option value="review">留空进复核</option></select></label>
+          <label>{{ $t('fieldEditModal.if_the_rule_fails_to_extract') }}<select v-model="draft.rule.on_miss"><option value="model">{{ $t('fieldEditModal.let_the_model_fill_it_in') }}</option><option value="review">{{ $t('fieldEditModal.leave_blank_for_review') }}</option></select></label>
         </template>
       </fieldset>
 
       <label class="chk">
-        <input type="checkbox" v-model="draft.required" /> 必填
+        <input type="checkbox" v-model="draft.required" /> {{ $t('fieldEditModal.required') }}
       </label>
 
       <footer>
-        <button @click="$emit('cancel')">取消</button>
-        <button class="primary" :disabled="!draft.name.trim()" @click="save">保存</button>
+        <button @click="$emit('cancel')">{{ $t('fieldEditModal.cancel') }}</button>
+        <button class="primary" :disabled="!draft.name.trim()" @click="save">{{ $t('fieldEditModal.save') }}</button>
       </footer>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import sourceMessages from "../i18n/locales/zh.json";
 import { computed, reactive } from "vue";
 import type { FieldSpec, ExtractionRule } from "../api";
 
@@ -133,7 +134,7 @@ const decimalPlaces = computed<number | null>({
 });
 
 function setRule(kind: string) {
-  draft.rule = kind ? { kind: kind as ExtractionRule['kind'], labels: [], pattern: '', column_aliases: {}, sheet_name: null, stop_words: ['合计', '总计', 'Total'], on_miss: 'model' } : null;
+  draft.rule = kind ? { kind: kind as ExtractionRule['kind'], labels: [], pattern: '', column_aliases: {}, sheet_name: null, stop_words: [sourceMessages.fieldEditor.stop_word_total, sourceMessages.fieldEditor.stop_word_grand_total, "Total"], on_miss: 'model' } : null;
 }
 function save() {
   if (draft.type !== "table") draft.columns = [];

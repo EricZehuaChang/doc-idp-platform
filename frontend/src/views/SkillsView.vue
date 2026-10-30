@@ -1,100 +1,99 @@
 <template>
   <main class="page">
-    <PageHeader title="技能中心" desc="技能 = 一类文档的抽取契约：字段、校验规则与模型绑定。">
+    <PageHeader :title="$t('skills.skill_center')" :desc="$t('skills.a_skill_is_the_extraction_contract_for_a_document')">
       <!-- U-01 (2026-09-23): one 导入技能 entry; the format is chosen inside, so a
            future import source adds a menu item instead of another button -->
       <details class="import-menu" ref="importMenuEl">
-        <summary class="btn-like" data-testid="import-menu">导入技能 ▾</summary>
+        <summary class="btn-like" data-testid="import-menu">{{ $t('skills.import_skill') }}</summary>
         <div class="import-pop">
           <label class="file-btn">
             <input type="file" accept=".yaml,.yml" hidden @change="importYaml" />
-            <span class="btn-like">导入 YAML 文件</span>
+            <span class="btn-like">{{ $t('skills.import_yaml_file') }}</span>
           </label>
           <button class="ghost" data-testid="import-package" @click="openPackageImport">
-            导入加密技能包</button>
+            {{ $t('skills.import_encrypted_skill_package') }}</button>
         </div>
       </details>
       <!-- one class or the other: `ghost primary` together leaves primary's dark
            text on ghost's transparent background, i.e. an invisible button -->
       <button :class="showGallery ? 'primary' : 'ghost'"
-              @click="showGallery = !showGallery">从模板新建</button>
-      <router-link to="/skills/new"><button class="primary">＋ 新建技能</button></router-link>
+              @click="showGallery = !showGallery">{{ $t('skills.create_from_template') }}</button>
+      <router-link to="/skills/new"><button class="primary">{{ $t('skills.new_skill') }}</button></router-link>
     </PageHeader>
 
     <!-- —— 9.15 WP7: import dialog (two-step, DropZone + passphrase) —— -->
     <AppModal v-if="importOpen" @close="closeImport">
       <div class="pkg-modal" data-testid="import-modal">
         <template v-if="!importPreview">
-          <h4>导入加密技能包</h4>
+          <h4>{{ $t('skills.import_encrypted_skill_package') }}</h4>
           <DropZone accept=".zip" @add="onImportFiles" />
-          <label class="lbl">口令</label>
+          <label class="lbl">{{ $t('skills.passphrase') }}</label>
           <input v-model="importPass" class="txt" type="password"
-                 placeholder="导出时生成的一次性口令" />
+                 :placeholder="$t('skills.one_time_passphrase_generated_on_export')" />
           <div class="modal-actions">
-            <button class="ghost" @click="closeImport">取消</button>
+            <button class="ghost" @click="closeImport">{{ $t('skills.cancel') }}</button>
             <button class="primary" data-testid="import-parse"
                     :disabled="!importFile || !importPass" @click="parsePackage">
-              解析</button>
+              {{ $t('skills.parse') }}</button>
           </div>
         </template>
         <template v-else>
-          <h4>确认导入</h4>
+          <h4>{{ $t('skills.confirm_import') }}</h4>
           <p class="dim">
             {{ importPreview.skill.name }} ·
-            {{ importPreview.skill.mode === "advanced" ? "高级" : "标准" }} ·
-            {{ importPreview.skill.field_count }} 字段 ·
-            {{ importPreview.skill.category_count }} 类别 ·
-            来源 v{{ importPreview.skill.version }}（{{ importPreview.skill.status }}）</p>
+            {{ importPreview.skill.mode === "advanced" ? $t('skills.advanced') : $t('skills.standard') }} ·
+            {{ importPreview.skill.field_count }} {{ $t('skills.fields') }}
+            {{ importPreview.skill.category_count }} {{ $t('skills.category_source_v') }}{{ importPreview.skill.version }}（{{ importPreview.skill.status }}）</p>
           <div v-if="importPreview.missing_channels.length" class="pkg-sec">
-            <b>缺失的模型通道</b>
+            <b>{{ $t('skills.missing_model_channel') }}</b>
             <div v-for="ch in importPreview.missing_channels" :key="ch" class="pkg-row">
               <span>{{ ch }}</span>
               <select v-model="channelMap[ch]">
-                <option value="">使用平台默认</option>
+                <option value="">{{ $t('skills.use_platform_default') }}</option>
                 <option v-for="a in importPreview.available_channels" :key="a"
                         :value="a">{{ a }}</option>
               </select>
             </div>
           </div>
           <div v-if="importPreview.references.length" class="pkg-sec">
-            <b>引用依赖</b>
+            <b>{{ $t('skills.referenced_dependencies') }}</b>
             <div v-for="rf in importPreview.references" :key="rf.category_id"
                  class="pkg-row">
               <span>{{ rf.doc_type }} ← {{ rf.skill_code }}</span>
               <select v-model="refMap[rf.category_id]">
-                <option value="inline">转为本技能内联字段</option>
+                <option value="inline">{{ $t('skills.convert_to_inline_fields_in_this_skill') }}</option>
                 <option v-for="a in refOptions" :key="a" :value="'skill:' + a">
-                  映射到 {{ a }}</option>
+                  {{ $t('skills.map_to') }} {{ a }}</option>
               </select>
             </div>
           </div>
           <div class="pkg-sec">
-            <b>同名冲突</b>
-            <p v-if="!importPreview.conflicts.length" class="dim">无同名技能，将新建。</p>
+            <b>{{ $t('skills.name_conflict') }}</b>
+            <p v-if="!importPreview.conflicts.length" class="dim">{{ $t('skills.no_skill_with_the_same_name_a_new_one') }}</p>
             <template v-else>
               <label class="chk"><input v-model="conflict" type="radio"
-                                        value="rename" /> 重命名后导入</label>
+                                        value="rename" /> {{ $t('skills.rename_and_import') }}</label>
               <label class="chk"><input v-model="conflict" type="radio"
-                                        value="overwrite" /> 覆盖现有技能（新建草稿）</label>
+                                        value="overwrite" /> {{ $t('skills.overwrite_existing_skill_create_new_draft') }}</label>
               <div v-if="conflict === 'overwrite'" class="pkg-row">
-                <span>覆盖目标</span>
+                <span>{{ $t('skills.overwrite_target') }}</span>
                 <select v-model="overwriteTarget">
                   <option v-for="cf in importPreview.conflicts" :key="cf.code"
                           :value="cf.code" :disabled="cf.recoverable">
-                    {{ cf.name }}{{ cf.recoverable ? "（需先恢复）" : "" }}</option>
+                    {{ cf.name }}{{ cf.recoverable ? $t('skills.restore_required_first') : "" }}</option>
                 </select>
               </div>
             </template>
           </div>
           <template v-if="conflict === 'rename'">
-            <label class="lbl">新技能代码（可修改，需全局唯一）</label>
+            <label class="lbl">{{ $t('skills.new_skill_code_editable_must_be_globally_unique') }}</label>
             <input v-model="newCode" class="txt" data-testid="import-new-code" />
           </template>
           <div class="modal-actions">
-            <button class="ghost" @click="closeImport">取消</button>
+            <button class="ghost" @click="closeImport">{{ $t('skills.cancel') }}</button>
             <button class="primary" data-testid="import-commit"
                     :disabled="conflict === 'overwrite' && !overwriteTarget"
-                    @click="commitImport">确认导入</button>
+                    @click="commitImport">{{ $t('skills.confirm_import') }}</button>
           </div>
         </template>
       </div>
@@ -104,32 +103,30 @@
     <AppModal v-if="exportOpen" @close="closeExport">
       <div class="pkg-modal" data-testid="export-modal">
         <template v-if="!exportResult">
-          <h4>导出加密技能包</h4>
-          <p class="dim">包含与不包含：技能定义与被引用包会打包；金样本、样本原件、
-            运行结果、任何密钥一律不包含。</p>
-          <label class="lbl">版本</label>
+          <h4>{{ $t('skills.export_encrypted_skill_package') }}</h4>
+          <p class="dim">{{ $t('skills.included_and_excluded_skill_definitions_and_referenced_packages_are') }}</p>
+          <label class="lbl">{{ $t('skills.version') }}</label>
           <select v-model="exportVersion" class="txt">
             <option v-for="v in exportVersions" :key="v.key" :value="v.version">
               {{ v.label }}</option>
           </select>
           <div class="modal-actions">
-            <button class="ghost" @click="closeExport">取消</button>
+            <button class="ghost" @click="closeExport">{{ $t('skills.cancel') }}</button>
             <button class="primary" data-testid="export-generate"
-                    @click="doExport">生成加密包</button>
+                    @click="doExport">{{ $t('skills.generate_encrypted_package') }}</button>
           </div>
         </template>
         <template v-else>
-          <h4>包已生成</h4>
-          <p class="dim">{{ exportResult.file_name }}（{{ exportResult.size }} 字节）</p>
-          <p>口令：<code class="pkg-pass" data-testid="export-passphrase">{{
-            exportResult.passphrase }}</code></p>
-          <p class="dim">口令只显示这一次，请与文件分开发送。</p>
+          <h4>{{ $t('skills.package_generated') }}</h4>
+          <p class="dim">{{ exportResult.file_name }}（{{ exportResult.size }} {{ $t('skills.bytes') }}</p>
+          <I18nT keypath="skills.package_passphrase" tag="p" scope="global"><template #passphrase><code class="pkg-pass" data-testid="export-passphrase">{{ exportResult.passphrase }}</code></template></I18nT>
+          <p class="dim">{{ $t('skills.the_passphrase_is_shown_only_once_send_it_separately') }}</p>
           <div class="modal-actions">
-            <button class="ghost" @click="copyPass">复制口令</button>
+            <button class="ghost" @click="copyPass">{{ $t('skills.copy_passphrase') }}</button>
             <button class="primary" data-testid="export-download"
-                    @click="downloadExport">下载 .zip</button>
+                    @click="downloadExport">{{ $t('skills.download_zip') }}</button>
             <!-- #9: the dialog used to be unclosable after generating -->
-            <button data-testid="export-done" @click="closeExport">完成</button>
+            <button data-testid="export-done" @click="closeExport">{{ $t('skills.completed') }}</button>
           </div>
         </template>
       </div>
@@ -137,8 +134,8 @@
 
     <!-- gallery on demand; the empty state opens it by itself below -->
     <section v-if="showGallery && items.length" class="card-panel pad">
-      <h3 class="gal-title">选一个最接近的单据类型</h3>
-      <p class="dim gal-hint">导入后是草稿，字段可改可删，确认无误再发布。</p>
+      <h3 class="gal-title">{{ $t('skills.pick_the_closest_document_type') }}</h3>
+      <p class="dim gal-hint">{{ $t('skills.after_import_it_is_a_draft_fields_can_be') }}</p>
       <SkillTemplateGallery />
     </section>
 
@@ -150,38 +147,38 @@
           {{ b.label }} <span v-if="b.count" class="badge-r">{{ b.count }}</span>
         </button>
         <span v-if="bucket === 'deleted'" class="dim hint">
-          已删除的技能保留全部版本与历史，可一键恢复。</span>
+          {{ $t('skills.deleted_skills_retain_all_versions_and_history_and_can') }}</span>
       </div>
       <!-- 9.15 R01/R02: instant search + 6-way sort, state lives in the URL -->
       <div class="roster-bar">
         <input class="search" v-model="q" type="search"
-               placeholder="搜索技能名称或代码" />
-        <select v-model="sort" class="sort" aria-label="排序方式">
+               :placeholder="$t('skills.search_skill_name_or_code')" />
+        <select v-model="sort" class="sort" :aria-label="$t('skills.sort_by')">
           <option v-for="o in SORTS" :key="o.key" :value="o.key">{{ o.label }}</option>
         </select>
       </div>
       <table v-if="items.length" class="data-table">
         <thead>
-          <tr><th>技能代码</th><th>名称</th><th>简介</th><th>发布版本</th><th>状态</th><th class="th-act"></th></tr>
+          <tr><th>{{ $t('skills.skill_code') }}</th><th>{{ $t('skills.name') }}</th><th>{{ $t('skills.description') }}</th><th>{{ $t('skills.publish_version') }}</th><th>{{ $t('skills.status') }}</th><th class="th-act"></th></tr>
         </thead>
         <tbody>
           <tr v-for="s in items" :key="s.skill_code" class="row-link"
               @click="$router.push(`/skills/${s.skill_code}`)">
             <td class="code">{{ s.skill_code }}</td>
             <td>{{ s.name }}</td>
-            <td class="desc" :title="s.description || '该技能未填写简介'">
+            <td class="desc" :title="s.description || $t('skills.this_skill_has_no_description')">
               <template v-if="s.description">
                 {{ s.description }}
                 <small v-if="s.description_source?.startsWith('draft')"
-                       class="dim">(草稿措辞)</small>
+                       class="dim">{{ $t('skills.draft_wording') }}</small>
               </template>
               <span v-else class="dim">—</span>
             </td>
             <td class="dim ver">
-              {{ s.published_version != null ? `v${s.published_version}` : "未发布" }}
+              {{ s.published_version != null ? `v${s.published_version}` : $t('skills.unpublished') }}
             </td>
             <td><span class="chip" :class="`chip-${s.state}`">
-              {{ s.state === "active" ? "启用" : s.state === "deleted" ? "已删除" : "已停用" }}</span></td>
+              {{ s.state === "active" ? $t('skills.enabled_f4f0ea') : s.state === "deleted" ? $t('skills.deleted') : $t('skills.disabled') }}</span></td>
             <!-- 9.15 R22: actions collapse into one ⋯ menu -->
             <td class="row-act" @click.stop>
               <RowActionMenu :items="menuItems(s)" @select="onMenu(s, $event)" />
@@ -190,25 +187,24 @@
         </tbody>
       </table>
       <Skeleton v-else-if="isLoading" :rows="5" />
-      <EmptyState v-else-if="q.trim()" title="未找到相关技能" glyph="🔍">
-        换个关键词试试，或清空搜索查看本页签全部技能。
+      <EmptyState v-else-if="q.trim()" :title="$t('skills.no_matching_skills_found')" glyph="🔍">
+        {{ $t('skills.try_another_keyword_or_clear_the_search_to_view') }}
         <template #action>
-          <button @click="q = ''">清空搜索</button>
+          <button @click="q = ''">{{ $t('skills.clear_search') }}</button>
         </template>
       </EmptyState>
-      <EmptyState v-else-if="bucket === 'deleted'" title="没有已删除的技能" glyph="🗄️">
-        删除技能后它会出现在这里，版本与历史全部保留，可随时恢复。
+      <EmptyState v-else-if="bucket === 'deleted'" :title="$t('skills.no_deleted_skills')" glyph="🗄️">
+        {{ $t('skills.deleted_skills_appear_here_with_all_versions_and_history') }}
       </EmptyState>
-      <EmptyState v-else-if="allCount > 0" title="此页签下没有技能" glyph="⚙️">
-        切到其他页签查看启用中或已停用的技能。
+      <EmptyState v-else-if="allCount > 0" :title="$t('skills.no_skills_in_this_tab')" glyph="⚙️">
+        {{ $t('skills.switch_to_another_tab_to_view_enabled_or_disabled') }}
       </EmptyState>
       <div v-else class="first-run">
-        <EmptyState title="还没有技能" glyph="⚙️">
-          技能 = 一类单据抽哪些字段。从下面挑一个最接近的开始，比从空白想字段快得多；
-          导入后是草稿，字段可改可删，确认无误再发布。
+        <EmptyState :title="$t('skills.no_skills_yet')" glyph="⚙️">
+          {{ $t('skills.a_skill_which_fields_to_extract_from_a_type') }}
           <template #action>
             <router-link to="/skills/new">
-              <button class="ghost">从空白新建</button></router-link>
+              <button class="ghost">{{ $t('skills.create_from_blank') }}</button></router-link>
           </template>
         </EmptyState>
         <SkillTemplateGallery class="first-gallery" />
@@ -218,6 +214,10 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT, useI18n } from "vue-i18n";
+const { t } = useI18n();
+import { translateMessage, type MessageDescriptor } from "../i18n";
+
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -241,21 +241,21 @@ const showGallery = ref(false);
 // reproduce the view; search and sort only ever apply inside the active bucket
 type SortKey = "name_asc" | "name_desc" | "updated_desc" | "updated_asc"
   | "created_desc" | "created_asc";
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: "updated_desc", label: "最近更新" },
-  { key: "updated_asc", label: "最早更新" },
-  { key: "created_desc", label: "最近创建" },
-  { key: "created_asc", label: "最早创建" },
-  { key: "name_asc", label: "名称 A→Z" },
-  { key: "name_desc", label: "名称 Z→A" },
-];
+const SORTS = computed<{ key: SortKey; label: string }[]>(() => [
+  { key: "updated_desc", label: t('skills.recently_updated') },
+  { key: "updated_asc", label: t('skills.oldest_updated') },
+  { key: "created_desc", label: t('skills.recently_created') },
+  { key: "created_asc", label: t('skills.oldest_created') },
+  { key: "name_asc", label: t('skills.name_ascending') },
+  { key: "name_desc", label: t('skills.name_descending') },
+]);
 const DEFAULT_SORT: SortKey = "updated_desc";
 
 const bucket = ref<"active" | "disabled" | "deleted">(
   (["active", "disabled", "deleted"] as const).includes(route.query.bucket as any)
     ? route.query.bucket as any : "active");
 const q = ref(String(route.query.q ?? ""));
-const sort = ref((SORTS.some((o) => o.key === route.query.sort)
+const sort = ref((SORTS.value.some((o) => o.key === route.query.sort)
                   ? route.query.sort as SortKey : DEFAULT_SORT));
 
 watch([q, sort, bucket], () => {
@@ -278,7 +278,7 @@ watch(() => route.query.q, (v) => {
   if (val !== q.value) q.value = val;
 });
 watch(() => route.query.sort, (v) => {
-  const val = SORTS.some((o) => o.key === v) ? v as SortKey : DEFAULT_SORT;
+  const val = SORTS.value.some((o) => o.key === v) ? v as SortKey : DEFAULT_SORT;
   if (val !== sort.value) sort.value = val;
 });
 
@@ -320,31 +320,37 @@ const { data: deletedData } = useQuery({
 });
 const allCount = computed(() => allData.value?.length ?? 0);
 const buckets = computed(() => [
-  { key: "active" as const, label: "启用中",
+  { key: "active" as const, label: t('skills.enabled'),
     count: (allData.value ?? []).filter((s) => s.state === "active").length },
-  { key: "disabled" as const, label: "已停用",
+  { key: "disabled" as const, label: t('skills.disabled'),
     count: (allData.value ?? []).filter((s) => s.state === "disabled").length },
-  { key: "deleted" as const, label: "已删除",
+  { key: "deleted" as const, label: t('skills.deleted'),
     count: deletedData.value?.length ?? 0 },
 ]);
 
 // —— 9.15 R22: per-state menu items (删除二次确认沿用 del()) ——
-function menuItems(s: SkillInfo): RowMenuItem[] {
-  const common: RowMenuItem[] = [
-    { key: "edit", label: "编辑" },
-    { key: "export", label: "导出" },
+function menuDefinitions(s: SkillInfo): (Omit<RowMenuItem, "label"> & { message: MessageDescriptor })[] {
+  const common: (Omit<RowMenuItem, "label"> & { message: MessageDescriptor })[] = [
+    { key: "edit", message: { key: 'skills.menu_edit' } },
+    { key: "export", message: { key: 'skills.menu_export' } },
   ];
   if (s.state === "active") {
-    return [...common, { key: "disable", label: "停用" }, { key: "delete", label: "删除", danger: true }];
+    return [...common, { key: "disable", message: { key: 'skills.menu_disable' } }, { key: "delete", message: { key: 'skills.menu_delete' }, danger: true }];
   }
   if (s.state === "disabled") {
-    return [...common, { key: "enable", label: "启用" }, { key: "delete", label: "删除", danger: true }];
+    return [...common, { key: "enable", message: { key: 'skills.menu_enable' } }, { key: "delete", message: { key: 'skills.menu_delete' }, danger: true }];
   }
-  return [{ key: "restore", label: "恢复" }, { key: "edit", label: "编辑（查看）" }];
+  return [{ key: "restore", message: { key: 'skills.menu_restore' } }, { key: "edit", message: { key: 'skills.menu_edit_view' } }];
 }
+const menuItems = (skill: SkillInfo): RowMenuItem[] =>
+  menuDefinitions(skill).map(({ message, ...item }) => ({ ...item, label: translateMessage(message) }));
 // —— 9.15 WP7: encrypted package export / two-step import ——
 const exportOpen = ref(false);
-const exportVersions = ref<{ key: string; version: number; label: string }[]>([]);
+const exportVersionRows = ref<{ version: number; status: string }[]>([]);
+const exportVersions = computed(() => exportVersionRows.value.map(v => ({
+  key: String(v.version) + "-" + v.status, version: v.version,
+  label: t(v.status === 'published' ? 'skills.published_version' : 'skills.draft_version', { version: v.version }),
+})));
 const exportVersion = ref<number | null>(null);
 const exportResult = ref<{ file_name: string; content_base64: string;
                            passphrase: string; sha256: string; size: number }
@@ -356,9 +362,7 @@ async function openExport(s: SkillInfo) {
   exportResult.value = null;
   try {
     const d = await api.skillDetail(s.skill_code);
-    exportVersions.value = d.versions.map((v) => ({
-      key: `${v.version}-${v.status}`, version: v.version,
-      label: `v${v.version}${v.status === "published" ? "" : "（草稿）"}` }));
+    exportVersionRows.value = d.versions;
     exportVersion.value = d.selected_version ?? d.versions[0]?.version ?? null;
     exportOpen.value = true;
   } catch (e) { toast.error(e); }
@@ -399,8 +403,8 @@ function closeImport() {
 async function copyPass() {
   const r = exportResult.value;
   if (!r) return;
-  try { await copyText(r.passphrase); toast.ok("口令已复制"); }
-  catch { toast.error("复制失败，请手动选择口令"); }
+  try { await copyText(r.passphrase); toast.ok(t('skills.passphrase_copied')); }
+  catch { toast.error(t('skills.copy_failed_please_select_the_passphrase_manually')); }
 }
 
 const importOpen = ref(false);
@@ -428,7 +432,7 @@ function onImportFiles(files: File[]) {
   const f = files[0];
   if (!f) return;
   if (!f.name.toLowerCase().endsWith(".zip")) {
-    toast.error("请选择 .zip 加密技能包（.yaml 仍走旧版导入）");
+    toast.error(t('skills.please_select_an_encrypted_zip_skill_package_yaml_still'));
     return;
   }
   importFile.value = f;
@@ -470,7 +474,7 @@ async function commitImport() {
         ? overwriteTarget.value : undefined });
     importOpen.value = false;
     importPreview.value = null;
-    toast.ok(`已导入为 v${r.version} 草稿`);
+    toast.ok(t('skills.imported_draft', { version: r.version }));
     router.push(`/skills/${r.skill_code}`);
     qc.invalidateQueries({ queryKey: ["skills"] });
   } catch (e) { toast.error(e); }
@@ -486,31 +490,31 @@ function onMenu(s: SkillInfo, key: string) {
 }
 
 async function toggle(s: SkillInfo, action: "disable" | "enable") {
-  const verb = action === "disable" ? "停用" : "启用";
+  const verb = action === "disable" ? t('skills.disable') : t('skills.enabled_f4f0ea');
   const why = action === "disable"
-    ? "停用后不能再提交，已有任务不受影响。" : "启用后重新占用套餐技能席位。";
-  if (!confirm(`${verb}技能 ${s.name || s.skill_code}？${why}`)) return;
+    ? t('skills.after_disabling_it_can_no_longer_be_submitted_existing') : t('skills.after_enabling_it_will_occupy_a_plan_skill_seat');
+  if (!confirm(t('skills.change_state_confirm', { action: verb, name: s.name || s.skill_code, reason: why }))) return;
   try {
     await api.skillSetState(s.skill_code, action);
-    toast.ok(`技能 ${s.skill_code} 已${verb}`);
+    toast.ok(t('skills.state_changed', { code: s.skill_code, action: verb }));
     qc.invalidateQueries({ queryKey: ["skills"] });
   } catch (e) { toast.error(e); }
 }
 
 async function del(s: SkillInfo) {
-  if (!confirm(`删除技能 ${s.name || s.skill_code}？它会进入归档页签，版本与历史保留，可随时恢复。`)) return;
+  if (!confirm(t('skills.delete_confirm', { name: s.name || s.skill_code }))) return;
   try {
     await api.skillDelete(s.skill_code);
-    toast.ok(`技能 ${s.skill_code} 已删除（可在归档中恢复）`);
+    toast.ok(t('skills.deleted_restore_available', { code: s.skill_code }));
     qc.invalidateQueries({ queryKey: ["skills"] });
   } catch (e) { toast.error(e); }
 }
 
 async function restore(s: SkillInfo) {
-  if (!confirm(`恢复技能 ${s.name || s.skill_code}？恢复后重新出现在启用列表并可直接提交。`)) return;
+  if (!confirm(t('skills.restore_confirm', { name: s.name || s.skill_code }))) return;
   try {
     await api.skillRestore(s.skill_code);
-    toast.ok(`技能 ${s.skill_code} 已恢复`);
+    toast.ok(t('skills.restored', { code: s.skill_code }));
     qc.invalidateQueries({ queryKey: ["skills"] });
   } catch (e) { toast.error(e); }
 }
@@ -521,7 +525,7 @@ async function importYaml(ev: Event) {
   if (!file) return;
   try {
     const r = await api.skillImport(file);
-    toast.ok(`已导入 ${r.skill_code}（v${r.version} 草稿）`);
+    toast.ok(t('skills.skill_imported', { code: r.skill_code, version: r.version }));
     qc.invalidateQueries({ queryKey: ["skills"] });
     router.push(`/skills/${r.skill_code}`);
   } catch (e) { toast.error(e); }

@@ -1,6 +1,6 @@
 <template>
   <button ref="triggerEl" class="dots" type="button"
-          aria-label="更多操作" aria-haspopup="menu" :aria-expanded="open"
+          :aria-label="$t('rowActionMenu.more_actions')" aria-haspopup="menu" :aria-expanded="open"
           @click.stop="toggle">
     ⋯
   </button>

@@ -1,32 +1,28 @@
-// one status vocabulary for the whole app (chips + filters read this)
-export const STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  processing: "处理中",
-  pending_verification: "待校验",
-  completed: "已完成",
-  passed: "已通过",
-  rejected: "已拒绝",
-  split: "已分割",
-  error: "失败",
-};
+import { i18n, type DisplayMessage } from "./i18n";
 
+// Resolve at render time so status chips and filter choices follow the locale.
+const STATUS_KEYS: Record<string, string> = {
+  queued: "labels.queued", processing: "labels.processing",
+  pending_verification: "labels.pending_verification", completed: "labels.completed",
+  passed: "labels.passed", rejected: "labels.rejected", split: "labels.split",
+  error: "labels.failed",
+};
+const RUN_STATUS_KEYS: Record<string, string> = {
+  queued: "labels.queued", running: "labels.running", completed: "labels.done",
+  needs_review: "labels.needs_review", failed: "labels.failed",
+};
+const VERSION_KEYS: Record<string, string> = {
+  draft: "labels.draft", published: "labels.published", archived: "labels.archived",
+};
+const translatedLabels = (keys: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(keys).map(([value, key]) => [value, i18n.global.t(key)]));
+
+export const STATUS_LABELS = () => translatedLabels(STATUS_KEYS);
 /** 走查 #19: the Playground run vocabulary (server-derived, D2) */
-export const RUN_STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  running: "运行中",
-  completed: "完成",
-  needs_review: "完成（待复核）",
-  failed: "失败",
-};
-
-export const VERSION_LABELS: Record<string, string> = {
-  draft: "草稿",
-  published: "已发布",
-  archived: "已归档",
-};
+export const RUN_STATUS_LABELS = () => translatedLabels(RUN_STATUS_KEYS);
+export const VERSION_LABELS = () => translatedLabels(VERSION_KEYS);
 
 /** D5 (#19): the no-login actor is stored as "anonymous" — the UI says 免登录 */
-export function initiatorLabel(name: string | null | undefined): string {
-  if (!name || name === "anonymous") return "免登录";
-  return name;
+export function initiatorLabel(name: string | null | undefined): DisplayMessage {
+  return !name || name === "anonymous" ? { key: "labels.anonymous" } : name;
 }

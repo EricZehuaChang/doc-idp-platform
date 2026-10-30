@@ -1,30 +1,30 @@
 <template>
   <div class="fc" :class="{ nested: depth > 0, dragging: isDragging, over: isOver, 'fc-inline': inline, active, expanded }">
     <div v-if="inline" class="fc-inline-row" role="button" tabindex="0" :aria-expanded="expanded"
-         :aria-label="`${field.name || '未命名字段'}，${expanded ? '收起' : '展开'}编辑`"
+         :aria-label="$t(expanded ? 'fieldCard.collapse_editor' : 'fieldCard.expand_editor', { name: field.name || $t('fieldCard.unnamed_field') })"
          @click="$emit('select')" @keydown.enter.self.prevent="$emit('select')" @keydown.space.self.prevent="$emit('select')">
-      <span class="grip" title="按住拖动可调整字段顺序" @pointerdown.stop="$emit('grip-down', index, $event)" @click.stop>⠿</span>
+      <span class="grip" :title="$t('fieldCard.press_and_drag_to_reorder_fields')" @pointerdown.stop="$emit('grip-down', index, $event)" @click.stop>⠿</span>
       <span class="fc-summary">
-        <span class="fc-name">{{ field.name || '未命名字段' }}<span v-if="field.required" class="req"> *</span></span>
-        <span class="fc-description">{{ field.instruction || (field.type === 'table' ? `${field.columns.length} 个列字段` : '点击补充抽取说明') }}</span>
+        <span class="fc-name">{{ field.name || $t('fieldCard.unnamed_field') }}<span v-if="field.required" class="req"> *</span></span>
+        <span class="fc-description">{{ field.instruction || (field.type === 'table' ? $t('fieldCard.column_count', { count: field.columns.length }) : $t('fieldCard.click_to_add_extraction_instructions')) }}</span>
       </span>
-      <span class="fc-type">{{ typeLabel }}<span v-if="field.mode === 'inferred'" class="inferred-dot" title="模型推断"> · 推断</span></span>
+      <span class="fc-type">{{ typeLabel }}<span v-if="field.mode === 'inferred'" class="inferred-dot" :title="$t('fieldCard.model_inference')"> {{ $t('fieldCard.inferred') }}</span></span>
       <span class="fc-value" :class="{ dim: !hasValue }" :title="resultText">{{ resultText }}</span>
       <span class="fc-status" :class="statusTone">{{ statusLabel }}</span>
-      <button type="button" class="icon danger-ico" :title="`删除 ${field.name || '字段'}`" :aria-label="`删除 ${field.name || '字段'}`" @click.stop="$emit('remove')">×</button>
+      <button type="button" class="icon danger-ico" :title="$t('fieldCard.delete_named_field', { name: field.name || $t('fieldCard.unnamed_field') })" :aria-label="$t('fieldCard.delete_named_field', { name: field.name || $t('fieldCard.unnamed_field') })" @click.stop="$emit('remove')">×</button>
       <span class="fc-chevron" aria-hidden="true">{{ expanded ? '⌃' : '⌄' }}</span>
     </div>
     <template v-else>
       <div class="fc-row">
-        <span class="grip" title="按住拖动可调整字段顺序" @pointerdown="$emit('grip-down', index, $event)">⠿</span>
+        <span class="grip" :title="$t('fieldCard.press_and_drag_to_reorder_fields')" @pointerdown="$emit('grip-down', index, $event)">⠿</span>
         <span class="fc-idx dim">{{ index + 1 }}</span><span class="fc-name">{{ field.name }}</span>
         <span class="fc-type dim">（{{ typeLabel }}）</span><span v-if="field.required" class="req">*</span>
-        <span v-if="field.mode === 'inferred'" class="badge-inferred">推断</span>
-        <span class="fc-act"><button type="button" class="icon" title="编辑" @click="$emit('edit')">✎</button><button type="button" class="icon danger-ico" title="删除" @click="$emit('remove')">×</button></span>
+        <span v-if="field.mode === 'inferred'" class="badge-inferred">{{ $t('fieldCard.inferred_465edc') }}</span>
+        <span class="fc-act"><button type="button" class="icon" :title="$t('fieldCard.edit')" @click="$emit('edit')">✎</button><button type="button" class="icon danger-ico" :title="$t('fieldCard.delete')" @click="$emit('remove')">×</button></span>
       </div>
       <p v-if="field.instruction" class="fc-instr dim">{{ field.instruction }}</p>
-      <p v-if="field.enum_values.length" class="fc-extra dim">枚举：{{ field.enum_values.join(' / ') }}</p>
-      <p v-if="field.anchor_hints.length" class="fc-extra dim">位置：{{ field.anchor_hints.join('；') }}</p>
+      <p v-if="field.enum_values.length" class="fc-extra dim">{{ $t('fieldCard.enum') }}{{ field.enum_values.join(' / ') }}</p>
+      <p v-if="field.anchor_hints.length" class="fc-extra dim">{{ $t('fieldCard.location') }}{{ field.anchor_hints.join('；') }}</p>
     </template>
     <div v-if="inline && expanded" class="fc-editor">
       <FieldEditor :field="field" :is-column="depth > 0" @update="$emit('update', $event)" />
@@ -37,12 +37,15 @@
                  @select="expandedColumn = expandedColumn === i ? -1 : i"
                  @update="updateColumn(i, $event)" @remove="removeColumn(i)"
                  @edit="$emit('edit-column', i)" @grip-down="startColDrag" />
-      <button type="button" class="add-child" @click="addColumn">＋ 添加列字段</button>
+      <button type="button" class="add-child" @click="addColumn">{{ $t('fieldCard.add_column_field') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { computed, ref } from "vue";
 import type { FieldSpec } from "../api";
 import { moveItem, useListReorder } from "../reorder";
@@ -58,8 +61,8 @@ const emit = defineEmits<{
   (e: "edit-column", i: number): void; (e: "add-column"): void;
   (e: "grip-down", index: number, ev: PointerEvent): void;
 }>();
-const TYPE_LABELS: Record<string, string> = { string: "字符串", number: "数字", date: "日期", enum: "枚举", table: "数组" };
-const typeLabel = computed(() => TYPE_LABELS[props.field.type] ?? props.field.type);
+const TYPE_KEYS: Record<string, string> = { string: "fieldCard.type_string", number: "fieldCard.type_number", date: "fieldCard.type_date", enum: "fieldCard.type_enum", table: "fieldCard.type_table" };
+const typeLabel = computed(() => TYPE_KEYS[props.field.type] ? t(TYPE_KEYS[props.field.type]) : props.field.type);
 const isDragging = computed(() => props.dragFrom === props.index);
 const isOver = computed(() => props.dragFrom >= 0 && props.dragOver === props.index && props.dragFrom !== props.index);
 const expandedColumn = ref(-1);
@@ -84,12 +87,12 @@ function display(value: unknown): string {
 const hasValue = computed(() => present(props.result));
 const resultText = computed(() => {
   const value = unwrap(props.result);
-  if (props.field.type === "table" && Array.isArray(value)) return `${value.length} 行 · ${props.field.columns.length} 列`;
-  return hasValue.value ? display(value) : props.resultStatus === "idle" ? "尚未试抽" : "—";
+  if (props.field.type === "table" && Array.isArray(value)) return t('fieldCard.table_dimensions', { rows: value.length, columns: props.field.columns.length });
+  return hasValue.value ? display(value) : props.resultStatus === "idle" ? t('fieldCard.not_yet_extracted') : "—";
 });
-const STATUS_LABELS: Record<string, string> = { idle: "待试抽", running: "试抽中", success: "已定位", missing: "未抽到", stale: "已过期", generated: "示例值", review: "待复核" };
+const STATUS_KEYS: Record<string, string> = { idle: "fieldCard.status_idle", running: "fieldCard.status_running", success: "fieldCard.status_success", extracted: "fieldCard.status_extracted", missing: "fieldCard.status_missing", stale: "fieldCard.status_stale", generated: "fieldCard.status_generated", review: "fieldCard.status_review" };
 const STATUS_TONES: Record<string, string> = { success: "status-success", missing: "status-warning", review: "status-warning", stale: "status-warning", generated: "status-example" };
-const statusLabel = computed(() => STATUS_LABELS[props.resultStatus] ?? props.resultStatus);
+const statusLabel = computed(() => STATUS_KEYS[props.resultStatus] ? t(STATUS_KEYS[props.resultStatus]) : props.resultStatus);
 const statusTone = computed(() => STATUS_TONES[props.resultStatus] ?? "");
 function columnResult(name: string): unknown {
   const result = unwrap(props.result);
@@ -102,7 +105,7 @@ function columnResult(name: string): unknown {
 function columnStatus(name: string): string {
   if (["idle", "running", "stale", "generated"].includes(props.resultStatus)) return props.resultStatus;
   // The trial supplies location evidence for the table, not for individual cells.
-  return present(columnResult(name)) ? "待核对" : "missing";
+  return present(columnResult(name)) ? "review" : "missing";
 }
 function updateColumns(columns: FieldSpec[]) { emit("update", { ...props.field, columns }); }
 function updateColumn(index: number, field: FieldSpec) {

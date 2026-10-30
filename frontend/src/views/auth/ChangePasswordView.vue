@@ -1,22 +1,22 @@
 <template>
   <main class="wrap">
-    <h2>修改密码</h2>
+    <h2>{{ $t('changePassword.change_password') }}</h2>
     <p v-if="session.mustChangePassword" class="force-tip">
-      管理员为您设置了初始密码，请先修改为自己的密码再继续使用。
+      {{ $t('changePassword.an_administrator_has_set_an_initial_password_for_you') }}
     </p>
     <form @submit.prevent="submit">
-      <label>原密码
+      <label>{{ $t('changePassword.current_password') }}
         <input v-model="oldPw" type="password" required autocomplete="current-password" />
       </label>
-      <label>新密码（至少 8 位）
+      <label>{{ $t('changePassword.new_password_at_least_8_characters') }}
         <input v-model="newPw" type="password" minlength="8" required
                autocomplete="new-password" />
       </label>
-      <label>确认新密码
+      <label>{{ $t('changePassword.confirm_new_password') }}
         <input v-model="confirm" type="password" minlength="8" required
                autocomplete="new-password" />
       </label>
-      <button class="primary" type="submit" :disabled="busy">保存</button>
+      <button class="primary" type="submit" :disabled="busy">{{ $t('changePassword.save') }}</button>
       <span v-if="error" class="err">{{ error }}</span>
       <span v-if="notice" class="ok">{{ notice }}</span>
     </form>
@@ -24,6 +24,9 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../../api";
@@ -39,7 +42,7 @@ const busy = ref(false);
 
 async function submit() {
   if (newPw.value !== confirm.value) {
-    error.value = "两次输入的密码不一致";
+    error.value = t('changePassword.the_two_passwords_do_not_match');
     return;
   }
   busy.value = true;
@@ -47,7 +50,7 @@ async function submit() {
   try {
     await api.changePassword(oldPw.value, newPw.value);
     session.mustChangePassword = false;
-    notice.value = "密码已更新";
+    notice.value = t('changePassword.password_updated');
     setTimeout(() => router.push("/queue"), 600);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);

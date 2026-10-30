@@ -1,6 +1,6 @@
 <template>
-  <nav class="source-tabs" aria-label="任务来源">
-    <button :class="{ primary: source === 'manual' }" @click="choose('manual')">手工</button>
+  <nav class="source-tabs" :aria-label="$t('taskSourceSwitch.task_source')">
+    <button :class="{ primary: source === 'manual' }" @click="choose('manual')">{{ $t('taskSourceSwitch.manual') }}</button>
     <button :class="{ primary: source === 'api' }" @click="choose('api')">API</button>
   </nav>
 </template>

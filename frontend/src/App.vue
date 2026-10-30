@@ -7,25 +7,25 @@
     <header class="navbar">
       <span class="logo">DOC·IDP</span>
       <nav>
-        <router-link to="/home">主页</router-link>
-        <router-link to="/tasks">任务</router-link>
-        <router-link to="/skills">技能</router-link>
-        <router-link to="/cabinet">数据柜</router-link>
-        <router-link to="/dashboard">看板</router-link>
+        <router-link to="/home">{{ $t('app.home') }}</router-link>
+        <router-link to="/tasks">{{ $t('app.tasks') }}</router-link>
+        <router-link to="/skills">{{ $t('app.skills') }}</router-link>
+        <router-link to="/cabinet">{{ $t('app.data_cabinet') }}</router-link>
+        <router-link to="/dashboard">{{ $t('app.dashboard') }}</router-link>
       </nav>
       <div class="user-menu" @click.stop="menuOpen = !menuOpen">
         <span class="avatar">{{ initial }}</span>
         <span class="uname">{{ displayName }}</span>
         <div v-if="menuOpen" class="dropdown" @click.stop>
-          <router-link v-if="isAdmin" to="/settings" @click="menuOpen = false">平台设置</router-link>
+          <router-link to="/settings" @click="menuOpen = false">{{ $t('app.platform_settings') }}</router-link>
           <!-- 9.15 WP2: personal agent keys — every logged-in user, not just admins -->
-          <router-link v-if="session.authRequired" to="/api-keys" @click="menuOpen = false">我的 API Key</router-link>
-          <a href="#" @click.prevent="helpOpen = true; menuOpen = false">帮助</a>
+          <router-link v-if="session.authRequired" to="/api-keys" @click="menuOpen = false">{{ $t('app.my_api_keys') }}</router-link>
+          <a href="#" @click.prevent="helpOpen = true; menuOpen = false">{{ $t('app.help') }}</a>
           <template v-if="session.authRequired">
-            <router-link to="/change-password" @click="menuOpen = false">修改密码</router-link>
-            <a href="#" class="logout" @click.prevent="logout">退出登录</a>
+            <router-link to="/change-password" @click="menuOpen = false">{{ $t('app.change_password') }}</router-link>
+            <a href="#" class="logout" @click.prevent="logout">{{ $t('app.log_out') }}</a>
           </template>
-          <span v-else class="dim">免登录模式（lite/dev）</span>
+          <span v-else class="dim">{{ $t('app.passwordless_mode_lite_dev') }}</span>
         </div>
       </div>
     </header>
@@ -55,7 +55,6 @@ const bare = computed(() => BARE.has(route.path));
 const displayName = computed(() =>
   session.email || localStorage.getItem("idp_user") || "reviewer-1");
 const initial = computed(() => (displayName.value[0] || "?").toUpperCase());
-const isAdmin = computed(() => !session.authRequired || session.role === "admin");
 
 function logout() {
   clearSession();

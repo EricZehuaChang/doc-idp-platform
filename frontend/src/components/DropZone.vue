@@ -2,13 +2,13 @@
   <!-- File intake: click, drag-drop, or keyboard. Emits raw File objects;
        validation belongs to the caller (limits come from the server). -->
   <div class="drop" :class="{ hot, disabled }" tabindex="0" role="button"
-       :aria-label="`选择文件，支持 ${accept}`"
+       :aria-label="$t('dropZone.choose_supported', { accept })"
        @click="pick" @keydown.enter.prevent="pick" @keydown.space.prevent="pick"
        @dragover.prevent="hot = true" @dragenter.prevent="hot = true"
        @dragleave.prevent="hot = false" @drop.prevent="onDrop">
     <div class="glyph">📄</div>
-    <div class="main">拖拽文件到此处，或<b>点击选择</b></div>
-    <div class="fmt">支持 {{ accept.replace(/\./g, "").toUpperCase().replace(/,/g, " · ") }}</div>
+    <I18nT keypath="dropZone.drop_or_choose" tag="div" scope="global" class="main"><template #choose><b>{{ $t('dropZone.click_to_choose') }}</b></template></I18nT>
+    <div class="fmt">{{ $t('dropZone.supported') }} {{ accept.replace(/\./g, "").toUpperCase().replace(/,/g, " · ") }}</div>
     <div class="lim"><slot name="limits" /></div>
     <input ref="input" type="file" multiple :accept="accept" hidden
            @change="onPick" />
@@ -16,6 +16,7 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT } from "vue-i18n";
 import { ref } from "vue";
 
 const props = defineProps<{ accept: string; disabled?: boolean }>();

@@ -1,18 +1,18 @@
 <template>
   <main class="page">
-    <PageHeader title="数据柜" desc="已通过校验的结构化数据，按技能归档，可导出对接下游。">
+    <PageHeader :title="$t('cabinet.data_cabinet')" :desc="$t('cabinet.validated_structured_data_archived_by_skill_exportable_for_downstream')">
       <select v-model="skill">
-        <option value="" disabled>选择技能</option>
+        <option value="" disabled>{{ $t('cabinet.select_skill') }}</option>
         <option v-for="s in skills" :key="s.skill_code" :value="s.skill_code">
           {{ s.name }}（{{ s.skill_code }}）</option>
       </select>
       <button v-if="skill && rows.length" class="primary"
-              @click="downloadFile(api.cabinetCsvUrl(skill), `${skill}.csv`)">导出 CSV</button>
+              @click="downloadFile(api.cabinetCsvUrl(skill), `${skill}.csv`)">{{ $t('cabinet.export_csv') }}</button>
     </PageHeader>
 
     <section class="card-panel">
       <div class="count-bar" v-if="skill && rows.length">
-        <span class="dim">{{ rows.length }} 条已通过数据</span>
+        <span class="dim">{{ rows.length }} {{ $t('cabinet.approved_records') }}</span>
       </div>
       <div class="table-scroll" v-if="rows.length">
         <table class="data-table">
@@ -25,11 +25,11 @@
         </table>
       </div>
       <Skeleton v-else-if="skill && isLoading" :rows="6" />
-      <EmptyState v-else-if="skill" title="该技能暂无已通过数据" glyph="📦">
-        文件在校验页「通过」后进入数据柜；直通（免人审）完成的文件也会出现在这里。
+      <EmptyState v-else-if="skill" :title="$t('cabinet.no_approved_data_for_this_skill_yet')" glyph="📦">
+        {{ $t('cabinet.files_enter_the_data_vault_after_being_approved_on') }}
       </EmptyState>
-      <EmptyState v-else title="选择一个技能" glyph="📦">
-        数据柜按技能归档。从右上角选择技能查看其结构化数据。
+      <EmptyState v-else :title="$t('cabinet.select_a_skill')" glyph="📦">
+        {{ $t('cabinet.the_data_vault_is_archived_by_skill_select_a') }}
       </EmptyState>
     </section>
   </main>

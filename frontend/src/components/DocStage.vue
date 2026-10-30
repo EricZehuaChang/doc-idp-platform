@@ -4,29 +4,29 @@
          左转/右转、适应页面、放大/缩小、1:1、重置; the toolbar and rail always
          stay upright because only page content is transformed -->
     <div class="tools">
-      <button title="左转 90°" @click="rotateBy(-90)">⟲</button>
-      <button title="右转 90°" @click="rotateBy(90)">⟳</button>
-      <button :title="fitWidth ? '适应宽度' : '适应页面'" :class="{ on: fitMode }" @click="fitMode = true">适应</button>
-      <button title="缩小" @click="zoomBy(-0.25)">－</button>
+      <button :title="$t('docStage.rotate_left_90')" @click="rotateBy(-90)">⟲</button>
+      <button :title="$t('docStage.rotate_right_90')" @click="rotateBy(90)">⟳</button>
+      <button :title="fitWidth ? $t('docStage.fit_width') : $t('docStage.fit_page')" :class="{ on: fitMode }" @click="fitMode = true">{{ $t('docStage.fit') }}</button>
+      <button :title="$t('docStage.zoom_out')" @click="zoomBy(-0.25)">－</button>
       <span class="zoom-val">{{ Math.round(zoom * 100) }}%</span>
-      <button title="放大" @click="zoomBy(0.25)">＋</button>
-      <button title="实际大小 (100%)" @click="zoomOne()">1:1</button>
-      <button title="重置视图（转正并适应页面）" @click="resetView()">重置</button>
-      <span v-if="loading" class="hint load">⏳ 正在加载原件…</span>
+      <button :title="$t('docStage.zoom_in')" @click="zoomBy(0.25)">＋</button>
+      <button :title="$t('docStage.actual_size_100')" @click="zoomOne()">1:1</button>
+      <button :title="$t('docStage.reset_view_straighten_and_fit_page')" @click="resetView()">{{ $t('docStage.reset') }}</button>
+      <span v-if="loading" class="hint load">{{ $t('docStage.loading_original') }}</span>
     </div>
 
     <!-- load failed: say why and offer the two ways out, instead of a blank pane.
          WP1: a missing original (original_missing) gets its own honest banner —
          retry cannot bring the blob back, so its buttons are not offered. -->
     <div v-if="loadError" class="stage-error">
-      <p class="err-title">{{ loadErrorCode === "original_missing" ? "原件不可用" : "原件加载失败" }}</p>
+      <p class="err-title">{{ loadErrorCode === "original_missing" ? $t('docStage.original_unavailable') : $t('docStage.failed_to_load_original') }}</p>
       <p class="err-msg">{{ loadError }}</p>
       <p v-if="loadErrorCode === 'original_missing'" class="err-msg">
-        该记录的原件数据缺失，重试或刷新无法恢复。
+        {{ $t('docStage.the_original_data_for_this_record_is_missing_retrying') }}
       </p>
       <div v-if="loadErrorCode !== 'original_missing'" class="err-acts">
-        <button class="primary" @click="retry">重试</button>
-        <button class="ghost" @click="downloadFile(saveUrl, fileName)">下载原件</button>
+        <button class="primary" @click="retry">{{ $t('docStage.retry') }}</button>
+        <button class="ghost" @click="downloadFile(saveUrl, fileName)">{{ $t('docStage.download_original') }}</button>
       </div>
     </div>
 
@@ -34,11 +34,11 @@
          inside the PDF (JBIG2/JPX) fails this way — pdf.js only warns, so
          without this banner the reviewer just sees white paper -->
     <div v-else-if="blankRender" class="stage-error warn">
-      <p class="err-title">原件渲染为空白</p>
-      <p class="err-msg">文档已下载但没有可显示的内容，可能是不支持的图像编码或空白页。</p>
+      <p class="err-title">{{ $t('docStage.original_renders_blank') }}</p>
+      <p class="err-msg">{{ $t('docStage.the_document_was_downloaded_but_has_no_displayable_content') }}</p>
       <div class="err-acts">
-        <button class="primary" @click="retry">重试</button>
-        <button class="ghost" @click="downloadFile(saveUrl, fileName)">下载原件</button>
+        <button class="primary" @click="retry">{{ $t('docStage.retry') }}</button>
+        <button class="ghost" @click="downloadFile(saveUrl, fileName)">{{ $t('docStage.download_original') }}</button>
       </div>
     </div>
 
@@ -46,10 +46,10 @@
          pane — every edge stays reachable, the outer page never scrolls -->
     <div class="stage-viewport" ref="viewportEl">
       <!-- page-number rail (需求5): forward-facing, sticky in both axes -->
-      <nav v-if="isPdf && pdfPages.length > 1" class="page-rail" aria-label="页码">
+      <nav v-if="isPdf && pdfPages.length > 1" class="page-rail" :aria-label="$t('docStage.page_number')">
         <button v-for="p in pdfPages" :key="p.no"
                 :class="{ on: p.no === activePage }"
-                :title="`第 ${p.no} 页`" @click="gotoPage(p.no)">{{ p.no }}</button>
+                :title="$t('docStage.page_number', { number: p.no })" @click="gotoPage(p.no)">{{ p.no }}</button>
       </nav>
 
       <div class="scaler">
@@ -83,10 +83,9 @@
       </div>
 
       <!-- non-renderable formats (e.g. OFD): honest fallback instead of a blank pane -->
-      <div v-else-if="!isPdf" class="no-preview dim">
-        该格式暂不支持原件预览 ——
-        <a href="#" @click.prevent="downloadFile(saveUrl, fileName)">下载原件</a>
-      </div>
+      <I18nT v-else-if="!isPdf" keypath="docStage.unsupported_preview" tag="div" scope="global" class="no-preview dim">
+        <template #download><a href="#" @click.prevent="downloadFile(saveUrl, fileName)">{{ $t('docStage.download_original') }}</a></template>
+      </I18nT>
 
       <!-- PDF: pdf.js canvas per page (replaces the M1 iframe), same overlay.
            Each page sits in an explicit placeholder sized to the rotated,
@@ -121,7 +120,7 @@
           </div>
           <!-- page chrome lives OUTSIDE the transformed box: it stays upright -->
           <span v-if="pageErrors[p.no]" class="page-err" :title="pageErrors[p.no]">
-            ⚠ 此页渲染失败</span>
+            {{ $t('docStage.failed_to_render_this_page') }}</span>
           <span class="page-no dim">{{ p.no }} / {{ pdfPages.length }}</span>
         </div>
       </template>
@@ -131,6 +130,7 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT } from "vue-i18n";
 // Document stage: renders the original (image or PDF via pdf.js), overlays the
 // located field boxes, and — in annotate mode — lets the reviewer drag a new
 // box (emitted in UDR page-pixel coordinates, the backend's bbox space).

@@ -1,0 +1,2774 @@
+[
+  {
+    "file": "frontend/src/components/ApiCallHistory.vue",
+    "line": 50,
+    "reason": "eager-setup-value",
+    "start": 2174,
+    "end": 2182,
+    "source": "印章签名检测",
+    "id": "139bf060ee9a1e76"
+  },
+  {
+    "file": "frontend/src/components/ApiCallHistory.vue",
+    "line": 50,
+    "reason": "eager-setup-value",
+    "start": 2202,
+    "end": 2208,
+    "source": "版面定位",
+    "id": "115c70ed8f2f2453"
+  },
+  {
+    "file": "frontend/src/components/DocStage.vue",
+    "line": 52,
+    "reason": "interpolated-template",
+    "start": 2782,
+    "end": 2795,
+    "source": "`第 ${p.no} 页`",
+    "id": "bed5fa911bb867e7"
+  },
+  {
+    "file": "frontend/src/components/DocStage.vue",
+    "line": 86,
+    "reason": "rich-text",
+    "start": 4691,
+    "end": 4852,
+    "source": "<div v-else-if=\"!isPdf\" class=\"no-preview dim\">\n        该格式暂不支持原件预览 ——\n        <a href=\"#\" @click.prevent=\"downloadFile(saveUrl, fileName)\">下载原件</a>\n      </div>",
+    "id": "ab5e748af8ae245a"
+  },
+  {
+    "file": "frontend/src/components/DropZone.vue",
+    "line": 5,
+    "reason": "interpolated-template",
+    "start": 255,
+    "end": 274,
+    "source": "`选择文件，支持 ${accept}`",
+    "id": "543b0596c9e7bc0f"
+  },
+  {
+    "file": "frontend/src/components/DropZone.vue",
+    "line": 10,
+    "reason": "rich-text",
+    "start": 527,
+    "end": 571,
+    "source": "<div class=\"main\">拖拽文件到此处，或<b>点击选择</b></div>",
+    "id": "e5420bc22d4c8a98"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 4274,
+    "end": 4279,
+    "source": "字符串",
+    "id": "6aaf0b1804f99cc5"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 4289,
+    "end": 4293,
+    "source": "数字",
+    "id": "c16ec9274e9d13d1"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 4301,
+    "end": 4305,
+    "source": "日期",
+    "id": "70d0c1b33626ba4b"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 4313,
+    "end": 4317,
+    "source": "枚举",
+    "id": "74bb506bbf618d7b"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 4326,
+    "end": 4330,
+    "source": "数组",
+    "id": "685bb17fdb2bcf71"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 87,
+    "reason": "interpolated-template",
+    "start": 5609,
+    "end": 5662,
+    "source": "`${value.length} 行 · ${props.field.columns.length} 列`",
+    "id": "cdb25e4d52a3532f"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5811,
+    "end": 5816,
+    "source": "待试抽",
+    "id": "068ef1d5557e23d1"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5827,
+    "end": 5832,
+    "source": "试抽中",
+    "id": "3e715cdb8af90c4a"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5843,
+    "end": 5848,
+    "source": "已定位",
+    "id": "47ed180be4d6f265"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5859,
+    "end": 5864,
+    "source": "未抽到",
+    "id": "cac20c4e98fdb8ea"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5873,
+    "end": 5878,
+    "source": "已过期",
+    "id": "2fe0e3339ac4d1bb"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5891,
+    "end": 5896,
+    "source": "示例值",
+    "id": "da48f98ba9142c13"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 90,
+    "reason": "eager-setup-value",
+    "start": 5906,
+    "end": 5911,
+    "source": "待复核",
+    "id": "6c42f72d9f67b4a7"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 105,
+    "reason": "pure-function-message",
+    "start": 6923,
+    "end": 6928,
+    "source": "待核对",
+    "id": "33df16b4afab2d5f"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 4,
+    "reason": "interpolated-template",
+    "start": 256,
+    "end": 310,
+    "source": "`${field.name || '未命名字段'}，${expanded ? '收起' : '展开'}编辑`",
+    "id": "0a771a0c650e3c9b"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 9,
+    "reason": "interpolated-template",
+    "start": 792,
+    "end": 822,
+    "source": "`${field.columns.length} 个列字段`",
+    "id": "e17017a6ba4b5b3c"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 14,
+    "reason": "interpolated-template",
+    "start": 1233,
+    "end": 1259,
+    "source": "`删除 ${field.name || '字段'}`",
+    "id": "60302d959f10b9a5"
+  },
+  {
+    "file": "frontend/src/components/FieldCard.vue",
+    "line": 14,
+    "reason": "interpolated-template",
+    "start": 1274,
+    "end": 1300,
+    "source": "`删除 ${field.name || '字段'}`",
+    "id": "60302d959f10b9a5"
+  },
+  {
+    "file": "frontend/src/components/FieldEditModal.vue",
+    "line": 136,
+    "reason": "pure-function-message",
+    "start": 6536,
+    "end": 6540,
+    "source": "合计",
+    "id": "e009c148d1890dac"
+  },
+  {
+    "file": "frontend/src/components/FieldEditModal.vue",
+    "line": 136,
+    "reason": "pure-function-message",
+    "start": 6542,
+    "end": 6546,
+    "source": "总计",
+    "id": "e8dc871a7fdee23b"
+  },
+  {
+    "file": "frontend/src/components/FieldEditor.vue",
+    "line": 136,
+    "reason": "pure-function-message",
+    "start": 7102,
+    "end": 7106,
+    "source": "合计",
+    "id": "e009c148d1890dac"
+  },
+  {
+    "file": "frontend/src/components/FieldEditor.vue",
+    "line": 136,
+    "reason": "pure-function-message",
+    "start": 7108,
+    "end": 7112,
+    "source": "总计",
+    "id": "e8dc871a7fdee23b"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsModal.vue",
+    "line": 94,
+    "reason": "interpolated-template",
+    "start": 3210,
+    "end": 3279,
+    "source": "`已${replaceAll.value ? \"替换为\" : \"追加\"} ${suggested.value.length} 个建议字段`",
+    "id": "5d0bb00eeeaaab88"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 56,
+    "reason": "pure-function-message",
+    "start": 3072,
+    "end": 3076,
+    "source": "文本",
+    "id": "dd81861811e57bf7"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 56,
+    "reason": "pure-function-message",
+    "start": 3086,
+    "end": 3090,
+    "source": "数字",
+    "id": "c16ec9274e9d13d1"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 56,
+    "reason": "pure-function-message",
+    "start": 3098,
+    "end": 3102,
+    "source": "日期",
+    "id": "70d0c1b33626ba4b"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 56,
+    "reason": "pure-function-message",
+    "start": 3110,
+    "end": 3114,
+    "source": "枚举",
+    "id": "74bb506bbf618d7b"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 56,
+    "reason": "pure-function-message",
+    "start": 3123,
+    "end": 3127,
+    "source": "数组",
+    "id": "685bb17fdb2bcf71"
+  },
+  {
+    "file": "frontend/src/components/GenerateFieldsPanel.vue",
+    "line": 4,
+    "reason": "interpolated-template",
+    "start": 181,
+    "end": 211,
+    "source": "`参考样本：${sampleName || '当前样本'}`",
+    "id": "f1594195c691cb63"
+  },
+  {
+    "file": "frontend/src/components/HelpPanel.vue",
+    "line": 36,
+    "reason": "rich-text",
+    "start": 1294,
+    "end": 1437,
+    "source": "<p><span class=\"badge-r\">R</span> 需人工复核\n           <span class=\"badge-inferred\">参考结果</span> 模型推断值（非原文抄录）\n           <code>c0-c3</code> 置信等级</p>",
+    "id": "e4c313f56cb962d5"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 79,
+    "reason": "interpolated-template",
+    "start": 2955,
+    "end": 3514,
+    "source": "`import requests, time\n\nBASE = \"${base}\"\nKEY = {\"Authorization\": \"Bearer \" + IDP_API_KEY}\n\nr = requests.post(f\"{BASE}/api/v1/process\", headers=KEY,\n                  files={\"files\": open(\"invoice.pdf\", \"rb\")},\n                  data={\"skill_code\": \"${props.skillCode}\"})\ntid = r.json()[\"transaction_id\"]\n\nwhile True:                                   # 或注册 Webhook 免轮询\n    st = requests.get(f\"{BASE}/api/v1/status/{tid}\", headers=KEY).json()\n    if st[\"status\"] not in (\"queued\", \"processing\"):\n        break\n    time.sleep(3)\nprint(st[\"files\"][0][\"result\"])`",
+    "id": "2044d5a9485481a8"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 99,
+    "reason": "interpolated-template",
+    "start": 3681,
+    "end": 3942,
+    "source": "`curl -X POST ${base}/api/v1/webhooks \\\\\n  -H \"Authorization: Bearer $IDP_API_KEY\" -H \"Content-Type: application/json\" \\\\\n  -d '{\"url\": \"https://你的系统/callback\", \"secret\": \"共享密钥\",\n       \"events\": [\"file.completed\", \"file.pending_verification\", \"file.passed\"]}'`",
+    "id": "25363e1626696398"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 104,
+    "reason": "eager-setup-value",
+    "start": 3961,
+    "end": 4115,
+    "source": "\"invoice_no\": {\n  \"$value\": \"INV-2026-001\",   // 抽取值\n  \"$confidence\": 3,           // 0-3 置信；极速模式为 null\n  \"$bbox\": [413, 265, 616, 274],\n  \"$pages\": 1\n}",
+    "id": "8c91d3da14f767d3"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 126,
+    "reason": "pure-function-message",
+    "start": 4705,
+    "end": 4712,
+    "source": "✓ 已复制",
+    "id": "bc860f5a90103162"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 126,
+    "reason": "pure-function-message",
+    "start": 4715,
+    "end": 4719,
+    "source": "复制",
+    "id": "63d90d977348ab1f"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 15,
+    "reason": "rich-text",
+    "start": 564,
+    "end": 779,
+    "source": "<p class=\"dim\">\n          所有请求携带 <code>Authorization: Bearer &lt;API密钥&gt;</code>。\n          密钥由管理员在 <router-link to=\"/settings\" @click=\"$emit('close')\">设置 → API 密钥</router-link>\n          创建（仅创建时显示一次）。\n        </p>",
+    "id": "fa1f7a934819c19b"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 36,
+    "reason": "rich-text",
+    "start": 1414,
+    "end": 1499,
+    "source": "<li><code>$confidence</code> 0-3 置信分级：3=原文精确定位；&lt;2 会进人工校验；极速模式返回 null（未评分，无定位）</li>",
+    "id": "d2abfa6aba2004cf"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 37,
+    "reason": "rich-text",
+    "start": 1510,
+    "end": 1577,
+    "source": "<li><code>$bbox</code>/<code>$pages</code> 字段在原件中的位置（校验界面高亮同源）</li>",
+    "id": "b034e428ae56e7a0"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 38,
+    "reason": "rich-text",
+    "start": 1588,
+    "end": 1660,
+    "source": "<li><code>inferred: true</code> 为模型推断值，附 <code>$reasoning</code> 理由</li>",
+    "id": "d55cb410dced6257"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 52,
+    "reason": "rich-text",
+    "start": 2106,
+    "end": 2272,
+    "source": "<p class=\"dim\">已通过数据可拉平导出：\n          <code>GET /api/v1/cabinet/{{ skillCode }}</code>（JSON）或\n          <code>GET /api/v1/cabinet/{{ skillCode }}/export.csv</code></p>",
+    "id": "89a59b8795bd04c9"
+  },
+  {
+    "file": "frontend/src/components/SkillApiModal.vue",
+    "line": 57,
+    "reason": "rich-text",
+    "start": 2297,
+    "end": 2419,
+    "source": "<footer class=\"dim\">\n        完整 OpenAPI 交互文档：<a :href=\"base + '/docs'\" target=\"_blank\">{{ base }}/docs</a>\n      </footer>",
+    "id": "827b03e6afd897ee"
+  },
+  {
+    "file": "frontend/src/components/SkillTemplateGallery.vue",
+    "line": 57,
+    "reason": "interpolated-template",
+    "start": 2244,
+    "end": 2277,
+    "source": "`已从模板「${t.name}」创建草稿，核对字段后发布即可使用`",
+    "id": "f53139ad3aa81c8d"
+  },
+  {
+    "file": "frontend/src/views/DashboardView.vue",
+    "line": 98,
+    "reason": "pure-function-message",
+    "start": 3994,
+    "end": 4000,
+    "source": "暂无数据",
+    "id": "497c85690c4cc0fc"
+  },
+  {
+    "file": "frontend/src/views/HomeView.vue",
+    "line": 25,
+    "reason": "rich-text",
+    "start": 1153,
+    "end": 1231,
+    "source": "<span>📋 有 <strong>{{ stats!.pending_verification }}</strong> 份文件等待人工校验</span>",
+    "id": "3fb7d8129d101bb5"
+  },
+  {
+    "file": "frontend/src/views/MyApiKeysView.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 2727,
+    "end": 2734,
+    "source": "提交与查询",
+    "id": "633bfb14871f2b3a"
+  },
+  {
+    "file": "frontend/src/views/MyApiKeysView.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 2764,
+    "end": 2772,
+    "source": "印章签名检测",
+    "id": "139bf060ee9a1e76"
+  },
+  {
+    "file": "frontend/src/views/MyApiKeysView.vue",
+    "line": 61,
+    "reason": "eager-setup-value",
+    "start": 2802,
+    "end": 2808,
+    "source": "版面定位",
+    "id": "115c70ed8f2f2453"
+  },
+  {
+    "file": "frontend/src/views/MyApiKeysView.vue",
+    "line": 91,
+    "reason": "interpolated-template",
+    "start": 3804,
+    "end": 3836,
+    "source": "`吊销 Key「${k.name}」？使用它的终端将立即失效。`",
+    "id": "1f9b7ec78e13da27"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 259,
+    "reason": "interpolated-template",
+    "start": 13435,
+    "end": 13490,
+    "source": "`待审批次 ${queuePos.value + 1} / ${queueIds.value.length}`",
+    "id": "3bd67334067ebc23"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 267,
+    "reason": "eager-setup-value",
+    "start": 13775,
+    "end": 13780,
+    "source": "待校验",
+    "id": "36931166c8f9de3e"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 267,
+    "reason": "eager-setup-value",
+    "start": 13793,
+    "end": 13798,
+    "source": "已完成",
+    "id": "f28461bb49c85647"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 267,
+    "reason": "eager-setup-value",
+    "start": 13808,
+    "end": 13813,
+    "source": "已通过",
+    "id": "3fa9b684903a5ed7"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 268,
+    "reason": "eager-setup-value",
+    "start": 13827,
+    "end": 13832,
+    "source": "已拒绝",
+    "id": "f098218a3032a625"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 268,
+    "reason": "eager-setup-value",
+    "start": 13841,
+    "end": 13847,
+    "source": "处理失败",
+    "id": "ae173945fb80b040"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 268,
+    "reason": "eager-setup-value",
+    "start": 13861,
+    "end": 13866,
+    "source": "处理中",
+    "id": "694b71bc8013ff43"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 268,
+    "reason": "eager-setup-value",
+    "start": 13875,
+    "end": 13880,
+    "source": "已拆分",
+    "id": "11f0905b342f5d54"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 383,
+    "reason": "interpolated-template",
+    "start": 19221,
+    "end": 19275,
+    "source": "`；文档共 ${res.page_count} 页，仅检测前 ${res.pages_scanned} 页`",
+    "id": "b6c19ee2c74f6191"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 386,
+    "reason": "interpolated-template",
+    "start": 19370,
+    "end": 19423,
+    "source": "`检测到 ${seals} 处印章、${sigs} 处签名（${res.detector}）${cut}`",
+    "id": "21db17a479746f27"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 387,
+    "reason": "interpolated-template",
+    "start": 19432,
+    "end": 19449,
+    "source": "`未检测到印章/签名${cut}`",
+    "id": "a8061863af4e3108"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 457,
+    "reason": "interpolated-template",
+    "start": 22333,
+    "end": 22345,
+    "source": "`被 ${by} 锁定`",
+    "id": "0e88daf896c76aa4"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 545,
+    "reason": "interpolated-template",
+    "start": 25588,
+    "end": 25613,
+    "source": "`已为 ${name} 重画定位框（保存后生效）`",
+    "id": "9f476446b305508e"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 556,
+    "reason": "interpolated-template",
+    "start": 25894,
+    "end": 25939,
+    "source": "`已为第 ${Number(ri) + 1} 行「${col}」重画定位框（保存后生效）`",
+    "id": "0b265a78ac112d8f"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 702,
+    "reason": "interpolated-template",
+    "start": 32336,
+    "end": 32363,
+    "source": "`已保存 ${changed.length} 处修正`",
+    "id": "5b42bdaa9d4ba2e1"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 829,
+    "reason": "interpolated-template",
+    "start": 36968,
+    "end": 37021,
+    "source": "`本文件还有 ${refreshed.data?.pending_children ?? 0} 份待校验`",
+    "id": "3d3415ee061e72b9"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 855,
+    "reason": "pure-function-message",
+    "start": 38091,
+    "end": 38119,
+    "source": "有未保存的修改，确定离开？（点“取消”可返回并保存）",
+    "id": "e4355388eac9b364"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 861,
+    "reason": "pure-function-message",
+    "start": 38378,
+    "end": 38408,
+    "source": "有未保存的修改，确定切换文件？（点“取消”可返回并保存）",
+    "id": "e0a1e01c03314c99"
+  },
+  {
+    "file": "frontend/src/views/ReviewView.vue",
+    "line": 13,
+    "reason": "interpolated-template",
+    "start": 733,
+    "end": 763,
+    "source": "`复制 file_id：${detail.file_id}`",
+    "id": "05d372cf9f5734b9"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 502,
+    "reason": "eager-setup-value",
+    "start": 24125,
+    "end": 24132,
+    "source": "提交与查询",
+    "id": "633bfb14871f2b3a"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 502,
+    "reason": "eager-setup-value",
+    "start": 24162,
+    "end": 24170,
+    "source": "印章签名检测",
+    "id": "139bf060ee9a1e76"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 502,
+    "reason": "eager-setup-value",
+    "start": 24200,
+    "end": 24206,
+    "source": "版面定位",
+    "id": "115c70ed8f2f2453"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 543,
+    "reason": "interpolated-template",
+    "start": 25785,
+    "end": 25804,
+    "source": "`邀请已重发至 ${u.email}`",
+    "id": "ab736b376fe3cf31"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 555,
+    "reason": "interpolated-template",
+    "start": 26247,
+    "end": 26275,
+    "source": "`为 ${u.email} 设置新密码（至少 8 位）`",
+    "id": "f1b10d9101c6e565"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 562,
+    "reason": "interpolated-template",
+    "start": 26515,
+    "end": 26551,
+    "source": "`已重置 ${u.email}：下次登录必须改密，旧登录会话已全部失效`",
+    "id": "3843411cc7495f93"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 568,
+    "reason": "eager-setup-value",
+    "start": 26681,
+    "end": 26688,
+    "source": "登录与账号",
+    "id": "e428a1e90b9d9782"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 568,
+    "reason": "eager-setup-value",
+    "start": 26698,
+    "end": 26702,
+    "source": "技能",
+    "id": "99aea2f9131ad6da"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 568,
+    "reason": "eager-setup-value",
+    "start": 26712,
+    "end": 26716,
+    "source": "审核",
+    "id": "948c5c16d8fec64d"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 569,
+    "reason": "eager-setup-value",
+    "start": 26730,
+    "end": 26737,
+    "source": "设置与密钥",
+    "id": "786bfbfe08faa082"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 569,
+    "reason": "eager-setup-value",
+    "start": 26748,
+    "end": 26752,
+    "source": "计费",
+    "id": "251d9be11de05a50"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 569,
+    "reason": "eager-setup-value",
+    "start": 26763,
+    "end": 26767,
+    "source": "处理",
+    "id": "e99a6717b6917534"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 571,
+    "reason": "eager-setup-value",
+    "start": 26837,
+    "end": 26844,
+    "source": "任务与原件",
+    "id": "3ed147a514d31fb9"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 571,
+    "reason": "eager-setup-value",
+    "start": 26857,
+    "end": 26863,
+    "source": "产出文件",
+    "id": "720a642d1b5653ba"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 571,
+    "reason": "eager-setup-value",
+    "start": 26874,
+    "end": 26879,
+    "source": "数据柜",
+    "id": "3204b392e853c308"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 571,
+    "reason": "eager-setup-value",
+    "start": 26885,
+    "end": 26893,
+    "source": "个人 Key",
+    "id": "f717a286354017a2"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 597,
+    "reason": "eager-setup-value",
+    "start": 27833,
+    "end": 27839,
+    "source": "登录失败",
+    "id": "e4343921c928a856"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 597,
+    "reason": "eager-setup-value",
+    "start": 27868,
+    "end": 27879,
+    "source": "更新 API 授权",
+    "id": "92c6aa9685d81150"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 598,
+    "reason": "eager-setup-value",
+    "start": 27902,
+    "end": 27908,
+    "source": "提交任务",
+    "id": "36d5f450ffc80770"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 598,
+    "reason": "eager-setup-value",
+    "start": 27930,
+    "end": 27936,
+    "source": "下载原件",
+    "id": "42deec838ca84173"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 598,
+    "reason": "eager-setup-value",
+    "start": 27962,
+    "end": 27968,
+    "source": "下载产出",
+    "id": "bf48712167600f96"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 599,
+    "reason": "eager-setup-value",
+    "start": 27992,
+    "end": 27999,
+    "source": "导出数据柜",
+    "id": "f4d9732f8cbea5df"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 599,
+    "reason": "eager-setup-value",
+    "start": 28026,
+    "end": 28034,
+    "source": "修改识别字段",
+    "id": "3ebaaefdec287e70"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 600,
+    "reason": "eager-setup-value",
+    "start": 28052,
+    "end": 28056,
+    "source": "登录",
+    "id": "1e2df9c3075ae9e4"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 600,
+    "reason": "eager-setup-value",
+    "start": 28077,
+    "end": 28085,
+    "source": "SSO 登录",
+    "id": "ed5e2c64183f4e17"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 600,
+    "reason": "eager-setup-value",
+    "start": 28105,
+    "end": 28111,
+    "source": "激活账号",
+    "id": "d47a6c915302f62c"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 601,
+    "reason": "eager-setup-value",
+    "start": 28136,
+    "end": 28142,
+    "source": "创建用户",
+    "id": "37c825ff40e7e419"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 601,
+    "reason": "eager-setup-value",
+    "start": 28165,
+    "end": 28171,
+    "source": "变更用户",
+    "id": "3ebf3f92888d00d1"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 601,
+    "reason": "eager-setup-value",
+    "start": 28193,
+    "end": 28199,
+    "source": "发送邀请",
+    "id": "3a3bcf41a1ab60fc"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 602,
+    "reason": "eager-setup-value",
+    "start": 28228,
+    "end": 28238,
+    "source": "修改密码（本人）",
+    "id": "f4312d4e53d26ddd"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 602,
+    "reason": "eager-setup-value",
+    "start": 28263,
+    "end": 28273,
+    "source": "重置密码（自助）",
+    "id": "ecf5f108321a6174"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 603,
+    "reason": "eager-setup-value",
+    "start": 28306,
+    "end": 28317,
+    "source": "重置密码（管理员）",
+    "id": "51d588b0ff71b73f"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 604,
+    "reason": "eager-setup-value",
+    "start": 28339,
+    "end": 28345,
+    "source": "新建技能",
+    "id": "df43367f3ee8bbcc"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 604,
+    "reason": "eager-setup-value",
+    "start": 28367,
+    "end": 28373,
+    "source": "发布版本",
+    "id": "cbfe181351c872eb"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 605,
+    "reason": "eager-setup-value",
+    "start": 28401,
+    "end": 28407,
+    "source": "启停技能",
+    "id": "a87860922e30c80a"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 605,
+    "reason": "eager-setup-value",
+    "start": 28427,
+    "end": 28433,
+    "source": "删除技能",
+    "id": "615d1b33ea0647f0"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 606,
+    "reason": "eager-setup-value",
+    "start": 28456,
+    "end": 28462,
+    "source": "恢复技能",
+    "id": "3b8f62c7ed43be2d"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 606,
+    "reason": "eager-setup-value",
+    "start": 28490,
+    "end": 28496,
+    "source": "删除版本",
+    "id": "885b72909194b1a9"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 606,
+    "reason": "eager-setup-value",
+    "start": 28517,
+    "end": 28523,
+    "source": "导入技能",
+    "id": "5247a3420a822af4"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 607,
+    "reason": "eager-setup-value",
+    "start": 28544,
+    "end": 28550,
+    "source": "分配审单",
+    "id": "7f3199749023afc5"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 607,
+    "reason": "eager-setup-value",
+    "start": 28569,
+    "end": 28575,
+    "source": "审核通过",
+    "id": "70328c527b65b695"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 607,
+    "reason": "eager-setup-value",
+    "start": 28596,
+    "end": 28602,
+    "source": "审核驳回",
+    "id": "b843e6f6f9d62a63"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 608,
+    "reason": "eager-setup-value",
+    "start": 28623,
+    "end": 28629,
+    "source": "删除任务",
+    "id": "29dfebea0fdac1f6"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 609,
+    "reason": "eager-setup-value",
+    "start": 28657,
+    "end": 28667,
+    "source": "创建个人 Key",
+    "id": "82f632e0603f8032"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 609,
+    "reason": "eager-setup-value",
+    "start": 28693,
+    "end": 28703,
+    "source": "吊销个人 Key",
+    "id": "03364c5a81d22884"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 610,
+    "reason": "eager-setup-value",
+    "start": 28735,
+    "end": 28745,
+    "source": "创建应用 Key",
+    "id": "99656b60bee572ea"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 610,
+    "reason": "eager-setup-value",
+    "start": 28775,
+    "end": 28785,
+    "source": "吊销应用 Key",
+    "id": "62dab895cfe240ce"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 611,
+    "reason": "eager-setup-value",
+    "start": 28818,
+    "end": 28829,
+    "source": "分配 Key 额度",
+    "id": "4d0fe4d0bae63a79"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 611,
+    "reason": "eager-setup-value",
+    "start": 28862,
+    "end": 28875,
+    "source": "切换 Key 额度模式",
+    "id": "977ff74dfdd59f9c"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 612,
+    "reason": "eager-setup-value",
+    "start": 28900,
+    "end": 28908,
+    "source": "设置模型密钥",
+    "id": "6ba573c16eecbe91"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 612,
+    "reason": "eager-setup-value",
+    "start": 28935,
+    "end": 28943,
+    "source": "移除模型密钥",
+    "id": "57ac070cd4e3bc55"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 613,
+    "reason": "eager-setup-value",
+    "start": 28979,
+    "end": 28988,
+    "source": "设置自定义通道",
+    "id": "4290379c890eb8e5"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 613,
+    "reason": "eager-setup-value",
+    "start": 29026,
+    "end": 29035,
+    "source": "移除自定义通道",
+    "id": "6075b22f7255c211"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 614,
+    "reason": "eager-setup-value",
+    "start": 29064,
+    "end": 29075,
+    "source": "更新 SSO 配置",
+    "id": "85d5cf64e03bfbc5"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 614,
+    "reason": "eager-setup-value",
+    "start": 29102,
+    "end": 29110,
+    "source": "更新邮件配置",
+    "id": "eed9b57c1d24222c"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 615,
+    "reason": "eager-setup-value",
+    "start": 29141,
+    "end": 29148,
+    "source": "导出技能包",
+    "id": "d0c286b6bcb69c68"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 615,
+    "reason": "eager-setup-value",
+    "start": 29177,
+    "end": 29184,
+    "source": "导入技能包",
+    "id": "fadf512fe6934879"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 616,
+    "reason": "eager-setup-value",
+    "start": 29216,
+    "end": 29224,
+    "source": "固定引用版本",
+    "id": "82cff1c670e4dc52"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 628,
+    "reason": "eager-setup-value",
+    "start": 29558,
+    "end": 29562,
+    "source": "计量",
+    "id": "31ca5a76ec838963"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 628,
+    "reason": "eager-setup-value",
+    "start": 29572,
+    "end": 29576,
+    "source": "冻结",
+    "id": "0eafcb149bcdb501"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 628,
+    "reason": "eager-setup-value",
+    "start": 29586,
+    "end": 29590,
+    "source": "实扣",
+    "id": "f52e50abb16aa41d"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 628,
+    "reason": "eager-setup-value",
+    "start": 29602,
+    "end": 29606,
+    "source": "解冻",
+    "id": "33f59bbd271e3acb"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 629,
+    "reason": "eager-setup-value",
+    "start": 29617,
+    "end": 29621,
+    "source": "充值",
+    "id": "2c363db2eabcba80"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 629,
+    "reason": "eager-setup-value",
+    "start": 29631,
+    "end": 29635,
+    "source": "调整",
+    "id": "f65c42a2540befe5"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 629,
+    "reason": "eager-setup-value",
+    "start": 29643,
+    "end": 29647,
+    "source": "赠送",
+    "id": "daabc364509c2f1b"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 629,
+    "reason": "eager-setup-value",
+    "start": 29663,
+    "end": 29671,
+    "source": "Key 划拨",
+    "id": "16a102c4b534787f"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 685,
+    "reason": "interpolated-template",
+    "start": 31594,
+    "end": 31628,
+    "source": "`已入账 ${topupAmount.value} credits`",
+    "id": "3b1474af39329628"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 728,
+    "reason": "interpolated-template",
+    "start": 33126,
+    "end": 33149,
+    "source": "`${name} 租户密钥已保存（加密存储）`",
+    "id": "f061d0c8355ad0ce"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 735,
+    "reason": "interpolated-template",
+    "start": 33309,
+    "end": 33333,
+    "source": "`${name} 租户密钥已移除，回退平台密钥`",
+    "id": "583709eb8a90c11b"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 758,
+    "reason": "interpolated-template",
+    "start": 34099,
+    "end": 34140,
+    "source": "`通道 ${draft.name.trim()} 已登记，建议点「测试连接」验证`",
+    "id": "160fc26fa33e5c84"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 766,
+    "reason": "interpolated-template",
+    "start": 34440,
+    "end": 34494,
+    "source": "`删除通道 ${name}？绑定了它的技能下次运行会报「provider not configured」。`",
+    "id": "2f51417843933d87"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 770,
+    "reason": "interpolated-template",
+    "start": 34572,
+    "end": 34588,
+    "source": "`通道 ${name} 已删除`",
+    "id": "1d23611a6343bb81"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 779,
+    "reason": "concatenation",
+    "start": 34822,
+    "end": 34923,
+    "source": "`✓ ${name}（${r.model}）调通，模型返回：${JSON.stringify(r.reply)}`\n      + `\\n  用量：${JSON.stringify(r.usage)}`",
+    "id": "d5e60d047fbae9a1"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 781,
+    "reason": "interpolated-template",
+    "start": 34938,
+    "end": 34950,
+    "source": "`${name} 调通`",
+    "id": "8b062ab5fc80c1f6"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 783,
+    "reason": "interpolated-template",
+    "start": 34989,
+    "end": 35051,
+    "source": "`✗ ${name} 调用失败：${e instanceof Error ? e.message : String(e)}`",
+    "id": "556d481aada60ac2"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 829,
+    "reason": "interpolated-template",
+    "start": 36834,
+    "end": 36869,
+    "source": "`「${k.name}」改为独立额度——请划拨预算，用尽独立 402`",
+    "id": "24d884c12089b9f1"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 830,
+    "reason": "interpolated-template",
+    "start": 36885,
+    "end": 36905,
+    "source": "`「${k.name}」改回共享池计费`",
+    "id": "f948142e3d27b474"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 839,
+    "reason": "interpolated-template",
+    "start": 37167,
+    "end": 37200,
+    "source": "`已划拨 ${amt} credits 给「${k.name}」`",
+    "id": "bdbae8e0e652df21"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 839,
+    "reason": "interpolated-template",
+    "start": 37203,
+    "end": 37224,
+    "source": "`已回收 ${-amt} credits`",
+    "id": "7223a1860600003b"
+  },
+  {
+    "file": "frontend/src/views/SettingsView.vue",
+    "line": 876,
+    "reason": "interpolated-template",
+    "start": 38375,
+    "end": 38405,
+    "source": "`吊销密钥「${k.name}」？使用它的集成将立即失效。`",
+    "id": "dbdcc073e436ce80"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 786,
+    "reason": "pure-function-message",
+    "start": 45684,
+    "end": 45688,
+    "source": "规则",
+    "id": "1123245d1bed08b2"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 786,
+    "reason": "pure-function-message",
+    "start": 45697,
+    "end": 45701,
+    "source": "模型",
+    "id": "c98e118e0a43f078"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 786,
+    "reason": "pure-function-message",
+    "start": 45711,
+    "end": 45716,
+    "source": "待复核",
+    "id": "6c42f72d9f67b4a7"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1066,
+    "reason": "pure-function-message",
+    "start": 57069,
+    "end": 57080,
+    "source": "示例扫描件.pdf",
+    "id": "195bc91979cedb7d"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1163,
+    "reason": "interpolated-template",
+    "start": 60810,
+    "end": 60840,
+    "source": "`（当前 v${m.published_version}）`",
+    "id": "8f2dd815ecec0ddf"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1177,
+    "reason": "eager-setup-value",
+    "start": 61314,
+    "end": 61320,
+    "source": "单份文档",
+    "id": "389eecaaa3ddbff5"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1177,
+    "reason": "eager-setup-value",
+    "start": 61328,
+    "end": 61350,
+    "source": "一个文件就是一份文档，只判断类别，不拆分",
+    "id": "869f0f7e4e70b4ea"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1178,
+    "reason": "eager-setup-value",
+    "start": 61381,
+    "end": 61389,
+    "source": "多种单据混合",
+    "id": "fbf918e7995c2480"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1178,
+    "reason": "eager-setup-value",
+    "start": 61397,
+    "end": 61422,
+    "source": "一个文件含多份、不同类型的单据，逐页分类并拆分",
+    "id": "a1a31b6d6557d016"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1179,
+    "reason": "eager-setup-value",
+    "start": 61469,
+    "end": 61482,
+    "source": "同类单据 · 每页一份",
+    "id": "9381ec0894ee2a03"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1180,
+    "reason": "eager-setup-value",
+    "start": 61494,
+    "end": 61511,
+    "source": "每页都是一份独立单据，类别相同",
+    "id": "84088928d93e451e"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1181,
+    "reason": "eager-setup-value",
+    "start": 61557,
+    "end": 61569,
+    "source": "同类单据 · 可跨页",
+    "id": "bc63f1774903e8a6"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1182,
+    "reason": "eager-setup-value",
+    "start": 61581,
+    "end": 61598,
+    "source": "同一类单据，一份可能连续占多页",
+    "id": "05b3a2804f8545b9"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1217,
+    "reason": "pure-function-message",
+    "start": 63192,
+    "end": 63203,
+    "source": "Other（兜底）",
+    "id": "f015bacf48a7224e"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1217,
+    "reason": "pure-function-message",
+    "start": 63221,
+    "end": 63228,
+    "source": "未命名类别",
+    "id": "da3c7e1e4c7f0f5f"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1219,
+    "reason": "pure-function-message",
+    "start": 63321,
+    "end": 63325,
+    "source": "引用",
+    "id": "e0ec651f0dae7cf3"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1220,
+    "reason": "pure-function-message",
+    "start": 63371,
+    "end": 63376,
+    "source": "仅分类",
+    "id": "3401c21cea3e2c84"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1221,
+    "reason": "interpolated-template",
+    "start": 63387,
+    "end": 63410,
+    "source": "`${c.fields.length} 字段`",
+    "id": "405772a9db9c3533"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1225,
+    "reason": "interpolated-template",
+    "start": 63536,
+    "end": 63557,
+    "source": "`引用技能「${refName(c)}」`",
+    "id": "55cfe41f7cd00d28"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1225,
+    "reason": "pure-function-message",
+    "start": 63560,
+    "end": 63573,
+    "source": "引用已有技能（未选择）",
+    "id": "faca58ce03b101c5"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1226,
+    "reason": "pure-function-message",
+    "start": 63619,
+    "end": 63628,
+    "source": "仅分类，不提取",
+    "id": "6cd41875687e864c"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1227,
+    "reason": "interpolated-template",
+    "start": 63639,
+    "end": 63670,
+    "source": "`本技能内配置 ${c.fields.length} 个字段`",
+    "id": "11b4613286f6ccea"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1235,
+    "reason": "pure-function-message",
+    "start": 63922,
+    "end": 63928,
+    "source": "规则优先",
+    "id": "8185d179e796df2f"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1235,
+    "reason": "pure-function-message",
+    "start": 63931,
+    "end": 63937,
+    "source": "模型提取",
+    "id": "c8f924ed1c896309"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1237,
+    "reason": "interpolated-template",
+    "start": 64009,
+    "end": 64073,
+    "source": "`平台默认${activeProvider.value ? `（${activeProvider.value}）` : \"\"}`",
+    "id": "c188b12cc7d6bb0c"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1241,
+    "reason": "interpolated-template",
+    "start": 64187,
+    "end": 64226,
+    "source": "`与抽取模型相同 · ${modelLabel(mb.extractor)}`",
+    "id": "712bc3a8d62c4c34"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1246,
+    "reason": "pure-function-message",
+    "start": 64411,
+    "end": 64430,
+    "source": "生效配置：只分类，不调用抽取模型。",
+    "id": "e69097814f640d10"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1249,
+    "reason": "pure-function-message",
+    "start": 64517,
+    "end": 64547,
+    "source": "选择要复用的技能后，这里显示它实际使用的模型与提取通道。",
+    "id": "6760c39ea8b783f5"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1250,
+    "reason": "concatenation",
+    "start": 64560,
+    "end": 64684,
+    "source": "`生效配置：沿用「${m.name}」自己的抽取模型 ${modelLabel(m.extractor)}、`\n      + `提取通道「${channelLabel(m.extraction_channel)}」；复核策略与解析器沿用本技能。`",
+    "id": "e5cd77dfe85488d1"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1253,
+    "reason": "concatenation",
+    "start": 64699,
+    "end": 64819,
+    "source": "`生效配置：本技能的抽取模型 ${modelLabel(p.model_binding.extractor)}、`\n    + `提取通道「${channelLabel(p.extraction_channel)}」（在「基础」中设置）。`",
+    "id": "c6aa3ce38bb3f29f"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1261,
+    "reason": "interpolated-template",
+    "start": 65087,
+    "end": 65118,
+    "source": "`固定使用 v${v}：原技能之后发布的新版本不影响本技能。`",
+    "id": "ff251670721834b0"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1262,
+    "reason": "concatenation",
+    "start": 65125,
+    "end": 65207,
+    "source": "\"跟随最新发布版：本技能发布时锁定原技能当时的最新发布版；原技能再发布新版本后，\"\n      + \"本技能需重新发布才会使用，测试页试跑始终用原技能最新发布版。\"",
+    "id": "b82b4c8b1cc1a7b8"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1264,
+    "reason": "interpolated-template",
+    "start": 65218,
+    "end": 65266,
+    "source": "`${pin}原技能可能被多个技能共享，在原技能里修改并发布会按上述规则影响所有引用它的技能。`",
+    "id": "948de34ecd7dc3af"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1385,
+    "reason": "interpolated-template",
+    "start": 71034,
+    "end": 71086,
+    "source": "`样本上传失败：${err instanceof Error ? err.message : err}`",
+    "id": "fa8aefbca07a0398"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1426,
+    "reason": "interpolated-template",
+    "start": 72630,
+    "end": 72680,
+    "source": "`运行失败：${err instanceof Error ? err.message : err}`",
+    "id": "48ca8870351fa16f"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1484,
+    "reason": "interpolated-template",
+    "start": 74927,
+    "end": 74997,
+    "source": "`测试状态或结果加载失败：${err instanceof Error ? err.message : err}。请在运行历史中重试查看。`",
+    "id": "27bb860155e5340b"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1510,
+    "reason": "pure-function-message",
+    "start": 75936,
+    "end": 75940,
+    "source": "失败",
+    "id": "28384d7afd2e4fa6"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1512,
+    "reason": "interpolated-template",
+    "start": 76010,
+    "end": 76030,
+    "source": "`完成（待复核 ${reviews}）`",
+    "id": "50eddaa55846d47e"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1512,
+    "reason": "pure-function-message",
+    "start": 76033,
+    "end": 76042,
+    "source": "完成（待复核）",
+    "id": "d9e5320a81a385ba"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1513,
+    "reason": "interpolated-template",
+    "start": 76090,
+    "end": 76110,
+    "source": "`完成（待复核 ${reviews}）`",
+    "id": "50eddaa55846d47e"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1513,
+    "reason": "pure-function-message",
+    "start": 76113,
+    "end": 76117,
+    "source": "完成",
+    "id": "c0b3fbff51ccc40b"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1514,
+    "reason": "pure-function-message",
+    "start": 76178,
+    "end": 76182,
+    "source": "完成",
+    "id": "c0b3fbff51ccc40b"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1514,
+    "reason": "pure-function-message",
+    "start": 76185,
+    "end": 76191,
+    "source": "运行中…",
+    "id": "14d9f2d830adb2f6"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1563,
+    "reason": "interpolated-template",
+    "start": 78230,
+    "end": 78284,
+    "source": "`提取结果加载失败：${err instanceof Error ? err.message : err}`",
+    "id": "6b9dc3095cdd8af2"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1610,
+    "reason": "interpolated-template",
+    "start": 80082,
+    "end": 80134,
+    "source": "`详情加载失败：${err instanceof Error ? err.message : err}`",
+    "id": "9b71b72a0a02e48e"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1678,
+    "reason": "interpolated-template",
+    "start": 82492,
+    "end": 82544,
+    "source": "`载入运行失败：${err instanceof Error ? err.message : err}`",
+    "id": "be78a1f5992141ca"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1733,
+    "reason": "pure-function-message",
+    "start": 85487,
+    "end": 85492,
+    "source": "已定位",
+    "id": "47ed180be4d6f265"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1733,
+    "reason": "pure-function-message",
+    "start": 85495,
+    "end": 85500,
+    "source": "已提取",
+    "id": "2945d7238417abb5"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1847,
+    "reason": "pure-function-message",
+    "start": 90351,
+    "end": 90357,
+    "source": "无需复核",
+    "id": "c84a44ed302d8aec"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1848,
+    "reason": "pure-function-message",
+    "start": 90385,
+    "end": 90391,
+    "source": "全部复核",
+    "id": "eb2b2d38dcab1438"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1849,
+    "reason": "interpolated-template",
+    "start": 90404,
+    "end": 90426,
+    "source": "`${th ?? 2} 分以下复核（默认）`",
+    "id": "93b4fe015756a9e7"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1850,
+    "reason": "pure-function-message",
+    "start": 90473,
+    "end": 90477,
+    "source": "基础",
+    "id": "89e5e14c8db996da"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1854,
+    "reason": "interpolated-template",
+    "start": 90612,
+    "end": 90745,
+    "source": "`${(p.categories ?? []).length} 个类别 · ${\n             LAYOUTS.find((l) => l.value === (p.document_layout ?? \"single\"))?.label ?? \"\"}`",
+    "id": "22564a609b6c7e9b"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1862,
+    "reason": "interpolated-template",
+    "start": 91021,
+    "end": 91083,
+    "source": "`${(p.categories ?? []).length} 个类别 / ${catFieldCount(p)} 个字段`",
+    "id": "37032843d2f89226"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1863,
+    "reason": "interpolated-template",
+    "start": 91094,
+    "end": 91163,
+    "source": "`${p.fields.length} 个字段${p.output_shape === \"list\" ? \" · List\" : \"\"}`",
+    "id": "e0c85518d2da574c"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1868,
+    "reason": "pure-function-message",
+    "start": 91384,
+    "end": 91390,
+    "source": "文件产出",
+    "id": "aa7aa048d7225af9"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1869,
+    "reason": "pure-function-message",
+    "start": 91414,
+    "end": 91421,
+    "source": "未开启下载",
+    "id": "f4c2eec3471d5793"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1872,
+    "reason": "pure-function-message",
+    "start": 91573,
+    "end": 91579,
+    "source": "文件产出",
+    "id": "aa7aa048d7225af9"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1873,
+    "reason": "interpolated-template",
+    "start": 91601,
+    "end": 91613,
+    "source": "`已开启 ${n} 项`",
+    "id": "a5cc0a6fedc7d0f1"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1910,
+    "reason": "pure-function-message",
+    "start": 92844,
+    "end": 92865,
+    "source": "有未保存的修改，离开将丢失。确定离开？",
+    "id": "386b3a7d21a45a6c"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1953,
+    "reason": "interpolated-template",
+    "start": 94677,
+    "end": 94707,
+    "source": "`跳过 ${skipped} 个同名字段（未覆盖你的修改）`",
+    "id": "1afdbd917dcdf523"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 1973,
+    "reason": "interpolated-template",
+    "start": 95307,
+    "end": 95357,
+    "source": "`清空全部 ${curFields.value.length} 个字段？可用「撤销上次生成」恢复。`",
+    "id": "2524914a14eec44b"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2005,
+    "reason": "interpolated-template",
+    "start": 96642,
+    "end": 96664,
+    "source": "`字段名称重复：${field.name}`",
+    "id": "82e99211909f8634"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2027,
+    "reason": "interpolated-template",
+    "start": 97562,
+    "end": 97614,
+    "source": "`技能已创建，样本关联失败：${e instanceof Error ? e.message : e}`",
+    "id": "cc90937e0ea63dba"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2042,
+    "reason": "interpolated-template",
+    "start": 98284,
+    "end": 98324,
+    "source": "`v${selectedVersion.value} 草稿已保存（未新增版本）`",
+    "id": "ccce04bb352a32ae"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2048,
+    "reason": "interpolated-template",
+    "start": 98578,
+    "end": 98630,
+    "source": "`已以 v${selectedVersion.value} 为底新建 v${r.version} 草稿`",
+    "id": "b5b8a21f8a94380a"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2062,
+    "reason": "interpolated-template",
+    "start": 99145,
+    "end": 99167,
+    "source": "`已新建 v${r.version} 草稿`",
+    "id": "1444f5caf32b40df"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2071,
+    "reason": "interpolated-template",
+    "start": 99476,
+    "end": 99516,
+    "source": "`v${selectedVersion.value} 已发布（旧版本自动归档）`",
+    "id": "3ae93469aeb133b7"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2096,
+    "reason": "concatenation",
+    "start": 100182,
+    "end": 100295,
+    "source": "`确定删除 v${selectedVersion.value}（${verLabel(selectedStatus.value ?? \"\")}）？\\n`\n    + \"该版本的定义将从版本历史中移除，技能与其它版本不受影响。\"",
+    "id": "c84e3ceb19b06348"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2101,
+    "reason": "interpolated-template",
+    "start": 100407,
+    "end": 100438,
+    "source": "`v${selectedVersion.value} 已删除`",
+    "id": "d8cfdc3a61cf1ae5"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2136,
+    "reason": "interpolated-template",
+    "start": 101645,
+    "end": 101702,
+    "source": "`表格导入完成：新增 ${mergeDraft(r.fields)} 个字段。可用「✨ AI 补全说明」扩写规则`",
+    "id": "9cddd2beb50853a9"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 2165,
+    "reason": "interpolated-template",
+    "start": 102941,
+    "end": 102984,
+    "source": "`已补全 ${n} 处字段说明（${r.provider_used}），请核对后保存`",
+    "id": "c2310530affd0af2"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 179,
+    "reason": "interpolated-template",
+    "start": 9569,
+    "end": 9672,
+    "source": "`${p.name} · ${p.model}${p.active ? '（平台默认）' : ''}${p.custom ? '（自定义）' : ''}${p.vision ? '・支持图像' : ''}`",
+    "id": "e8c0d48b0ce0db39"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 325,
+    "reason": "interpolated-template",
+    "start": 18189,
+    "end": 18217,
+    "source": "`「${catName(activeCat)}」的字段`",
+    "id": "752f72496c3570af"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 481,
+    "reason": "concatenation",
+    "start": 28756,
+    "end": 28772,
+    "source": "'插入 {' + t + '}'",
+    "id": "31b464110a5633ae"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 686,
+    "reason": "rich-text",
+    "start": 40359,
+    "end": 40413,
+    "source": "<li>技能版本：<strong>v{{ pgDetail.version }}</strong></li>",
+    "id": "9dcde7126a2425c8"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 738,
+    "reason": "interpolated-template",
+    "start": 43240,
+    "end": 43267,
+    "source": "`对 v${selectedVersion} 跑回归`",
+    "id": "1e25905161f9830d"
+  },
+  {
+    "file": "frontend/src/views/SkillEditorView.vue",
+    "line": 744,
+    "reason": "rich-text",
+    "start": 43532,
+    "end": 43766,
+    "source": "<p><strong>{{ goldenReport.samples }}</strong> 个样本，平均匹配率\n                  <strong :class=\"{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }\">\n                    {{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></p>",
+    "id": "e6f6b70ad9936234"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 245,
+    "reason": "eager-setup-value",
+    "start": 11222,
+    "end": 11228,
+    "source": "最近更新",
+    "id": "b067526e73e5b801"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 246,
+    "reason": "eager-setup-value",
+    "start": 11263,
+    "end": 11269,
+    "source": "最早更新",
+    "id": "3e04f83df97fa6f2"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 247,
+    "reason": "eager-setup-value",
+    "start": 11305,
+    "end": 11311,
+    "source": "最近创建",
+    "id": "ee34c74d32e7548a"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 248,
+    "reason": "eager-setup-value",
+    "start": 11346,
+    "end": 11352,
+    "source": "最早创建",
+    "id": "4e1a5de8d9ad19a1"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 249,
+    "reason": "eager-setup-value",
+    "start": 11384,
+    "end": 11392,
+    "source": "名称 A→Z",
+    "id": "4860c5c161547961"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 250,
+    "reason": "eager-setup-value",
+    "start": 11425,
+    "end": 11433,
+    "source": "名称 Z→A",
+    "id": "280c1518844b7511"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 334,
+    "reason": "pure-function-message",
+    "start": 14891,
+    "end": 14895,
+    "source": "编辑",
+    "id": "051836569928a9f9"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 335,
+    "reason": "pure-function-message",
+    "start": 14927,
+    "end": 14931,
+    "source": "导出",
+    "id": "76420433f22d1c80"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 338,
+    "reason": "pure-function-message",
+    "start": 15018,
+    "end": 15022,
+    "source": "停用",
+    "id": "4e6fd0e28c55860b"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 338,
+    "reason": "pure-function-message",
+    "start": 15050,
+    "end": 15054,
+    "source": "删除",
+    "id": "2f9daa828907b93f"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 341,
+    "reason": "pure-function-message",
+    "start": 15156,
+    "end": 15160,
+    "source": "启用",
+    "id": "f4f0ead1116b5b62"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 341,
+    "reason": "pure-function-message",
+    "start": 15188,
+    "end": 15192,
+    "source": "删除",
+    "id": "2f9daa828907b93f"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 343,
+    "reason": "pure-function-message",
+    "start": 15250,
+    "end": 15254,
+    "source": "恢复",
+    "id": "e0534b8a4e46a0cb"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 343,
+    "reason": "pure-function-message",
+    "start": 15280,
+    "end": 15288,
+    "source": "编辑（查看）",
+    "id": "f3198d624eb491dd"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 361,
+    "reason": "interpolated-template",
+    "start": 15989,
+    "end": 16045,
+    "source": "`v${v.version}${v.status === \"published\" ? \"\" : \"（草稿）\"}`",
+    "id": "71428f79dbb5c880"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 473,
+    "reason": "interpolated-template",
+    "start": 19827,
+    "end": 19850,
+    "source": "`已导入为 v${r.version} 草稿`",
+    "id": "c356f140f278cbad"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 492,
+    "reason": "interpolated-template",
+    "start": 20537,
+    "end": 20581,
+    "source": "`${verb}技能 ${s.name || s.skill_code}？${why}`",
+    "id": "028c745bf1c21249"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 495,
+    "reason": "interpolated-template",
+    "start": 20664,
+    "end": 20693,
+    "source": "`技能 ${s.skill_code} 已${verb}`",
+    "id": "a312481179ed000e"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 501,
+    "reason": "interpolated-template",
+    "start": 20835,
+    "end": 20891,
+    "source": "`删除技能 ${s.name || s.skill_code}？它会进入归档页签，版本与历史保留，可随时恢复。`",
+    "id": "7a8de623791699cc"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 504,
+    "reason": "interpolated-template",
+    "start": 20964,
+    "end": 20997,
+    "source": "`技能 ${s.skill_code} 已删除（可在归档中恢复）`",
+    "id": "8654e5138c393bb5"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 510,
+    "reason": "interpolated-template",
+    "start": 21143,
+    "end": 21195,
+    "source": "`恢复技能 ${s.name || s.skill_code}？恢复后重新出现在启用列表并可直接提交。`",
+    "id": "88d813058e61ed29"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 513,
+    "reason": "interpolated-template",
+    "start": 21269,
+    "end": 21293,
+    "source": "`技能 ${s.skill_code} 已恢复`",
+    "id": "881abd68b264bcb4"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 524,
+    "reason": "interpolated-template",
+    "start": 21589,
+    "end": 21628,
+    "source": "`已导入 ${r.skill_code}（v${r.version} 草稿）`",
+    "id": "f0b173231ee52067"
+  },
+  {
+    "file": "frontend/src/views/SkillsView.vue",
+    "line": 124,
+    "reason": "rich-text",
+    "start": 5914,
+    "end": 6027,
+    "source": "<p>口令：<code class=\"pkg-pass\" data-testid=\"export-passphrase\">{{\n            exportResult.passphrase }}</code></p>",
+    "id": "4e24f98761816932"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 267,
+    "reason": "eager-setup-value",
+    "start": 13142,
+    "end": 13146,
+    "source": "时间",
+    "id": "8b6ff498515bcc2f"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 268,
+    "reason": "eager-setup-value",
+    "start": 13231,
+    "end": 13235,
+    "source": "技能",
+    "id": "99aea2f9131ad6da"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 269,
+    "reason": "eager-setup-value",
+    "start": 13315,
+    "end": 13326,
+    "source": "发起人 / Key",
+    "id": "1a51baeba5fb642b"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 270,
+    "reason": "eager-setup-value",
+    "start": 13405,
+    "end": 13410,
+    "source": "文件名",
+    "id": "a6e48adc26d686d7"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 271,
+    "reason": "eager-setup-value",
+    "start": 13489,
+    "end": 13493,
+    "source": "类型",
+    "id": "ba40014ff496f64e"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 272,
+    "reason": "eager-setup-value",
+    "start": 13566,
+    "end": 13570,
+    "source": "大小",
+    "id": "50db7447b966f5ef"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 273,
+    "reason": "eager-setup-value",
+    "start": 13634,
+    "end": 13638,
+    "source": "页数",
+    "id": "560630ba0c84322e"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 274,
+    "reason": "eager-setup-value",
+    "start": 13725,
+    "end": 13731,
+    "source": "处理速度",
+    "id": "792e9510e178930d"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 275,
+    "reason": "eager-setup-value",
+    "start": 13797,
+    "end": 13801,
+    "source": "状态",
+    "id": "6320b4a8722a851f"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 276,
+    "reason": "eager-setup-value",
+    "start": 13874,
+    "end": 13880,
+    "source": "更新时间",
+    "id": "0a5f9a892960a00a"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 277,
+    "reason": "eager-setup-value",
+    "start": 13972,
+    "end": 13976,
+    "source": "校验",
+    "id": "41b0af8c5c9fbd40"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 401,
+    "reason": "eager-setup-value",
+    "start": 19530,
+    "end": 19536,
+    "source": "全部技能",
+    "id": "e7b1605b49420055"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 402,
+    "reason": "eager-setup-value",
+    "start": 19578,
+    "end": 19585,
+    "source": "全部发起人",
+    "id": "6b697233c7f1ae80"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 403,
+    "reason": "eager-setup-value",
+    "start": 19627,
+    "end": 19633,
+    "source": "全部类型",
+    "id": "267c4a7a86dd1849"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 404,
+    "reason": "eager-setup-value",
+    "start": 19669,
+    "end": 19675,
+    "source": "全部状态",
+    "id": "0a379c1e7398fba1"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 405,
+    "reason": "eager-setup-value",
+    "start": 19711,
+    "end": 19715,
+    "source": "全部",
+    "id": "5c55a67935af8f45"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 408,
+    "reason": "eager-setup-value",
+    "start": 19782,
+    "end": 19787,
+    "source": "已校验",
+    "id": "1936eafc0c3c4a5a"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 408,
+    "reason": "eager-setup-value",
+    "start": 19796,
+    "end": 19801,
+    "source": "有错误",
+    "id": "7deaf76d44fad6bb"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 408,
+    "reason": "eager-setup-value",
+    "start": 19809,
+    "end": 19814,
+    "source": "未校验",
+    "id": "51e14b7fefd530a2"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 419,
+    "reason": "concatenation",
+    "start": 20270,
+    "end": 20366,
+    "source": "`${s.name || s.skill_code}（${s.skill_code}）`\n          + (s.state === \"deleted\" ? \" · 已删除\" : \"\")",
+    "id": "7e5f24c676e0a172"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 486,
+    "reason": "interpolated-template",
+    "start": 23060,
+    "end": 23093,
+    "source": "`${names[0]} 等 ${names.length} 项`",
+    "id": "3c3141b203a20686"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 492,
+    "reason": "interpolated-template",
+    "start": 23345,
+    "end": 23389,
+    "source": "`${label} ${f[a] || \"不限\"} ~ ${f[b] || \"不限\"}`",
+    "id": "7bd05495fef5ab52"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 495,
+    "reason": "interpolated-template",
+    "start": 23492,
+    "end": 23505,
+    "source": "`关键字「${f.q}」`",
+    "id": "4295d6b115e3be09"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 499,
+    "reason": "interpolated-template",
+    "start": 23667,
+    "end": 23794,
+    "source": "`技能 ${pickText(m.skill_code.map((code) =>\n                 skillList.value.find((x) => x.skill_code === code)?.name || code))}`",
+    "id": "79e6a893674a871f"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 507,
+    "reason": "interpolated-template",
+    "start": 24083,
+    "end": 24281,
+    "source": "`发起人 ${pickText(m.initiator.map((v) =>\n                 initiatorLabel(initiatorList.value.find((x) => x.value === v)?.label\n                                ?? v.replace(/^(user|api_key):/, \"\"))))}`",
+    "id": "5daf4f6a037bdac0"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 512,
+    "reason": "interpolated-template",
+    "start": 24395,
+    "end": 24417,
+    "source": "`文件名含「${f.file_name}」`",
+    "id": "a5bffbc4940c118b"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 516,
+    "reason": "interpolated-template",
+    "start": 24570,
+    "end": 24661,
+    "source": "`类型 ${pickText(m.file_type.map((t) =>\n                 t.replace(\".\", \"\").toUpperCase()))}`",
+    "id": "cf8e38ed82bb4677"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 523,
+    "reason": "interpolated-template",
+    "start": 24847,
+    "end": 24907,
+    "source": "`状态 ${pickText(m.status.map((s) => STATUS_LABELS[s] ?? s))}`",
+    "id": "0c3d0e8d54019da4"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 529,
+    "reason": "interpolated-template",
+    "start": 25098,
+    "end": 25158,
+    "source": "`校验 ${pickText(m.verify.map((v) => VERIFY_LABELS[v] ?? v))}`",
+    "id": "74a7bc3ade19dc9c"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 648,
+    "reason": "interpolated-template",
+    "start": 29976,
+    "end": 30031,
+    "source": "`任务「${r.file_name}」已删除（含 ${res.deleted_children} 份子单据）`",
+    "id": "3bc66a24ceac286e"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 649,
+    "reason": "interpolated-template",
+    "start": 30040,
+    "end": 30063,
+    "source": "`任务「${r.file_name}」已删除`",
+    "id": "0cf23a5d14d603e1"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 700,
+    "reason": "interpolated-template",
+    "start": 32117,
+    "end": 32153,
+    "source": "`发起人：${whoLabel(r.initiator_label)}`",
+    "id": "548ac2f057c66e18"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 701,
+    "reason": "pure-function-message",
+    "start": 32164,
+    "end": 32178,
+    "source": "该任务早于发起人记录功能",
+    "id": "0b5878a7e62fa76a"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 713,
+    "reason": "pure-function-message",
+    "start": 32528,
+    "end": 32536,
+    "source": "处理尚未完成",
+    "id": "dab3ffa3e4110a44"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 714,
+    "reason": "interpolated-template",
+    "start": 32573,
+    "end": 32633,
+    "source": "` · ${(r.page_count / r.processing_seconds).toFixed(2)} 页/s`",
+    "id": "d4fe6918280c88bd"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 715,
+    "reason": "interpolated-template",
+    "start": 32649,
+    "end": 32699,
+    "source": "`处理用时 ${fmtSeconds(r.processing_seconds)}${pages}`",
+    "id": "d6d0d6385b7dc509"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 43,
+    "reason": "interpolated-template",
+    "start": 2229,
+    "end": 2246,
+    "source": "`按${col.label}筛选`",
+    "id": "18de688cadb21bc5"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 102,
+    "reason": "interpolated-template",
+    "start": 5391,
+    "end": 5413,
+    "source": "`删除任务「${r.file_name}」`",
+    "id": "790c9cd0a2d557b6"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 117,
+    "reason": "rich-text",
+    "start": 5873,
+    "end": 6156,
+    "source": "<EmptyState v-else-if=\"!rows.length\" title=\"还没有任务\" glyph=\"🚀\">\n        上传第一份文档开始处理，或通过 API <code>POST /api/v1/process</code> 提交。\n        <template #action>\n          <router-link to=\"/upload\"><button class=\"primary\">上传文档</button></router-link>\n        </template>\n      </EmptyState>",
+    "id": "91db65fc6e5491e1"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 139,
+    "reason": "interpolated-template",
+    "start": 7021,
+    "end": 7031,
+    "source": "`第 ${p} 页`",
+    "id": "7b8417929c2b4929"
+  },
+  {
+    "file": "frontend/src/views/TasksView.vue",
+    "line": 164,
+    "reason": "rich-text",
+    "start": 8137,
+    "end": 8237,
+    "source": "<p class=\"del-lead\">\n          「{{ delTarget.file_name }}」将被<strong>永久删除</strong>，无法恢复。\n        </p>",
+    "id": "e70bc625f359705a"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 247,
+    "reason": "pure-function-message",
+    "start": 10888,
+    "end": 10929,
+    "source": "暂不支持旧版 Office 格式，请另存为 .docx/.xlsx/.pptx",
+    "id": "0fdc71c2323e972a"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 248,
+    "reason": "pure-function-message",
+    "start": 10938,
+    "end": 10947,
+    "source": "暂不支持该格式",
+    "id": "d362e3268bf0ee2d"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 250,
+    "reason": "pure-function-message",
+    "start": 10983,
+    "end": 10988,
+    "source": "空文件",
+    "id": "d350d798f368f180"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 252,
+    "reason": "interpolated-template",
+    "start": 11061,
+    "end": 11101,
+    "source": "`超过单文件 ${limits.value.max_size_mb}MB 上限`",
+    "id": "6f19b6b0176016ac"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 261,
+    "reason": "interpolated-template",
+    "start": 11368,
+    "end": 11391,
+    "source": "`${file.name}：已在待上传列表中`",
+    "id": "07cf84942e76da61"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 358,
+    "reason": "interpolated-template",
+    "start": 14810,
+    "end": 14831,
+    "source": "`已受理 ${accepted} 个文件`",
+    "id": "656801a20221c94c"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 11,
+    "reason": "rich-text",
+    "start": 459,
+    "end": 713,
+    "source": "<EmptyState title=\"还没有可用的技能\" glyph=\"🧩\">\n        上传前需要先有一个<strong>已发布</strong>的技能——技能决定从文档里抽取哪些字段。\n        <template #action>\n          <router-link to=\"/skills\"><button class=\"primary\">去技能中心</button></router-link>\n        </template>\n      </EmptyState>",
+    "id": "b8eec28eea221120"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 80,
+    "reason": "rich-text",
+    "start": 3304,
+    "end": 3745,
+    "source": "<div class=\"est\">\n            预估 <b>{{ estPages }} 页</b>\n            <span v-if=\"batchCountPreview > 1\"> · 自动分 <b>{{ batchCountPreview }}</b> 批提交</span>\n            <span class=\"sub\">\n              可提交 {{ okItems.length }} 个<template v-if=\"badItems.length\">，\n                {{ badItems.length }} 个不受支持将被跳过</template>\n              <template v-if=\"credits !== null\"> ｜ 剩余 {{ credits }} credits</template>\n            </span>\n          </div>",
+    "id": "6ec5180ee0741c01"
+  },
+  {
+    "file": "frontend/src/views/UploadView.vue",
+    "line": 110,
+    "reason": "rich-text",
+    "start": 4651,
+    "end": 4763,
+    "source": "<div class=\"notice\">\n            ✅ 已受理 <b>{{ rows.length }}</b> 个文件，正在后台处理——可以留在本页看进度，也可以去任务列表。\n          </div>",
+    "id": "67804efd75b1ac84"
+  },
+  {
+    "file": "frontend/src/views/auth/LoginView.vue",
+    "line": 34,
+    "reason": "eager-setup-value",
+    "start": 1100,
+    "end": 1115,
+    "source": "SSO 会话已过期，请重试",
+    "id": "7e402c46ee52ac61"
+  },
+  {
+    "file": "frontend/src/views/auth/LoginView.vue",
+    "line": 35,
+    "reason": "eager-setup-value",
+    "start": 1133,
+    "end": 1161,
+    "source": "SSO 令牌交换失败，请联系管理员检查 IdP 配置",
+    "id": "95ddd8d85398b0b5"
+  },
+  {
+    "file": "frontend/src/views/auth/LoginView.vue",
+    "line": 36,
+    "reason": "eager-setup-value",
+    "start": 1177,
+    "end": 1196,
+    "source": "SSO 账号不可用（可能已被停用）",
+    "id": "ae474b8577cd80cc"
+  }
+]

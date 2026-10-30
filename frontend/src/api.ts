@@ -3,6 +3,8 @@ export interface ApiCallRow { id: string; key_id: string; key_name: string; endp
 // API client. Auth-on: Bearer JWT from the session store, 401 kicks back to
 // /login. Auth-off (lite/dev): the M1 dev headers keep working unchanged.
 import { clearSession, session } from "./session";
+import { i18n, translateMessage } from "./i18n";
+import { apiErrorMessage } from "./apiErrors";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
@@ -19,12 +21,12 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   if (resp.status === 401 && session.authRequired) {
     clearSession();
     window.location.hash = "#/login";
-    throw new Error("登录已过期，请重新登录");
+    throw new Error(i18n.global.t("api.session-expired"));
   }
   if (!resp.ok) {
     let detail = "";
     try { detail = _detailText((await resp.json()).detail); } catch { /* non-JSON body */ }
-    throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
+    throw new Error(detail || i18n.global.t("api.request-failed", { status: resp.status }));
   }
   // Sample deletion succeeds with 204 and intentionally has no JSON body.
   if (resp.status === 204) return undefined as T;
@@ -34,10 +36,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 /** 9.15 §3.6: new endpoints answer with detail={code,message}; old ones keep a
  *  plain string — normalize both so the UI never shows "[object Object]". */
 function _detailText(d: unknown): string {
-  if (typeof d === "string") return d;
-  if (d && typeof d === "object" && "message" in d)
-    return String((d as { message: unknown }).message);
-  return "";
+  return translateMessage(apiErrorMessage(d));
 }
 
 /** multipart variant (file uploads); browser sets the boundary header itself */
@@ -51,12 +50,12 @@ async function reqForm<T>(url: string, form: FormData): Promise<T> {
   if (resp.status === 401 && session.authRequired) {
     clearSession();
     window.location.hash = "#/login";
-    throw new Error("登录已过期，请重新登录");
+    throw new Error(i18n.global.t("api.session-expired"));
   }
   if (!resp.ok) {
     let detail = "";
     try { detail = _detailText((await resp.json()).detail); } catch { /* non-JSON body */ }
-    throw new Error(detail || `请求失败（HTTP ${resp.status}）`);
+    throw new Error(detail || i18n.global.t("api.request-failed", { status: resp.status }));
   }
   return resp.json() as Promise<T>;
 }
@@ -80,21 +79,21 @@ function reqUpload<T>(url: string, form: FormData,
       if (xhr.status === 401 && session.authRequired) {
         clearSession();
         window.location.hash = "#/login";
-        reject(new Error("登录已过期，请重新登录"));
+        reject(new Error(i18n.global.t("api.session-expired")));
         return;
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         try { resolve(JSON.parse(xhr.responseText) as T); }
-        catch { reject(new Error("服务端返回了无法解析的内容")); }
+        catch { reject(new Error(i18n.global.t("api.invalid-response"))); }
         return;
       }
       let detail = "";
       try { detail = _detailText(JSON.parse(xhr.responseText).detail); } catch { /* non-JSON */ }
       // the reverse proxy rejects oversized bodies with an HTML page, not JSON
-      if (!detail && xhr.status === 413) detail = "本批文件超过服务器允许的请求大小";
-      reject(new Error(detail || `上传失败（HTTP ${xhr.status}）`));
+      if (!detail && xhr.status === 413) detail = i18n.global.t("api.request-too-large");
+      reject(new Error(detail || i18n.global.t("api.upload-failed", { status: xhr.status })));
     };
-    xhr.onerror = () => reject(new Error("网络中断，本批未提交"));
+    xhr.onerror = () => reject(new Error(i18n.global.t("api.network-interrupted")));
     xhr.send(form);
   });
 }
@@ -441,20 +440,20 @@ export async function fetchBlob(url: string,
   if (resp.status === 401 && session.authRequired) {
     clearSession();
     window.location.hash = "#/login";
-    throw new Error("登录已过期，请重新登录");
+    throw new Error(i18n.global.t("api.session-expired"));
   }
   if (!resp.ok) {
     // WP1: the API usually has something useful to say (original_missing, a
     // 422 hint) — read a string detail or a {code,message} object and keep
     // the HTTP status; raw server internals / disk paths never reach the UI
     let code = "";
-    let msg = `下载失败（HTTP ${resp.status}）`;
+    let msg = i18n.global.t("api.download-failed", { status: resp.status });
     try {
       const detail = (await resp.json())?.detail;
-      if (typeof detail === "string" && detail) msg = detail;
+      if (typeof detail === "string" && detail) msg = _detailText(detail);
       else if (detail && typeof detail === "object") {
         code = String(detail.code ?? "");
-        if (detail.message) msg = String(detail.message);
+        msg = _detailText(detail) || msg;
       }
     } catch { /* non-JSON body: keep the generic line */ }
     throw new FetchBlobError(resp.status, code, msg);

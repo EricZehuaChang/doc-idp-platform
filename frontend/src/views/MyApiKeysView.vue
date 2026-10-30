@@ -1,51 +1,53 @@
 <template>
   <div class="wrap">
-    <h1>我的 API Key</h1>
+    <h1>{{ $t('myApiKeys.my_api_keys') }}</h1>
     <p class="dim">
-      创建受限凭据，供 Agent 或集成客户端使用：按管理员授权选择提交查询、印章签名检测和版面定位；任务仅限本 Key 提交的。
-      完整 Key 仅在创建时显示一次。</p>
+      {{ $t('myApiKeys.create_restricted_credentials_for_agents_or_integration_clients_choose') }}</p>
 
     <div class="panel">
       <div class="row">
-        <input v-model="name" maxlength="100" placeholder="Key 名称，如：前台扫描仪" class="name-in" />
-        <input v-model="skills" placeholder="可用技能代码，逗号分隔；留空 = 全部" class="skills-in" />
-        <button class="primary" :disabled="!grants.allow_create || !groups.length" @click="createKey">＋ 创建 Key</button>
+        <input v-model="name" maxlength="100" :placeholder="$t('myApiKeys.key_name_e_g_front_desk_scanner')" class="name-in" />
+        <input v-model="skills" :placeholder="$t('myApiKeys.available_skill_codes_comma_separated_leave_blank_all')" class="skills-in" />
+        <button class="primary" :disabled="!grants.allow_create || !groups.length" @click="createKey">{{ $t('myApiKeys.create_key') }}</button>
       </div>
 
-      <p v-if="!grants.allow_create" class="dim">管理员已关闭创建与使用个人 Key 的权限。</p>
-      <p v-if="grants.allowed_skill_codes" class="dim">可用技能：{{ grants.allowed_skill_codes.join('、') || '无' }}（留空使用此范围）</p>
-      <div class="row"><label v-for="g in groupOptions" :key="g.value" :title="grants.groups.includes(g.value) ? '' : '管理员未授权'">
+      <p v-if="!grants.allow_create" class="dim">{{ $t('myApiKeys.the_administrator_has_disabled_the_creation_and_use_of') }}</p>
+      <p v-if="grants.allowed_skill_codes" class="dim">{{ $t('myApiKeys.available_skills') }}{{ grants.allowed_skill_codes.join('、') || $t('myApiKeys.none') }}{{ $t('myApiKeys.leave_blank_to_use_this_scope') }}</p>
+      <div class="row"><label v-for="g in groupOptions" :key="g.value" :title="grants.groups.includes(g.value) ? '' : $t('myApiKeys.not_authorized_by_administrator')">
         <input type="checkbox" v-model="groups" :value="g.value" :disabled="!grants.groups.includes(g.value)" /> {{ g.label }}
       </label></div>
       <!-- show-once panel -->
       <div v-if="freshKey" class="fresh-key">
-        <p>⚠️ 完整 Key 仅显示这一次，请立即复制保存：</p>
+        <p>{{ $t('myApiKeys.the_full_key_is_shown_only_once_copy_and') }}</p>
         <div class="key-line">
           <code>{{ freshKey }}</code>
-          <button class="primary" @click="copyKey">{{ copied ? "✓ 已复制" : "复制" }}</button>
+          <button class="primary" @click="copyKey">{{ copied ? $t('myApiKeys.copied') : $t('myApiKeys.copy') }}</button>
         </div>
       </div>
 
       <table v-if="keys.length">
-        <thead><tr><th>名称</th><th>权限</th><th>技能范围</th><th>最近使用</th><th>创建时间</th><th></th></tr></thead>
+        <thead><tr><th>{{ $t('myApiKeys.name') }}</th><th>{{ $t('myApiKeys.permissions') }}</th><th>{{ $t('myApiKeys.skill_scope') }}</th><th>{{ $t('myApiKeys.last_used') }}</th><th>{{ $t('myApiKeys.created_at') }}</th><th></th></tr></thead>
         <tbody>
           <tr v-for="k in keys" :key="k.id">
             <td>{{ k.name }}</td>
             <td class="dim">{{ k.scopes.join("、") || "—" }}</td>
-            <td class="dim">{{ k.allowed_skill_codes ? k.allowed_skill_codes.join("、") : "全部" }}</td>
+            <td class="dim">{{ k.allowed_skill_codes ? k.allowed_skill_codes.join("、") : $t('myApiKeys.all') }}</td>
             <td class="dim">{{ k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "—" }}</td>
             <td class="dim">{{ k.created_at ? new Date(k.created_at).toLocaleString() : "—" }}</td>
-            <td><button class="danger" @click="revoke(k)">吊销</button></td>
+            <td><button class="danger" @click="revoke(k)">{{ $t('myApiKeys.revoke') }}</button></td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="dim empty">还没有 Key。创建后把它填进 Agent 或集成客户端的连接设置。</p>
+      <p v-else class="dim empty">{{ $t('myApiKeys.no_keys_yet_after_creating_one_enter_it_in') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
+import { computed, onMounted, ref } from "vue";
 import { api, type ApiGrants } from "../api";
 import { toast } from "../toast";
 import { copyText } from "../clipboard";
@@ -58,7 +60,7 @@ type MyKeyRow = {
 
 const grants = ref<ApiGrants>({ allow_create: false, groups: [], allowed_skill_codes: null });
 const groups = ref<string[]>(['process']);
-const groupOptions = [{ value: 'process', label: '提交与查询' }, { value: 'detect', label: '印章签名检测' }, { value: 'locate', label: '版面定位' }];
+const groupOptions = computed(() => [{ value: 'process', label: t('myApiKeys.submit_query') }, { value: 'detect', label: t('myApiKeys.seal_signature_detection') }, { value: 'locate', label: t('myApiKeys.layout_location') }]);
 const keys = ref<MyKeyRow[]>([]);
 const name = ref("");
 const skills = ref("");
@@ -76,7 +78,7 @@ async function createKey() {
     copied.value = false;
     name.value = "";
     skills.value = "";
-    toast.ok("Key 已创建——完整 Key 仅显示这一次");
+    toast.ok(t('myApiKeys.key_created_the_full_key_is_shown_only_once'));
     await load();
   } catch (e) { toast.error(e); }
 }
@@ -85,11 +87,11 @@ async function copyKey() {
   try {
     await copyText(freshKey.value);
     copied.value = true;
-  } catch { toast.error("复制失败，请手动选择文本"); }
+  } catch { toast.error(t('myApiKeys.copy_failed_please_select_the_text_manually')); }
 }
 async function revoke(k: MyKeyRow) {
-  if (!confirm(`吊销 Key「${k.name}」？使用它的终端将立即失效。`)) return;
-  try { await api.revokeMyKey(k.id); toast.ok("已吊销"); await load(); }
+  if (!confirm(t('myApiKeys.revoke_confirm', { name: k.name }))) return;
+  try { await api.revokeMyKey(k.id); toast.ok(t('myApiKeys.revoked')); await load(); }
   catch (e) { toast.error(e); }
 }
 onMounted(load);

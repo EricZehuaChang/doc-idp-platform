@@ -1,15 +1,15 @@
 <template>
   <AppModal @close="$emit('close')">
     <div class="gen-modal">
-      <h3>✨ 自动生成字段</h3>
-      <p class="dim">样本预标注 + 描述 二合一：字段范围以描述为准，字段名、类型和示例值参考样本。</p>
+      <h3>{{ $t('generateFieldsModal.auto_generate_fields') }}</h3>
+      <p class="dim">{{ $t('generateFieldsModal.sample_pre_labeling_description_combined_field_scope_follows_the') }}</p>
 
       <textarea v-model="description" rows="3"
-                placeholder="描述要抽什么。例：抽取发票号（去空格）、开票日期（YYYY-MM-DD）、含税总金额（两位小数）"></textarea>
+                :placeholder="$t('generateFieldsModal.describe_what_to_extract_e_g_extract_invoice_number')"></textarea>
       <label v-if="samples.length" class="row">
-        <span>样本</span>
+        <span>{{ $t('generateFieldsModal.sample') }}</span>
         <select v-model="sampleId">
-          <option value="">不使用样本</option>
+          <option value="">{{ $t('generateFieldsModal.no_sample') }}</option>
           <option v-for="s in samples" :key="s.id" :value="s.id">{{ s.file_name }}</option>
         </select>
       </label>
@@ -17,29 +17,29 @@
       <div class="gen-acts">
         <button class="primary" :disabled="generating
                 || (!description.trim() && !sampleId)" @click="generate">
-          {{ generating ? "⏳ 生成中…" : (suggested.length ? "🔄 重新生成" : "生成建议字段") }}</button>
+          {{ generating ? $t('generateFieldsModal.generating') : (suggested.length ? $t('generateFieldsModal.regenerate') : $t('generateFieldsModal.generate_suggested_fields')) }}</button>
       </div>
 
       <template v-if="suggested.length">
         <div class="suggest-head">
-          <strong>建议字段（{{ suggested.length }}）</strong>
+          <strong>{{ $t('generateFieldsModal.suggested_fields') }}{{ suggested.length }}）</strong>
           <label class="repl"><input type="checkbox" v-model="replaceAll" />
-            替换现有字段（不勾选则追加，同名跳过）</label>
+            {{ $t('generateFieldsModal.replace_existing_fields_unchecked_appends_skipping_same_names') }}</label>
         </div>
         <ul class="suggest-list">
           <li v-for="f in suggested" :key="f.name">
             <code>{{ f.name }}</code>
-            <span class="dim">{{ f.type }}{{ f.required ? " · 必填" : "" }}</span>
-            <span class="ex" v-if="examples[f.name]">示例：{{ examples[f.name] }}</span>
+            <span class="dim">{{ f.type }}{{ f.required ? $t('generateFieldsModal.required') : "" }}</span>
+            <span class="ex" v-if="examples[f.name]">{{ $t('generateFieldsModal.example') }}{{ examples[f.name] }}</span>
           </li>
         </ul>
         <div class="gen-acts">
-          <button @click="$emit('close')">取消</button>
-          <button class="primary" @click="apply">应用字段</button>
+          <button @click="$emit('close')">{{ $t('generateFieldsModal.cancel') }}</button>
+          <button class="primary" @click="apply">{{ $t('generateFieldsModal.apply_fields') }}</button>
         </div>
       </template>
       <div class="gen-acts">
-        <button @click="$emit('close')">关闭</button>
+        <button @click="$emit('close')">{{ $t('generateFieldsModal.close') }}</button>
       </div>
       <p v-if="error" class="err">{{ error }}</p>
     </div>
@@ -91,7 +91,7 @@ async function generate() {
 function apply() {
   if (!suggested.value.length) return;
   emit("apply", suggested.value, replaceAll.value);
-  toast.ok(`已${replaceAll.value ? "替换为" : "追加"} ${suggested.value.length} 个建议字段`);
+  toast.ok({ key: replaceAll.value ? "generateFieldsModal.replaced_fields" : "generateFieldsModal.appended_fields", params: { count: suggested.value.length } });
   emit("close");
 }
 </script>

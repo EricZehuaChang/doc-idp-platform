@@ -1,42 +1,46 @@
 <template>
-  <section class="generate-panel" aria-label="生成建议字段">
-    <header><div><strong>{{ suggested.length ? '确认建议字段' : '从样本生成字段' }}</strong>
-      <p class="dim">{{ sampleId ? `参考样本：${sampleName || '当前样本'}` : '上传左侧样本，或直接描述要提取的字段' }}</p></div>
-      <button v-if="existingCount" class="ghost" aria-label="收起生成建议" @click="emit('close')">×</button></header>
-    <label class="description">提取要求 <span class="dim">（可选）</span>
-      <textarea v-model="description" rows="3" placeholder="例如：提取发票号、开票日期、含税金额和商品明细" :disabled="generating"></textarea>
+  <section class="generate-panel" :aria-label="$t('generateFieldsPanel.generate_suggested_fields')">
+    <header><div><strong>{{ suggested.length ? $t('generateFieldsPanel.confirm_suggested_fields') : $t('generateFieldsPanel.generate_fields_from_sample') }}</strong>
+      <p class="dim">{{ sampleId ? $t('generateFieldsPanel.reference_sample', { name: sampleName || $t('generateFieldsPanel.current_sample') }) : $t('generateFieldsPanel.upload_a_sample_on_the_left_or_directly_describe') }}</p></div>
+      <button v-if="existingCount" class="ghost" :aria-label="$t('generateFieldsPanel.collapse_suggestions')" @click="emit('close')">×</button></header>
+    <label class="description">{{ $t('generateFieldsPanel.extraction_requirements') }} <span class="dim">{{ $t('generateFieldsPanel.optional') }}</span>
+      <textarea v-model="description" rows="3" :placeholder="$t('generateFieldsPanel.e_g_extract_invoice_number_invoice_date_amount_including')" :disabled="generating"></textarea>
     </label>
     <div class="generate-actions">
-      <span class="dim">建议不会自动覆盖现有字段</span>
+      <span class="dim">{{ $t('generateFieldsPanel.suggestions_will_not_automatically_overwrite_existing_fields') }}</span>
       <button class="primary" :disabled="generating || (!sampleId && !description.trim())" @click="generate">
-        {{ generating ? '正在生成建议…' : suggested.length ? '重新生成' : '生成建议字段' }}</button>
+        {{ generating ? $t('generateFieldsPanel.generating_suggestions') : suggested.length ? $t('generateFieldsPanel.regenerate') : $t('generateFieldsPanel.generate_suggested_fields') }}</button>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <template v-if="suggested.length">
       <div class="suggest-head">
         <label><input type="checkbox" :checked="selected.length === suggested.length" @change="toggleAll" />
-          已选 {{ selected.length }} / {{ suggested.length }} 项</label>
-        <label v-if="existingCount" class="dim"><input type="checkbox" v-model="replaceAll" /> 替换现有字段</label>
+          {{ $t('generateFieldsPanel.selected') }} {{ selected.length }} / {{ suggested.length }} {{ $t('generateFieldsPanel.items') }}</label>
+        <label v-if="existingCount" class="dim"><input type="checkbox" v-model="replaceAll" /> {{ $t('generateFieldsPanel.replace_existing_fields') }}</label>
       </div>
       <ul class="suggest-list">
         <li v-for="(field, i) in suggested" :key="i">
           <label><input type="checkbox" :value="i" v-model="selected" />
             <span class="suggest-name"><strong>{{ field.name }}</strong><small class="dim">{{ field.instruction }}</small></span>
-            <span class="type">{{ typeLabel(field.type) }}</span>
+            <span class="type">{{ translateMessage(typeLabel(field.type)) }}</span>
             <span class="example" :title="example(field.name)">{{ example(field.name) || '—' }}</span></label>
         </li>
       </ul>
       <div class="generate-actions">
-        <span class="dim">{{ existingCount && !replaceAll ? '追加到当前清单，同名字段会跳过' : '添加后可继续编辑，也可撤销' }}</span>
-        <button class="primary" :disabled="!selected.length || generating" @click="apply">{{ replaceAll && existingCount ? '替换为' : '添加' }} {{ selected.length }} 个字段</button>
+        <span class="dim">{{ existingCount && !replaceAll ? $t('generateFieldsPanel.append_to_current_list_fields_with_the_same_name') : $t('generateFieldsPanel.you_can_continue_editing_after_adding_or_undo') }}</span>
+        <button class="primary" :disabled="!selected.length || generating" @click="apply">{{ replaceAll && existingCount ? $t('generateFieldsPanel.replace_with') : $t('generateFieldsPanel.add') }} {{ selected.length }} {{ $t('generateFieldsPanel.fields') }}</button>
       </div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { onBeforeUnmount, ref, watch } from "vue";
 import { api, type FieldSpec } from "../api";
+import { translateMessage } from "../i18n";
 const props = defineProps<{ sampleId?: string; sampleName?: string; existingCount: number }>();
 const emit = defineEmits<{
   (e: "apply", fields: FieldSpec[], replaceAll: boolean, examples: Record<string, unknown>): void;
@@ -53,7 +57,8 @@ let generation = 0;
 function reset() { ++generation; generating.value = false; suggested.value = []; selected.value = []; examples.value = {}; error.value = ""; replaceAll.value = false; }
 watch(() => props.sampleId, reset);
 onBeforeUnmount(() => { ++generation; });
-const typeLabel = (type: string) => ({ string: "文本", number: "数字", date: "日期", enum: "枚举", table: "数组" }[type] || type);
+const TYPE_KEYS: Record<string, string> = { string: "generateFieldsPanel.type_text", number: "fieldCard.type_number", date: "fieldCard.type_date", enum: "fieldCard.type_enum", table: "fieldCard.type_table" };
+const typeLabel = (type: string) => TYPE_KEYS[type] ? { key: TYPE_KEYS[type] } : type;
 function example(name: string) {
   const value = examples.value[name];
   return value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -68,7 +73,7 @@ async function generate() {
     suggested.value = result.fields;
     examples.value = result.examples;
     selected.value = result.fields.map((_, i) => i);
-    if (!result.fields.length) error.value = "未生成字段，请补充提取要求后重试。";
+    if (!result.fields.length) error.value = t('generateFieldsPanel.no_fields_generated_please_add_extraction_requirements_and_try');
   } catch (e) { if (request === generation) error.value = e instanceof Error ? e.message : String(e); }
   finally { if (request === generation) generating.value = false; }
 }

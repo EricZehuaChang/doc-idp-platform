@@ -4,12 +4,12 @@
          设计/测试 tab pair; the left version rail became a dropdown menu -->
     <div class="main-col">
       <div class="toolbar">
-        <router-link to="/skills" class="back" title="返回技能列表">‹</router-link>
+        <router-link to="/skills" class="back" :title="$t('skillEditor.back_to_skill_list')">‹</router-link>
         <div class="ident">
-          <h1>{{ pkg.name || pkg.skill_code || "新技能" }}</h1>
+          <h1>{{ pkg.name || pkg.skill_code || $t('skillEditor.new_skill') }}</h1>
           <span class="dim code-line">
-            {{ pkg.skill_code || "（保存时确定）" }}
-            <button v-if="pkg.skill_code" class="copy" title="复制技能代码"
+            {{ pkg.skill_code || $t('skillEditor.determined_on_save') }}
+            <button v-if="pkg.skill_code" class="copy" :title="$t('skillEditor.copy_skill_code')"
                     @click="copyCode">{{ copied ? "✓" : "⧉" }}</button>
           </span>
         </div>
@@ -22,7 +22,7 @@
             ▾
           </summary>
           <div class="ver-pop">
-            <button class="new-ver" :disabled="saving || fieldTrialStarting || sampleUploading" @click="newVersion">＋ 新建版本</button>
+            <button class="new-ver" :disabled="saving || fieldTrialStarting || sampleUploading" @click="newVersion">{{ $t('skillEditor.new_version') }}</button>
             <div v-for="v in [...versions].reverse()" :key="v.version" class="ver-card"
                  :class="{ current: v.version === selectedVersion }"
                  @click="selectVersion(v.version)">
@@ -37,45 +37,43 @@
         </details>
 
         <div class="tabs">
-          <button :class="{ on: tab === 'design' }" @click="tab = 'design'">设计</button>
-          <button :class="{ on: tab === 'test' }" @click="tab = 'test'">测试</button>
+          <button :class="{ on: tab === 'design' }" @click="tab = 'design'">{{ $t('skillEditor.design') }}</button>
+          <button :class="{ on: tab === 'test' }" @click="tab = 'test'">{{ $t('skillEditor.test') }}</button>
         </div>
 
         <div class="acts">
           <button v-if="!isNew" @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
-            导出</button>
+            {{ $t('skillEditor.export') }}</button>
           <details class="more-menu">
-            <summary>更多</summary>
+            <summary>{{ $t('skillEditor.more') }}</summary>
             <div class="more-pop">
-              <button @click="apiModal = true">🔌 API 接入</button>
+              <button @click="apiModal = true">{{ $t('skillEditor.api_access') }}</button>
               <button @click="downloadFile(api.skillExportUrl(code), `${code}.yaml`)">
-                导出 YAML</button>
+                {{ $t('skillEditor.export_yaml') }}</button>
               <button v-if="!isNew && versions.length > 1" class="danger"
                       :disabled="selectedStatus === 'published'"
                       :title="selectedStatus === 'published'
-                              ? '当前发布版本不可删除——提交都按它跑'
-                              : '只删除当前这一个版本'"
-                      @click="removeVersion">删除当前版本</button>
+                              ? $t('skillEditor.the_current_published_version_cannot_be_deleted_all_submissions')
+                              : $t('skillEditor.delete_only_this_version')"
+                      @click="removeVersion">{{ $t('skillEditor.delete_current_version') }}</button>
             </div>
           </details>
           <button class="primary" :disabled="saving || fieldTrialStarting || sampleUploading || importing || enriching" @click="save">
-            {{ saving ? "保存中…" : (isNew ? "创建技能" : saveLabel) }}</button>
+            {{ saving ? $t('skillEditor.saving') : (isNew ? $t('skillEditor.create_skill') : saveLabel) }}</button>
           <button v-if="!isNew && selectedStatus === 'draft'" class="confirm" :disabled="saving || fieldTrialStarting || sampleUploading"
-                  @click="publishSelected">🚀 发布</button>
+                  @click="publishSelected">{{ $t('skillEditor.publish') }}</button>
         </div>
       </div>
       <p v-if="!isNew && selectedStatus === 'draft'" class="ver-note dim">
-        当前编辑 v{{ selectedVersion }}（草稿）——「保存」原地更新本草稿；
-        要留存快照请用版本菜单「＋ 新建版本」。</p>
+        {{ $t('skillEditor.currently_editing_v') }}{{ selectedVersion }}{{ $t('skillEditor.draft_save_updates_this_draft_in_place_to_keep') }}</p>
       <p v-else-if="!isNew && selectedStatus" class="ver-note dim">
-        当前查看 v{{ selectedVersion }}（{{ verLabel(selectedStatus) }}）——已发布版本不可改，
-        「另存为新草稿」将以此为底新建草稿版本。</p>
+        {{ $t('skillEditor.currently_viewing_v') }}{{ selectedVersion }}（{{ verLabel(selectedStatus) }}{{ $t('skillEditor.published_versions_cannot_be_modified_save_as_new_draft') }}</p>
 
       <!-- —— 设计 tab —— -->
       <template v-if="tab === 'design'">
         <div class="design-body" :inert="saving">
           <!-- flow rail: 基础 → (文档分类) → 字段提取 → 文件产出 -->
-          <nav class="flow-rail" aria-label="设计步骤">
+          <nav class="flow-rail" :aria-label="$t('skillEditor.design_steps')">
             <button v-for="(n, ni) in flowNodes" :key="n.key" class="node"
                     :class="{ on: step === n.key, bad: n.bad }"
                     :disabled="saving || fieldTrialStarting"
@@ -88,120 +86,117 @@
 
           <!-- —— 基础 —— -->
           <section v-show="step === 'basic'" class="card-panel block step-panel">
-            <h3 class="block-title">基本信息</h3>
+            <h3 class="block-title">{{ $t('skillEditor.basic_info') }}</h3>
             <div class="basic-grid">
-              <label>技能名称
-                <input ref="skillNameInput" v-model="pkg.name" placeholder="例如：XCMG 海外发票" /></label>
-              <label>skill_code（英文，创建后不可改）
+              <label>{{ $t('skillEditor.skill_name') }}
+                <input ref="skillNameInput" v-model="pkg.name" :placeholder="$t('skillEditor.e_g_xcmg_overseas_invoice')" /></label>
+              <label>{{ $t('skillEditor.skill_code_english_cannot_be_changed_after_creation') }}
                 <input ref="skillCodeInput" v-model="pkg.skill_code" class="mono" :disabled="!isNew" /></label>
-              <label class="span2">描述
+              <label class="span2">{{ $t('skillEditor.description') }}
                 <textarea v-model="pkg.description" rows="2"
-                          placeholder="这个技能处理什么文档、服务什么业务（给同事看的说明）"></textarea>
+                          :placeholder="$t('skillEditor.what_documents_does_this_skill_process_and_what_business')"></textarea>
               </label>
-              <label v-if="!isNew" class="span2">版本介绍（v{{ selectedVersion }} 的说明）
+              <label v-if="!isNew" class="span2">{{ $t('skillEditor.version_notes_v') }}{{ selectedVersion }} {{ $t('skillEditor.notes') }}
                 <input v-model="changelog"
-                       placeholder="这一版改了什么，例如：新增税额字段、放宽发票号正则" />
+                       :placeholder="$t('skillEditor.what_changed_in_this_version_e_g_added_tax')" />
               </label>
             </div>
 
-            <h4 class="sub-title">处理模式</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.processing_mode') }}</h4>
             <div class="cards">
               <button class="mode-card" :class="{ on: pkg.processing_mode !== 'fast' }"
                       @click="setProcessingMode('balanced')">
-                <strong>均衡</strong>
-                <span class="dim">逐页定位与置信评分，支持复核与挑战者模型</span></button>
+                <strong>{{ $t('skillEditor.balanced') }}</strong>
+                <span class="dim">{{ $t('skillEditor.page_by_page_localization_with_confidence_scoring_supports_review') }}</span></button>
               <button class="mode-card" :class="{ on: pkg.processing_mode === 'fast' }"
                       data-testid="fast-mode-card"
                       @click="setProcessingMode('fast')">
-                <strong>极速</strong>
-                <span class="dim">适用于页数较少、追求速度的文档，不支持复核；
-                  单页上限 {{ fastMaxPages }} 页</span></button>
+                <strong>{{ $t('skillEditor.fast') }}</strong>
+                <span class="dim">{{ $t('skillEditor.for_documents_with_fewer_pages_where_speed_matters_no') }} {{ fastMaxPages }} {{ $t('skillEditor.page') }}</span></button>
             </div>
-            <h3>提取通道</h3>
+            <h3>{{ $t('skillEditor.extraction_channel') }}</h3>
             <div class="cards">
-              <button class="mode-card" :class="{ on: pkg.extraction_channel !== 'rules_first' }" @click="pkg.extraction_channel = 'model'"><strong>模型提取</strong><span>由模型提取全部字段</span></button>
-              <button class="mode-card" :class="{ on: pkg.extraction_channel === 'rules_first' }" @click="pkg.extraction_channel = 'rules_first'"><strong>规则优先</strong><span>先按字段规则提取，缺失字段由模型补充</span></button>
+              <button class="mode-card" :class="{ on: pkg.extraction_channel !== 'rules_first' }" @click="pkg.extraction_channel = 'model'"><strong>{{ $t('skillEditor.model_extraction') }}</strong><span>{{ $t('skillEditor.extract_all_fields_by_model') }}</span></button>
+              <button class="mode-card" :class="{ on: pkg.extraction_channel === 'rules_first' }" @click="pkg.extraction_channel = 'rules_first'"><strong>{{ $t('skillEditor.rules_first') }}</strong><span>{{ $t('skillEditor.extract_by_field_rules_first_fill_missing_fields_by') }}</span></button>
             </div>
             <p v-if="pkg.processing_mode === 'fast'" class="dim adv-note" data-testid="fast-note">
-              极速模式：结果不带定位与置信评分（显示「未评分」），不进入人工复核；
-              校验器照常运行。已保存的复核与高级配置会保留，切回「均衡」后恢复。</p>
+              {{ $t('skillEditor.turbo_mode_results_have_no_localization_or_confidence_scores') }}</p>
 
-            <h4 class="sub-title">人工复核模式</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.manual_review_mode') }}</h4>
             <div class="cards" :class="{ disabled: pkg.processing_mode === 'fast' }">
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.review_policy.mode === 'never' }"
                       @click="pkg.review_policy.mode = 'never'">
-                <strong>无需人工复核</strong>
-                <span class="dim">识别结果直接通过，不停留审单</span></button>
+                <strong>{{ $t('skillEditor.no_manual_review_required') }}</strong>
+                <span class="dim">{{ $t('skillEditor.results_pass_directly_without_stopping_for_review') }}</span></button>
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.review_policy.mode === 'auto' }"
                       @click="pkg.review_policy.mode = 'auto'">
-                <strong>低置信度时复核</strong>
-                <span class="dim">低于阈值的字段进入审单</span></button>
+                <strong>{{ $t('skillEditor.review_on_low_confidence') }}</strong>
+                <span class="dim">{{ $t('skillEditor.fields_below_threshold_enter_review') }}</span></button>
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.review_policy.mode === 'always' }"
                       @click="pkg.review_policy.mode = 'always'">
-                <strong>始终需要复核</strong>
-                <span class="dim">每份文档都进审单</span></button>
+                <strong>{{ $t('skillEditor.always_require_review') }}</strong>
+                <span class="dim">{{ $t('skillEditor.every_document_enters_review') }}</span></button>
             </div>
             <p v-if="pkg.processing_mode === 'fast'" class="dim">
-              极速模式不支持人工复核。</p>
+              {{ $t('skillEditor.turbo_mode_does_not_support_manual_review') }}</p>
             <label v-if="pkg.review_policy.mode === 'auto' && pkg.processing_mode !== 'fast'"
                    class="thr">
-              置信阈值（低于则人审）
+              {{ $t('skillEditor.confidence_threshold_below_triggers_manual_review') }}
               <select v-model.number="pkg.review_policy.confidence_threshold">
                 <option :value="1">1</option><option :value="2">2</option>
                 <option :value="3">3</option>
               </select></label>
 
-            <h4 class="sub-title">技能模式</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.skill_mode') }}</h4>
             <div class="cards" :class="{ disabled: pkg.processing_mode === 'fast' }">
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.skill_mode !== 'advanced' }"
                       @click="setSkillMode('standard')">
-                <strong>标准</strong>
-                <span class="dim">一份文档、一组字段，适合大多数单据</span></button>
+                <strong>{{ $t('skillEditor.standard') }}</strong>
+                <span class="dim">{{ $t('skillEditor.one_document_one_set_of_fields_suits_most_documents') }}</span></button>
               <button class="mode-card" :disabled="pkg.processing_mode === 'fast'"
                       :class="{ on: pkg.skill_mode === 'advanced' }"
                       data-testid="mode-advanced"
                       @click="setSkillMode('advanced')">
-                <strong>高级</strong>
-                <span class="dim">一份文件多种单据，先分类再提取</span></button>
+                <strong>{{ $t('skillEditor.advanced') }}</strong>
+                <span class="dim">{{ $t('skillEditor.one_file_with_multiple_document_types_classify_first_then') }}</span></button>
             </div>
             <p v-if="pkg.skill_mode === 'advanced'" class="dim adv-note">
-              高级模式：在「文档分类」设置文件构成、类别与分类模型；在「字段提取」按类别配置字段。</p>
+              {{ $t('skillEditor.advanced_mode_set_file_composition_categories_and_classification_model') }}</p>
 
             <details class="adv-settings">
-              <summary>高级设置（抽取模型、备用模型、挑战者模型、解析器）</summary>
+              <summary>{{ $t('skillEditor.advanced_settings_extraction_model_fallback_model_challenger_model_parser') }}</summary>
               <div class="basic-grid">
                 <datalist id="dl-providers">
                   <option v-for="p in providerOptions" :key="p.name" :value="p.name"
-                          :label="`${p.name} · ${p.model}${p.active ? '（平台默认）' : ''}${p.custom ? '（自定义）' : ''}${p.vision ? '・支持图像' : ''}`" />
+                          :label="t('skillEditor.provider_option', { name: p.name, model: p.model, active: p.active ? t('skillEditor.platform_default_suffix') : '', custom: p.custom ? t('skillEditor.custom_suffix') : '', vision: p.vision ? t('skillEditor.vision_suffix') : '' })" />
                 </datalist>
                 <datalist id="dl-parsers">
                   <option v-for="p in parserOptions" :key="p.name" :value="p.name"
                           :label="p.description ? `${p.name} — ${p.description}` : p.name" />
                 </datalist>
-                <label>抽取模型（空=平台默认{{ activeProvider ? `：${activeProvider}` : "" }}）
+                <label>{{ $t('skillEditor.extraction_model_empty_platform_default') }}{{ activeProvider ? `：${activeProvider}` : "" }}）
                   <input v-model="pkg.model_binding.extractor" list="dl-providers"
-                         placeholder="下拉选择或直接输入，如 qwen"
+                         :placeholder="$t('skillEditor.select_from_dropdown_or_enter_directly_e_g_qwen')"
                          @focus="comboOpen" @input="comboTyped" @blur="comboClose" />
                   <span v-if="pkg.skill_mode === 'advanced'" class="hint dim">
-                    高级模式：「本技能内配置字段」的类别用此模型；分类未单独设置时也用它；
-                    引用的已有技能用它自己的模型。</span></label>
-                <label>备用模型（fallback）
+                    {{ $t('skillEditor.advanced_mode_used_for_categories_with_fields_configured_in') }}</span></label>
+                <label>{{ $t('skillEditor.fallback_model') }}
                   <input :value="pkg.model_binding.fallback ?? ''" list="dl-providers"
-                         placeholder="可空；下拉选择或直接输入"
+                         :placeholder="$t('skillEditor.optional_select_from_dropdown_or_enter_directly')"
                          @focus="comboOpen" @blur="comboClose"
                          @input="comboTyped($event); pkg.model_binding.fallback = ($event.target as HTMLInputElement).value || null" /></label>
-                <label>挑战者模型（不一致标人审）
+                <label>{{ $t('skillEditor.challenger_model_inconsistency_flags_manual_review') }}
                   <input :value="pkg.model_binding.challenger ?? ''" list="dl-providers"
-                         placeholder="可空；下拉选择或直接输入"
+                         :placeholder="$t('skillEditor.optional_select_from_dropdown_or_enter_directly')"
                          @focus="comboOpen" @blur="comboClose"
                          @input="comboTyped($event); pkg.model_binding.challenger = ($event.target as HTMLInputElement).value || null" /></label>
-                <label>解析器（空=自动路由）
+                <label>{{ $t('skillEditor.parser_empty_auto_routing') }}
                   <input :value="pkg.parser ?? ''" list="dl-parsers"
-                         placeholder="自动；下拉选择或直接输入"
+                         :placeholder="$t('skillEditor.auto_select_from_dropdown_or_enter_directly')"
                          @focus="comboOpen" @blur="comboClose"
                          @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
               </div>
@@ -212,13 +207,12 @@
                每个类别怎么提取（字段 / 引用技能 / 仅分类）在「字段提取」里按类别
                配置（2026-09-23 F-02）—— -->
           <section v-show="step === 'classify'" class="card-panel block step-panel">
-            <h3 class="block-title">文档分类</h3>
+            <h3 class="block-title">{{ $t('skillEditor.document_classification') }}</h3>
             <p class="dim cat-intro">
-              一份文件包含多种/多份单据时，先分类再提取。这里设置文件怎么拆、有哪些类别、
-              怎么识别；每个类别提取哪些字段，在下一步「字段提取」里按类别配置。</p>
+              {{ $t('skillEditor.when_a_file_contains_multiple_types_documents_classify_first') }}</p>
 
             <!-- B-01 (R07 图05): the layout decides whether a file is split at all -->
-            <h4 class="sub-title">文件构成</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.file_composition') }}</h4>
             <div class="cards layout-cards">
               <button v-for="l in LAYOUTS" :key="l.value" class="mode-card"
                       :class="{ on: docLayout === l.value }"
@@ -229,53 +223,53 @@
             </div>
             <p v-if="docLayout === 'single'" class="dim adv-note"
                data-testid="layout-single-note">
-              整个文件按一份文档判断类别，不会拆分。文件里有多份单据时，请选「多种单据混合」。</p>
+              {{ $t('skillEditor.the_entire_file_is_classified_as_a_single_document') }}</p>
 
-            <h4 class="sub-title">类别</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.categories') }}</h4>
             <div class="cat-list">
               <div v-for="(c, ci) in editableCats" :key="c.id" class="cat-card"
                    :class="{ other: c.is_other }">
                 <div class="cat-head">
                   <template v-if="c.is_other">
-                    <span class="cat-name">Other（兜底类别）</span>
+                    <span class="cat-name">{{ $t('skillEditor.other_fallback_category') }}</span>
                   </template>
                   <template v-else>
                     <label class="cat-name-in">
-                      类别名（doc_type）
+                      {{ $t('skillEditor.category_name_doc_type') }}
                       <input v-model="c.doc_type" maxlength="64"
-                             placeholder="例如：发票" /></label>
+                             :placeholder="$t('skillEditor.e_g_invoice')" /></label>
                   </template>
                   <button v-if="!c.is_other" class="mini danger"
-                          title="删除该类别"
-                          @click="removeCategory(ci)">删除</button>
+                          :title="$t('skillEditor.delete_this_category')"
+                          @click="removeCategory(ci)">{{ $t('skillEditor.delete') }}</button>
                 </div>
-                <label class="cat-rec">识别说明（模型按这段话判断页面归属）
+                <label class="cat-rec">{{ $t('skillEditor.recognition_description_the_model_uses_this_text_to_determine') }}
                   <textarea v-model="c.recognition_instruction" rows="2"
-                            placeholder="例如：有「发票号码」「开票日期」和价税合计"></textarea></label>
+                            :placeholder="$t('skillEditor.e_g_contains_invoice_number_invoice_date_and_total')"></textarea></label>
                 <div class="cat-extract">
-                  <span class="dim">提取：{{ catSummary(c) }}</span>
+                  <span class="dim">{{ $t('skillEditor.extract') }}{{ catSummary(c) }}</span>
                   <button class="mini" :data-testid="`cat-goto-${c.id}`"
-                          @click="gotoCategoryFields(c)">配置字段 →</button>
+                          @click="gotoCategoryFields(c)">{{ $t('skillEditor.configure_fields') }}</button>
                 </div>
               </div>
             </div>
-            <button class="add-cat" @click="addCategory">＋ 添加类别</button>
+            <button class="add-cat" @click="addCategory">{{ $t('skillEditor.add_category') }}</button>
 
             <!-- F-01: the classification step names its model and what it inherits -->
-            <h4 class="sub-title">分类模型</h4>
+            <h4 class="sub-title">{{ $t('skillEditor.classification_model') }}</h4>
             <label class="cls-model">
               <input :value="pkg.model_binding.classifier ?? ''" list="dl-providers"
-                     placeholder="空 = 与抽取模型相同；下拉选择或直接输入"
+                     :placeholder="$t('skillEditor.empty_same_as_extraction_model_select_from_dropdown_or')"
                      data-testid="classifier-model"
                      @focus="comboOpen" @blur="comboClose"
                      @input="comboTyped($event); pkg.model_binding.classifier = ($event.target as HTMLInputElement).value || null" />
               <span class="hint dim" data-testid="classifier-effective">
-                实际使用：{{ classifierEffective }}</span></label>
+                {{ $t('skillEditor.in_use') }}{{ classifierEffective }}</span></label>
 
             <details class="rules-fold">
-              <summary>分类附加规则（可选，作用于整个分类步骤）</summary>
+              <summary>{{ $t('skillEditor.additional_classification_rules_optional_applies_to_the_entire_classification') }}</summary>
               <textarea v-model="pkg.classification_rules" rows="2"
-                        placeholder="如：第 1 页通常是发票；连续的行程单算一份文档"></textarea>
+                        :placeholder="$t('skillEditor.e_g_page_1_is_usually_an_invoice_consecutive')"></textarea>
             </details>
           </section>
 
@@ -287,9 +281,9 @@
           <section v-show="step === 'fields'" class="fields-step"
                    :class="{ 'sample-collapsed': sampleCollapsed, 'show-sample': mobilePane === 'sample' }"
                    data-testid="fields-workbench">
-            <nav class="mobile-panes" aria-label="字段工作区">
-              <button :class="{ on: mobilePane === 'sample' }" @click="mobilePane = 'sample'">样本</button>
-              <button :class="{ on: mobilePane === 'fields' }" @click="mobilePane = 'fields'">字段 · {{ curFields.length }}</button>
+            <nav class="mobile-panes" :aria-label="$t('skillEditor.field_workspace')">
+              <button :class="{ on: mobilePane === 'sample' }" @click="mobilePane = 'sample'">{{ $t('skillEditor.sample') }}</button>
+              <button :class="{ on: mobilePane === 'fields' }" @click="mobilePane = 'fields'">{{ $t('skillEditor.fields') }} {{ curFields.length }}</button>
             </nav>
             <SamplePanel ref="samplePanel" :skill-code="isNew ? undefined : code"
                          :boxes="fieldTrialBoxes" :active-key="activeFieldName" :stage-pages="fieldTrialPages"
@@ -299,21 +293,21 @@
                          @collapse="sampleCollapsed = $event" />
             <fieldset class="fields-col card-panel" :disabled="saving || fieldTrialStarting">
               <template v-if="activeCat">
-                <nav class="cat-tabs" aria-label="按类别配置字段">
+                <nav class="cat-tabs" :aria-label="$t('skillEditor.configure_fields_by_category')">
                   <button v-for="c in editableCats" :key="c.id" class="cat-tab"
                           :class="{ on: activeCat.id === c.id }"
                           :data-testid="`cat-tab-${c.id}`"
                           @click="activeCatId = c.id">
-                    {{ catName(c) }} <span class="dim">{{ catBadge(c) }}</span></button>
+                    {{ translateMessage(catName(c)) }} <span class="dim">{{ translateMessage(catBadge(c)) }}</span></button>
                 </nav>
                 <div class="cat-handler">
-                  <span class="dim">提取方式</span>
+                  <span class="dim">{{ $t('skillEditor.extraction_method') }}</span>
                   <button class="hseg" :class="{ on: activeCat.handler === 'inline' }"
-                          @click="setHandler(activeCat, 'inline')">本技能内配置字段</button>
+                          @click="setHandler(activeCat, 'inline')">{{ $t('skillEditor.configure_fields_within_this_skill') }}</button>
                   <button class="hseg" :class="{ on: activeCat.handler === 'existing_skill' }"
-                          @click="setHandler(activeCat, 'existing_skill')">使用已有技能</button>
+                          @click="setHandler(activeCat, 'existing_skill')">{{ $t('skillEditor.use_an_existing_skill') }}</button>
                   <button class="hseg" :class="{ on: activeCat.handler === 'classify_only' }"
-                          @click="setHandler(activeCat, 'classify_only')">仅分类，不提取</button>
+                          @click="setHandler(activeCat, 'classify_only')">{{ $t('skillEditor.classify_only_no_extraction') }}</button>
                 </div>
                 <!-- F-01: the model / channel that actually runs for this category -->
                 <p class="dim eff-line" data-testid="cat-effective">{{ catEffective(activeCat) }}</p>
@@ -322,30 +316,30 @@
               <template v-if="!activeCat || activeCat.handler === 'inline'">
                 <div class="field-heading">
                   <div>
-                    <h3>{{ activeCat ? `「${catName(activeCat)}」的字段` : "字段提取" }} <span class="field-count">{{ curFields.length }}</span></h3>
-                    <p class="dim">对照左侧样本，定义需要提取的信息。</p>
+                    <h3>{{ activeCat ? t('skillEditor.category_fields', { name: translateMessage(catName(activeCat)) }) : $t('skillEditor.field_extraction') }} <span class="field-count">{{ curFields.length }}</span></h3>
+                    <p class="dim">{{ $t('skillEditor.referring_to_the_sample_on_the_left_define_the') }}</p>
                   </div>
-                  <span class="save-state dim">{{ saving ? "保存中…" : dirty ? "有未保存修改" : isNew ? "尚未创建" : "已保存" }}</span>
+                  <span class="save-state dim">{{ saving ? $t('skillEditor.saving') : dirty ? $t('skillEditor.unsaved_changes') : isNew ? $t('skillEditor.not_yet_created') : $t('skillEditor.saved') }}</span>
                 </div>
                 <div class="field-actions">
                   <button class="primary" data-testid="field-trial"
                           :disabled="!activeSample || !curFields.length || saving || fieldTrialStarting || sampleUploading || pgPolling || pgCreating || importing || enriching"
-                          :title="!activeSample ? '先上传或选择一份样本' : '先保存当前定义，再试抽当前样本'"
-                          @click="runFieldTrial">{{ fieldTrialStarting ? "保存并准备试抽…" : fieldTrialRunning ? "试抽中…" : fieldTrial ? "重新试抽" : "试抽当前样本" }}</button>
-                  <button @click="genPanel = !genPanel">生成字段</button>
-                  <button @click="addInlineField">＋ 添加</button>
+                          :title="!activeSample ? $t('skillEditor.upload_or_select_a_sample_first') : $t('skillEditor.save_the_current_definition_first_then_test_extract_the')"
+                          @click="runFieldTrial">{{ fieldTrialStarting ? $t('skillEditor.saving_and_preparing_test_extraction') : fieldTrialRunning ? $t('skillEditor.test_extracting') : fieldTrial ? $t('skillEditor.re_run_test_extraction') : $t('skillEditor.test_extract_current_sample') }}</button>
+                  <button @click="genPanel = !genPanel">{{ $t('skillEditor.generate_fields') }}</button>
+                  <button @click="addInlineField">{{ $t('skillEditor.add') }}</button>
                   <details class="more-draft field-more">
-                    <summary class="btn-like" aria-label="更多字段操作">•••</summary>
+                    <summary class="btn-like" :aria-label="$t('skillEditor.more_field_actions')">•••</summary>
                     <div class="more-pop">
-                      <button :disabled="!undoStack.length" @click="undoGenerate">撤销上次生成</button>
+                      <button :disabled="!undoStack.length" @click="undoGenerate">{{ $t('skillEditor.undo_last_generation') }}</button>
                       <label class="file-btn slim">
                         <input type="file" accept=".xlsx,.csv,.tsv" hidden :disabled="importing" @change="tableImport" />
-                        <span class="btn-like">{{ importing ? '导入中…' : '表格导入' }}</span>
+                        <span class="btn-like">{{ importing ? $t('skillEditor.importing') : $t('skillEditor.import_table') }}</span>
                       </label>
                       <button class="mini" :disabled="!curFields.length || enriching"
-                              title="把字段说明扩写为完整抽取指令"
-                              @click="enrich">{{ enriching ? "⏳ 补全中…" : "✨ AI 补全说明" }}</button>
-                      <button class="danger" :disabled="!curFields.length" @click="clearFields">清空全部字段</button>
+                              :title="$t('skillEditor.expand_field_descriptions_into_full_extraction_instructions')"
+                              @click="enrich">{{ enriching ? $t('skillEditor.completing') : $t('skillEditor.ai_complete_descriptions') }}</button>
+                      <button class="danger" :disabled="!curFields.length" @click="clearFields">{{ $t('skillEditor.clear_all_fields') }}</button>
                     </div>
                   </details>
                 </div>
@@ -356,16 +350,16 @@
                                      @apply="applyGenerated" @close="genPanel = false" />
                 <div v-if="curFields.length" class="trial-banner" :class="{ stale: fieldTrialStale, failed: fieldTrialError }" role="status">
                   <span v-if="fieldTrialError">{{ fieldTrialError }}</span>
-                  <span v-else-if="fieldTrialStarting">正在保存当前字段定义…</span>
-                  <span v-else-if="fieldTrialRunning">正在试抽「{{ activeSample?.file_name }}」…</span>
-                  <span v-else-if="fieldTrialStale">定义已修改，下面的结果可能已过期。请重新试抽。</span>
-                  <span v-else-if="fieldTrialReady">试抽完成 · {{ fieldTrialFilled }}/{{ curFields.length }} 个字段有值<span v-if="pgDuration != null"> · {{ (pgDuration / 1000).toFixed(1) }} 秒</span></span>
-                  <span v-else>{{ activeSample ? '试抽当前样本，核对每个字段的值与位置。' : '上传一份样本后，即可在这里试抽核对。' }}</span>
-                  <select v-if="fieldTrialDocs.length > 1" v-model.number="fieldTrialDocIndex" aria-label="选择试抽文档">
-                    <option v-for="(doc, di) in fieldTrialDocs" :key="doc.file_id" :value="di">{{ doc.doc_type || '文档' }} {{ di + 1 }} · {{ doc.page_range }}</option>
+                  <span v-else-if="fieldTrialStarting">{{ $t('skillEditor.saving_current_field_definitions') }}</span>
+                  <span v-else-if="fieldTrialRunning">{{ $t('skillEditor.test_extracting_d0784f') }}{{ activeSample?.file_name }}」…</span>
+                  <span v-else-if="fieldTrialStale">{{ $t('skillEditor.the_definition_has_changed_the_results_below_may_be') }}</span>
+                  <span v-else-if="fieldTrialReady">{{ $t('skillEditor.trial_extraction_complete') }} {{ fieldTrialFilled }}/{{ curFields.length }} {{ $t('skillEditor.fields_have_values') }}<span v-if="pgDuration != null"> · {{ (pgDuration / 1000).toFixed(1) }} {{ $t('skillEditor.seconds') }}</span></span>
+                  <span v-else>{{ activeSample ? $t('skillEditor.run_a_trial_extraction_on_the_current_sample_to') : $t('skillEditor.upload_a_sample_to_run_a_trial_extraction_and') }}</span>
+                  <select v-if="fieldTrialDocs.length > 1" v-model.number="fieldTrialDocIndex" :aria-label="$t('skillEditor.select_trial_extraction_document')">
+                    <option v-for="(doc, di) in fieldTrialDocs" :key="doc.file_id" :value="di">{{ doc.doc_type || $t('skillEditor.document') }} {{ di + 1 }} · {{ doc.page_range }}</option>
                   </select>
                 </div>
-                <div v-if="curFields.length" class="field-list-head" aria-hidden="true"><span></span><span>字段与说明</span><span>类型</span><span>试抽结果</span><span>状态</span><span></span><span></span></div>
+                <div v-if="curFields.length" class="field-list-head" aria-hidden="true"><span></span><span>{{ $t('skillEditor.fields_descriptions') }}</span><span>{{ $t('skillEditor.type') }}</span><span>{{ $t('skillEditor.trial_extraction_results') }}</span><span>{{ $t('skillEditor.status') }}</span><span></span><span></span></div>
                 <div class="field-tree" ref="treeEl">
                   <FieldCard v-for="(f, i) in curFields" :key="`${activeCat?.id ?? 'standard'}:${i}`" :field="f" :index="i"
                              inline :expanded="expandedField === i" :active="activeFieldName === f.name"
@@ -374,9 +368,9 @@
                              @select="selectInlineField(i)" @update="curFields.splice(i, 1, $event)"
                              @remove="removeInlineField(i)"
                              @grip-down="startFieldDrag" />
-                  <button class="add-field" @click="addInlineField">＋ 添加字段</button>
+                  <button class="add-field" @click="addInlineField">{{ $t('skillEditor.add_field') }}</button>
                 </div>
-                <p v-if="curFields.length" class="dim drag-tip">拖动 ⠿ 调整字段顺序；点字段展开编辑，与样本对照。</p>
+                <p v-if="curFields.length" class="dim drag-tip">{{ $t('skillEditor.drag_to_reorder_fields_click_a_field_to_expand') }}</p>
               </template>
 
               <!-- existing_skill: R10 reference (图16) + F-02 §3.18 source/jump/impact -->
@@ -384,26 +378,25 @@
                 <div class="ref-row">
                   <select :value="activeCat.skill_ref?.skill_code ?? ''"
                           @change="setRefSkill(activeCat, ($event.target as HTMLSelectElement).value)">
-                    <option value="">选择要复用的技能…</option>
+                    <option value="">{{ $t('skillEditor.select_a_skill_to_reuse') }}</option>
                     <option v-for="r in refSkills" :key="r.skill_code"
                             :value="r.skill_code">{{ r.name }}（{{ r.skill_code }}）</option>
                   </select>
                   <select v-if="activeCat.skill_ref?.skill_code"
                           :value="activeCat.skill_ref?.version ?? ''"
                           @change="setRefVersion(activeCat, ($event.target as HTMLSelectElement).value)">
-                    <option value="">跟随最新发布版{{ refVersionHint(activeCat) }}</option>
+                    <option value="">{{ $t('skillEditor.follow_latest_release') }}{{ refVersionHint(activeCat) }}</option>
                     <option v-for="v in refVersions(activeCat)" :key="v" :value="v">v{{ v }}</option>
                   </select>
                 </div>
                 <div v-if="activeCat.skill_ref?.skill_code" class="ref-banner">
                   <span class="dim">
-                    字段来源：引用技能「{{ refName(activeCat) }}」（{{ activeCat.skill_ref.skill_code }}），
-                    在此只读；如需修改，请打开原技能编辑器。</span>
+                    {{ $t('skillEditor.field_source_references_skill') }}{{ refName(activeCat) }}」（{{ activeCat.skill_ref.skill_code }}{{ $t('skillEditor.read_only_here_to_modify_open_the_original_skill') }}</span>
                   <a class="btn-like" :href="`/#/skills/${activeCat.skill_ref.skill_code}`"
-                     target="_blank">打开技能编辑器</a>
+                     target="_blank">{{ $t('skillEditor.open_skill_editor') }}</a>
                 </div>
                 <p v-if="activeCat.skill_ref?.skill_code" class="dim ref-impact"
-                   data-testid="ref-impact">{{ refImpact(activeCat) }}</p>
+                   data-testid="ref-impact">{{ translateMessage(refImpact(activeCat)) }}</p>
                 <ul v-if="refFields(activeCat).length" class="ref-fields">
                   <li v-for="f in refFields(activeCat)" :key="f.name">
                     <code>{{ f.name }}</code><span class="dim">{{ f.type }}</span>
@@ -413,38 +406,38 @@
               </div>
 
               <p v-else-if="activeCat.handler === 'classify_only'" class="dim pad">
-                该类别只输出所属文档类型（doc_type），不抽取字段；审单时可直接通过。</p>
+                {{ $t('skillEditor.this_category_only_outputs_its_document_type_doc_type') }}</p>
 
               <label v-if="activeCat && !activeCat.is_other && activeCat.handler !== 'classify_only'"
-                     class="cat-rules">类别附加规则（可选，填写后替代{{ activeCat.handler === 'inline' ? "下方通用附加规则" : "原技能的附加规则" }}）
+                     class="cat-rules">{{ $t('skillEditor.category_specific_additional_rules_optional_if_filled_replaces') }}{{ activeCat.handler === 'inline' ? $t('skillEditor.the_general_additional_rules_below') : $t('skillEditor.original_skill_s_additional_rules') }}）
                 <textarea v-model="activeCat.additional_rules" rows="1"
-                          placeholder="只作用于该类别的补充说明"></textarea></label>
+                          :placeholder="$t('skillEditor.supplementary_notes_that_apply_only_to_this_category')"></textarea></label>
 
               <details v-if="!activeCat || activeCat.handler === 'inline'" class="rules-fold">
-                <summary>更多设置 · 输出结构与附加规则</summary>
-                <div class="output-shape"><span class="dim">输出结构</span>
-                  <div class="seg" role="group" aria-label="输出结构">
+                <summary>{{ $t('skillEditor.more_settings_output_structure_additional_rules') }}</summary>
+                <div class="output-shape"><span class="dim">{{ $t('skillEditor.output_structure') }}</span>
+                  <div class="seg" role="group" :aria-label="$t('skillEditor.output_structure')">
                     <button :class="{ on: fieldShape !== 'list' }" @click="fieldShape = 'object'">Object</button>
                     <button :class="{ on: fieldShape === 'list' }" @click="fieldShape = 'list'">List</button>
                   </div>
                 </div>
-                <label class="dim">{{ activeCat ? '通用附加规则（未填写类别附加规则时使用）' : '附加规则' }}</label>
+                <label class="dim">{{ activeCat ? $t('skillEditor.general_additional_rules_used_when_no_category_specific_rules') : $t('skillEditor.additional_rules') }}</label>
                 <textarea v-model="pkg.additional_rules" rows="2"
-                          placeholder="如：金额一律保留两位小数；日期统一 YYYY-MM-DD"></textarea>
+                          :placeholder="$t('skillEditor.e_g_amounts_always_keep_two_decimal_places_dates')"></textarea>
               </details>
               <p v-if="activeCat && pkg.fields.length" class="dim" data-testid="top-fields-note">
-                另有 {{ pkg.fields.length }} 个标准模式字段：切回「标准」技能模式或使用极速模式时生效，高级模式下不使用。</p>
+                {{ $t('skillEditor.there_are_also') }} {{ pkg.fields.length }} {{ $t('skillEditor.standard_mode_fields_they_take_effect_when_switching_back') }}</p>
             </fieldset>
           </section>
 
           <!-- —— 文件产出（9.15 WP6，图18-20） —— -->
           <section v-show="step === 'output'" class="card-panel block step-panel"
                    data-testid="output-step">
-            <h3 class="block-title">文件产出</h3>
+            <h3 class="block-title">{{ $t('skillEditor.file_output') }}</h3>
             <label class="chk">
               <input type="checkbox" data-testid="out-enabled"
                      :checked="pkg!.output?.enabled" @change="toggleOutput($event)" />
-              允许下载文档
+              {{ $t('skillEditor.allow_document_download') }}
             </label>
             <template v-if="pkg!.output?.enabled">
               <div class="out-actions">
@@ -452,23 +445,23 @@
                         :class="{ on: pkg!.output?.action === 'rename' }"
                         :disabled="false"
                         @click="setOutputAction('rename')">
-                  <b>重命名原始文档</b>
-                  <span class="dim">整个原件按命名规则产出 1 个文件</span>
+                  <b>{{ $t('skillEditor.rename_original_document') }}</b>
+                  <span class="dim">{{ $t('skillEditor.produce_1_file_from_the_entire_original_per_naming') }}</span>
                 </button>
                 <button class="mode-card" data-testid="out-split"
                         :class="{ on: pkg!.output?.action === 'split' }"
                         :disabled="!splitAvailable"
                         :title="splitAvailable ? '' :
-                          '拆分下载仅在高级模式且文件包含多份文档时可用'"
+                          $t('skillEditor.split_download_is_only_available_in_advanced_mode_and')"
                         @click="setOutputAction('split')">
-                  <b>拆分为子文档</b>
+                  <b>{{ $t('skillEditor.split_into_sub_documents') }}</b>
                   <span class="dim">{{ splitAvailable
-                    ? "每份子文档按命名规则单独产出" :
-                    "拆分下载仅在文件包含多份文档时可用" }}</span>
+                    ? $t('skillEditor.produce_each_sub_document_separately_per_naming_rules') :
+                    $t('skillEditor.split_download_is_only_available_when_the_file_contains') }}</span>
                 </button>
               </div>
               <template v-if="pkg!.output?.action !== 'off'">
-                <label class="lbl">命名规则</label>
+                <label class="lbl">{{ $t('skillEditor.naming_rules') }}</label>
                 <input ref="outPatternInput" v-model="pkg!.output!.naming_rule"
                        data-testid="out-pattern" class="txt"
                        :placeholder="pkg!.output?.action === 'split'
@@ -478,21 +471,21 @@
                 <div class="token-row" data-testid="out-tokens">
                   <button v-for="t in outAvailableTokens" :key="t" class="tok"
                           :class="{ on: outTokens.includes(t) }"
-                          :title="'插入 {' + t + '}'"
+                          :title="$t('skillEditor.insert_token', { token: '{' + t + '}' })"
                           @click="insertToken(t)">{{ "{" + t + "}" }}</button>
                 </div>
                 <div class="out-preview" data-testid="out-preview">
-                  <span class="dim">预览：</span>
+                  <span class="dim">{{ $t('skillEditor.preview') }}</span>
                   <code v-if="outPreview.ok">{{ outPreview.preview }}</code>
                   <span v-else class="err-text">{{ outErrors[0]?.message }}</span>
                   <span v-if="outPreview.appended_ext" class="dim">
-                    （已自动补 {original_ext}）</span>
+                    {{ $t('skillEditor.auto_filled_original_ext') }}</span>
                 </div>
                 <label class="chk">
                   <input type="checkbox" data-testid="out-searchable"
                          :checked="pkg!.output?.searchable_pdf"
                          @change="pkg!.output!.searchable_pdf = ($event.target as HTMLInputElement).checked" />
-                  转换为可检索 PDF（电子原件原样输出；扫描件/图片叠加隐藏文字层）
+                  {{ $t('skillEditor.convert_to_searchable_pdf_electronic_originals_output_as_is') }}
                 </label>
               </template>
             </template>
@@ -505,15 +498,14 @@
         <div class="test-grid">
           <!-- —— 9.15 WP5 Playground (图21)；走查 #5/#12/#19/#26 修补 —— -->
           <section v-if="!isNew" class="card-panel block playground" data-testid="playground">
-            <h3 class="block-title">Playground（测试运行）</h3>
-            <p class="dim">勾选样本运行当前定义（含未发布草稿）；测试任务不会进入任务列表、统计、
-              数据柜、审单队列，也不会触发 webhook。</p>
+            <h3 class="block-title">{{ $t('skillEditor.playground_test_run') }}</h3>
+            <p class="dim">{{ $t('skillEditor.run_the_current_definition_on_selected_samples_including_unpublished') }}</p>
             <div class="pg-grid">
               <div class="pg-left">
                 <div class="pg-samples">
-                  <input v-model="pgSearch" placeholder="搜索样本…" />
+                  <input v-model="pgSearch" :placeholder="$t('skillEditor.search_samples')" />
                   <label class="file-btn"><input type="file" hidden @change="pgUpload" />
-                    <span class="btn-like">上传样本</span></label>
+                    <span class="btn-like">{{ $t('skillEditor.upload_sample') }}</span></label>
                   <ul class="pg-list" data-testid="pg-samples">
                     <li v-for="s in pgFilteredSamples" :key="s.id">
                       <label>
@@ -522,11 +514,11 @@
                         <small v-if="pgStatus(s.id)" class="pg-state">{{ pgStatus(s.id) }}</small>
                       </label>
                     </li>
-                    <li v-if="!pgFilteredSamples.length" class="dim">还没有样本</li>
+                    <li v-if="!pgFilteredSamples.length" class="dim">{{ $t('skillEditor.no_samples_yet') }}</li>
                   </ul>
                   <button class="primary" data-testid="pg-run"
                           :disabled="!pgSelected.length || pgPolling || pgCreating || fieldTrialStarting" @click="pgRun">
-                    运行测试（{{ pgSelected.length }}）</button>
+                    {{ $t('skillEditor.run_test') }}{{ pgSelected.length }}）</button>
                 </div>
                 <!-- #26: switch between the files of one multi-sample run -->
                 <div v-if="pgFiles.length > 1" class="pg-files" data-testid="pg-files">
@@ -548,9 +540,9 @@
                             :active-key="pgActiveField ?? undefined"
                             @pick="pgPickField" />
                   <p v-else class="dim pg-stage-hint">
-                    {{ !pgCurrent ? "运行后在这里查看原件与字段高亮"
-                       : (pgFast ? "极速模式不提供定位高亮"
-                                 : "原件加载中…") }}</p>
+                    {{ !pgCurrent ? $t('skillEditor.after_running_view_the_original_and_field_highlights_here')
+                       : (pgFast ? $t('skillEditor.turbo_mode_does_not_provide_location_highlighting')
+                                 : $t('skillEditor.loading_original')) }}</p>
                 </div>
               </div>
 
@@ -565,52 +557,52 @@
                     {{ pgDuration }} ms</span>
                   <button class="btn-like" :disabled="pgPolling || !pgCurrent"
                           data-testid="pg-rerun-file" @click="pgRunCurrent">
-                    运行（当前文件）</button>
+                    {{ $t('skillEditor.run_current_file') }}</button>
                   <button class="btn-like" @click="pgHistoryOpen = true; pgLoadHistory()"
-                          data-testid="pg-history">运行历史</button>
+                          data-testid="pg-history">{{ $t('skillEditor.run_history') }}</button>
                   <button v-if="pgCurrentRun" class="btn-like"
-                          data-testid="pg-detail-btn" @click="pgOpenDetail">详情</button>
+                          data-testid="pg-detail-btn" @click="pgOpenDetail">{{ $t('skillEditor.details') }}</button>
                 </div>
                 <p v-if="pgTimeoutNote" class="err-text" data-testid="pg-timeout">
                   {{ pgTimeoutNote }}</p>
-                <p v-if="pgFast" class="dim">极速模式不提供定位高亮；结果不带置信评分（未评分）。</p>
+                <p v-if="pgFast" class="dim">{{ $t('skillEditor.turbo_mode_does_not_provide_location_highlighting_results_have') }}</p>
                 <div v-if="pgFileArtifacts.length" class="pg-arts" data-testid="pg-file-arts">
                   <span v-for="a in pgFileArtifacts" :key="a.artifact_id"
                         class="pg-art" :title="a.error ?? ''">
                     <button v-if="a.status === 'ready'" class="ghost"
                             @click="api.artifactDownload(a.artifact_id, a.name)">
-                      产出 ⤓ {{ a.name }}</button>
-                    <span v-else class="dim">{{ a.name }}（失败：{{ a.error }}）</span>
+                      {{ $t('skillEditor.output') }} {{ a.name }}</button>
+                    <span v-else class="dim">{{ a.name }}{{ $t('skillEditor.failed') }}{{ a.error }}）</span>
                   </span>
                 </div>
-                <p v-if="!pgVisibleDocs.length" class="dim">运行后在这里查看提取结果。</p>
+                <p v-if="!pgVisibleDocs.length" class="dim">{{ $t('skillEditor.view_extraction_results_here_after_running') }}</p>
 
                 <div class="pg-result-head">
-                  <strong>提取结果 · 输出格式：json</strong>
+                  <strong>{{ $t('skillEditor.extraction_results_output_format_json') }}</strong>
                   <span class="pg-tabs">
                     <button class="btn-like" :disabled="!pgVisibleDocs.length"
                             :class="{ on: pgResultTab === 'all' }"
                             data-testid="pg-tab-all" @click="pgResultTab = 'all'">
-                      全部字段</button>
+                      {{ $t('skillEditor.all_fields') }}</button>
                     <button class="btn-like" :disabled="!pgVisibleDocs.length"
                             :class="{ on: pgResultTab === 'review' }"
                             data-testid="pg-tab-review" @click="pgResultTab = 'review'">
-                      待复核（{{ pgReviewCount }}）</button>
+                      {{ $t('skillEditor.pending_review') }}{{ pgReviewCount }}）</button>
                   </span>
                   <button class="btn-like" :disabled="!pgVisibleDocs.length"
                           data-testid="pg-toggle-all"
                           @click="pgExpandAll = !pgExpandAll">
-                    {{ pgExpandAll ? "全部收起" : "全部展开" }}</button>
+                    {{ pgExpandAll ? $t('skillEditor.collapse_all') : $t('skillEditor.expand_all') }}</button>
                 </div>
 
                 <div v-for="doc in pgVisibleDocs" :key="`${doc.file_id}-${doc.doc_index}`"
                      class="pg-doc">
                   <div class="pg-doc-head">
-                    <strong>文档 {{ doc.doc_index }}</strong>
+                    <strong>{{ $t('skillEditor.document') }} {{ doc.doc_index }}</strong>
                     <span v-if="doc.doc_type" class="chip">{{ doc.doc_type }}</span>
-                    <span class="dim">第 {{ doc.page_range }} 页</span>
+                    <span class="dim">{{ $t('skillEditor.page_af50a0') }} {{ doc.page_range }} {{ $t('skillEditor.page') }}</span>
                     <span v-if="doc.extraction_status === 'not_requested'" class="dim">
-                      仅分类，没有需要校验的字段</span>
+                      {{ $t('skillEditor.classification_only_no_fields_to_validate') }}</span>
                   </div>
                   <table v-if="pgRowsOf(doc).length" class="pg-fields">
                     <tbody>
@@ -618,9 +610,9 @@
                           :class="{ on: pgActiveField === String(k) }"
                           @click="pgPickDocField(doc, String(k))">
                         <td class="pg-field-name">{{ k }}
-                          <span v-if="doc.field_sources?.[String(k)]" class="dim">{{ sourceLabel(doc.field_sources[String(k)]) }}</span>
+                          <span v-if="doc.field_sources?.[String(k)]" class="dim">{{ translateMessage(sourceLabel(doc.field_sources[String(k)])) }}</span>
                           <span v-if="doc.review_fields.includes(String(k))"
-                                class="badge-r">待复核</span></td>
+                                class="badge-r">{{ $t('skillEditor.pending_review_6c42f7') }}</span></td>
                         <td>
                           <span v-if="pgIsTable(v)" class="pg-table-grid"
                                 :data-testid="`pg-table-${k}`">
@@ -639,15 +631,15 @@
                     </tbody>
                   </table>
                   <p v-else-if="doc.extraction_status !== 'not_requested' &&
-                                pgResultTab === 'all'" class="dim">（无结果）</p>
-                  <p v-else-if="pgResultTab === 'review'" class="dim">没有待复核字段</p>
+                                pgResultTab === 'all'" class="dim">{{ $t('skillEditor.no_results') }}</p>
+                  <p v-else-if="pgResultTab === 'review'" class="dim">{{ $t('skillEditor.no_fields_pending_review') }}</p>
                   <div v-if="doc.artifacts?.length" class="pg-arts" data-testid="pg-arts">
                     <span v-for="a in doc.artifacts" :key="a.artifact_id"
                           class="pg-art" :title="a.error ?? ''">
                       <button v-if="a.status === 'ready'" class="ghost"
                               @click="api.artifactDownload(a.artifact_id, a.name)">
                         ⤓ {{ a.name }}</button>
-                      <span v-else class="dim">{{ a.name }}（失败：{{ a.error }}）</span>
+                      <span v-else class="dim">{{ a.name }}{{ $t('skillEditor.failed') }}{{ a.error }}）</span>
                     </span>
                   </div>
                 </div>
@@ -656,59 +648,59 @@
 
             <AppModal v-if="pgHistoryOpen" wide @close="pgHistoryOpen = false">
               <div class="pg-modal" data-testid="pg-history-modal">
-                <h4>运行历史</h4>
+                <h4>{{ $t('skillEditor.run_history') }}</h4>
                 <table v-if="pgHistory.length">
-                  <thead><tr><th>样本</th><th>版本</th><th>状态</th><th>耗时</th><th>发起人</th><th>时间</th></tr></thead>
+                  <thead><tr><th>{{ $t('skillEditor.sample') }}</th><th>{{ $t('skillEditor.version') }}</th><th>{{ $t('skillEditor.status') }}</th><th>{{ $t('skillEditor.duration') }}</th><th>{{ $t('skillEditor.requested_by') }}</th><th>{{ $t('skillEditor.time') }}</th></tr></thead>
                   <tbody>
                     <tr v-for="r in pgHistory" :key="r.run_id" class="pg-hist-row"
                         @click="pgLoadRun(r.run_id)">
                       <td>{{ pgSampleName(r.sample_id) }}</td><td>v{{ r.version }}</td>
                       <td>{{ runLabel(r.status) }}</td>
                       <td>{{ r.duration_ms ?? "—" }}</td>
-                      <td>{{ initiatorLabel(r.created_by) }}</td>
+                      <td>{{ translateMessage(initiatorLabel(r.created_by)) }}</td>
                       <td class="dim">{{ r.created_at.slice(0, 19).replace("T", " ") }}</td>
                     </tr>
                   </tbody>
                 </table>
-                <p v-else class="dim">还没有运行记录。</p>
+                <p v-else class="dim">{{ $t('skillEditor.no_run_records_yet') }}</p>
                 <div class="modal-actions">
-                  <button @click="pgHistoryOpen = false">关闭</button>
+                  <button @click="pgHistoryOpen = false">{{ $t('skillEditor.close') }}</button>
                 </div>
               </div>
             </AppModal>
 
             <AppModal v-if="pgDetailOpen" @close="pgDetailOpen = false">
               <div class="pg-modal" data-testid="pg-detail">
-                <h4>运行详情</h4>
-                <p v-if="pgDetailLoading" class="dim">正在加载运行详情…</p>
+                <h4>{{ $t('skillEditor.run_details') }}</h4>
+                <p v-if="pgDetailLoading" class="dim">{{ $t('skillEditor.loading_run_details') }}</p>
                 <p v-else-if="pgDetailError" class="err-text">{{ pgDetailError }}</p>
                 <ul v-else-if="pgDetail" class="pg-detail">
-                  <li>技能版本：<strong>v{{ pgDetail.version }}</strong></li>
-                  <li>处理模式：{{ pgDetail.processing_mode === "fast" ? "极速" : "均衡" }}</li>
-                  <li>状态：{{ runLabel(pgDetail.status) }}</li>
-                  <li>耗时：{{ pgDetail.duration_ms ?? "—" }} ms</li>
+                  <I18nT keypath="skillEditor.skill_version_rich" tag="li" scope="global"><template #version><strong>v{{ pgDetail.version }}</strong></template></I18nT>
+                  <li>{{ $t('skillEditor.processing_mode_e8a3c4') }}{{ pgDetail.processing_mode === "fast" ? $t('skillEditor.fast') : $t('skillEditor.balanced') }}</li>
+                  <li>{{ $t('skillEditor.status_86344f') }}{{ runLabel(pgDetail.status) }}</li>
+                  <li>{{ $t('skillEditor.duration_fe45f1') }}{{ pgDetail.duration_ms ?? "—" }} ms</li>
                   <li>Transaction ID：<code>{{ pgDetail.transaction_id }}</code></li>
                   <li>File ID：<code>{{ pgDetail.file_id }}</code></li>
                 </ul>
                 <div class="modal-actions">
-                  <button @click="pgDetailOpen = false">关闭</button>
+                  <button @click="pgDetailOpen = false">{{ $t('skillEditor.close') }}</button>
                 </div>
               </div>
             </AppModal>
           </section>
 
           <section class="card-panel block">
-            <h3 class="block-title">模型对比（多模型并排试运行）</h3>
-            <p class="dim">当前定义在一份样本上试跑，可多模型并排对比。</p>
+            <h3 class="block-title">{{ $t('skillEditor.model_comparison_multi_model_side_by_side_trial_run') }}</h3>
+            <p class="dim">{{ $t('skillEditor.trial_run_the_current_definition_on_a_sample_and') }}</p>
             <input v-model="dryProviders" list="dl-providers"
-                   placeholder="模型列表，逗号分隔；空=默认" />
+                   :placeholder="$t('skillEditor.model_list_comma_separated_empty_default')" />
             <label class="file-btn"><input type="file" hidden @change="dryRun" :disabled="running" />
-              <span class="btn-like">{{ running ? "⏳ 试跑中…" : "上传样本试跑" }}</span></label>
+              <span class="btn-like">{{ running ? $t('skillEditor.trial_running') : $t('skillEditor.upload_sample_and_trial_run') }}</span></label>
             <div v-if="dryRuns.length" class="runs">
               <div v-for="r in dryRuns" :key="r.provider" class="run">
                 <div class="run-head">
                   <strong>{{ r.provider }}</strong>
-                  <span v-if="r.ok && r.vision_pages" class="vis">🖼 {{ r.vision_pages }} 页图</span>
+                  <span v-if="r.ok && r.vision_pages" class="vis">🖼 {{ r.vision_pages }} {{ $t('skillEditor.page_image') }}</span>
                   <span v-if="r.ok" class="dim">
                     {{ r.usage?.prompt_tokens }}+{{ r.usage?.completion_tokens }} tokens</span>
                   <span v-else class="rulefail">{{ r.error }}</span>
@@ -718,7 +710,7 @@
                     <tr v-for="(cell, name) in scalarCells(r.result)" :key="name">
                       <td class="dim">{{ name }}</td>
                       <td>{{ cell.$value || "—" }}</td>
-                      <td><span class="conf">{{ cell.$confidence === null ? "未评分" : `c${cell.$confidence}` }}</span></td>
+                      <td><span class="conf">{{ cell.$confidence === null ? $t('skillEditor.unscored') : `c${cell.$confidence}` }}</span></td>
                     </tr>
                   </tbody>
                 </table>
@@ -727,30 +719,31 @@
           </section>
 
           <section v-if="!isNew" class="card-panel block">
-            <h3 class="block-title">金样本回归（发布门禁）</h3>
-            <p class="dim">挂固定样本＋期望值，发布前跑回归防退化。</p>
+            <h3 class="block-title">{{ $t('skillEditor.golden_sample_regression_release_gate') }}</h3>
+            <p class="dim">{{ $t('skillEditor.attach_fixed_samples_with_expected_values_and_run_regression') }}</p>
             <label class="file-btn"><input type="file" hidden @change="pickGolden" />
-              <span class="btn-like">{{ goldenFile ? goldenFile.name : "选择样本文件" }}</span></label>
+              <span class="btn-like">{{ goldenFile ? goldenFile.name : $t('skillEditor.select_sample_file') }}</span></label>
             <textarea v-model="goldenExpected" rows="3"
-                      placeholder='期望值 JSON，如 {"invoice_no": "INV-1"}'></textarea>
-            <button :disabled="!goldenFile" @click="addGolden">挂载金样本</button>
+                      :placeholder="$t('skillEditor.expected_values_json_e_g_invoice_no_inv_1')"></textarea>
+            <button :disabled="!goldenFile" @click="addGolden">{{ $t('skillEditor.attach_golden_sample') }}</button>
             <button v-if="selectedVersion" @click="goldenCheck" :disabled="checking">
-              {{ checking ? "⏳ 回归中…" : `对 v${selectedVersion} 跑回归` }}</button>
+              {{ checking ? $t('skillEditor.running_regression') : t('skillEditor.run_regression_version', { version: selectedVersion ?? "" }) }}</button>
             <div v-if="goldenReport" class="golden-report">
               <template v-if="goldenReport.samples === 0">
                 <p class="dim">{{ goldenReport.note }}</p>
               </template>
               <template v-else>
-                <p><strong>{{ goldenReport.samples }}</strong> 个样本，平均匹配率
-                  <strong :class="{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }">
-                    {{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></p>
+                <I18nT keypath="skillEditor.golden_summary_rich" tag="p" scope="global">
+                  <template #samples><strong>{{ goldenReport.samples }}</strong></template>
+                  <template #rate><strong :class="{ warn: (goldenReport.avg_match_rate ?? 0) < 1 }">{{ Math.round((goldenReport.avg_match_rate ?? 0) * 100) }}%</strong></template>
+                </I18nT>
                 <div v-for="(rep, i) in goldenReport.reports" :key="i" class="rep">
                   <template v-if="rep.ok">
-                    <span class="dim">样本 {{ i + 1 }}：匹配 {{ Math.round((rep.match_rate ?? 0) * 100) }}%</span>
+                    <span class="dim">{{ $t('skillEditor.sample') }} {{ i + 1 }}{{ $t('skillEditor.matched') }} {{ Math.round((rep.match_rate ?? 0) * 100) }}%</span>
                     <div v-for="(d, fname) in rep.diffs" :key="fname" class="rulefail">
-                      {{ fname }}: 期望「{{ d.expected }}」→ 实得「{{ d.got }}」</div>
+                      {{ fname }}{{ $t('skillEditor.expected') }}{{ d.expected }}{{ $t('skillEditor.got') }}{{ d.got }}」</div>
                   </template>
-                  <span v-else class="rulefail">样本 {{ i + 1 }}：{{ rep.error }}</span>
+                  <span v-else class="rulefail">{{ $t('skillEditor.sample') }} {{ i + 1 }}：{{ rep.error }}</span>
                 </div>
               </template>
             </div>
@@ -765,6 +758,10 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT, useI18n } from "vue-i18n";
+import { translateMessage, type DisplayMessage } from "../i18n";
+const { t } = useI18n();
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type Artifact, type CategorySpec,
@@ -783,7 +780,11 @@ import { copyText } from "../clipboard";
 import { moveItem, useListReorder } from "../reorder";
 import { toast } from "../toast";
 // R1: where a rules_first field value came from (rule / model / review)
-const sourceLabel = (s: string) => ({ rule: "规则", model: "模型", review: "待复核" }[s] ?? s);
+const sourceLabel = (s: string): DisplayMessage => {
+  const key = ({ rule: "skillEditor.source_rule", model: "skillEditor.source_model",
+    review: "skillEditor.source_review" } as Record<string, string>)[s];
+  return key ? { key } : s;
+};
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();
@@ -848,7 +849,7 @@ function blankField(name = ""): FieldSpec {
   return { name, type: "string", instruction: "", mode: "verbatim", required: false,
            anchor_hints: [], enum_values: [], columns: [] };
 }
-const verLabel = (s: string) => VERSION_LABELS[s] ?? s;
+const verLabel = (s: string) => VERSION_LABELS()[s] ?? s;
 const shortDate = (v?: string) =>
   v ? new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const splitCsv = (v: string) => v.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
@@ -1031,7 +1032,7 @@ async function outRunPreview() {
       searchable_pdf: p.output.searchable_pdf,
       fields: outScalarFieldNames(),
       sample_id: pgSelected.value[0],
-      sample: { original_name: outSampleName(), original_ext: ".pdf",
+      sample: { original_name: translateMessage(outSampleName()), original_ext: ".pdf",
                 doc_type: p.skill_mode === "advanced"
                   ? (p.categories?.[0]?.doc_type ?? "") : "",
                 doc_index: p.output.action === "split" ? 2 : undefined,
@@ -1061,9 +1062,9 @@ function outScalarFieldNames(): string[] {
 }
 
 /** the sample name shown in the preview: the selected sample when there is one */
-function outSampleName(): string {
+function outSampleName(): DisplayMessage {
   const s = pgSamples.value.find((x) => x.id === pgSelected.value[0]);
-  return s?.file_name ?? "示例扫描件.pdf";
+  return s?.file_name ?? { key: "skillEditor.sample_scan_filename" };
 }
 
 function insertToken(t: string) {
@@ -1095,11 +1096,11 @@ function setProcessingMode(m: "balanced" | "fast") {
   if (m === "fast") {
     const topFields = (p.fields ?? []).length > 0;
     if (p.skill_mode === "advanced" && !topFields) {
-      toast.error("请先切换到标准提取并配置字段（fast_mode_requires_standard_fields）");
+      toast.error(t('skillEditor.please_switch_to_standard_extraction_and_configure_fields_first'));
       return;
     }
     if (p.skill_mode === "advanced" && topFields) {
-      toast.ok("极速模式将按标准字段提取，高级分类配置已保留但不生效");
+      toast.ok(t('skillEditor.fast_mode_extracts_by_standard_fields_advanced_classification_settings'));
     }
   }
   p.processing_mode = m;
@@ -1160,7 +1161,7 @@ function refName(c: CategorySpec) {
 }
 function refVersionHint(c: CategorySpec) {
   const m = refMeta(c);
-  return m ? `（当前 v${m.published_version}）` : "";
+  return m ? t('skillEditor.current_version', { version: m.published_version }) : "";
 }
 function refVersions(c: CategorySpec): number[] {
   const m = refMeta(c);
@@ -1173,14 +1174,14 @@ function refFields(c: CategorySpec) {
 /** R07 图05 / B-01 (2026-09-23): 文件构成 — how the classifier cuts a file into
  *  documents (app/extraction/classifier.py). The backend default is single,
  *  which never splits; the editor used to offer no way to change it. */
-const LAYOUTS = [
-  { value: "single", label: "单份文档", desc: "一个文件就是一份文档，只判断类别，不拆分" },
-  { value: "mixed", label: "多种单据混合", desc: "一个文件含多份、不同类型的单据，逐页分类并拆分" },
-  { value: "same_type_independent", label: "同类单据 · 每页一份",
-    desc: "每页都是一份独立单据，类别相同" },
-  { value: "same_type_continuous", label: "同类单据 · 可跨页",
-    desc: "同一类单据，一份可能连续占多页" },
-] as const;
+const LAYOUTS = computed(() => [
+  { value: "single", label: t('skillEditor.layout_single'), desc: t('skillEditor.layout_single_description') },
+  { value: "mixed", label: t('skillEditor.layout_mixed'), desc: t('skillEditor.layout_mixed_description') },
+  { value: "same_type_independent", label: t('skillEditor.layout_same_type_independent'),
+    desc: t('skillEditor.layout_same_type_independent_description') },
+  { value: "same_type_continuous", label: t('skillEditor.layout_same_type_continuous'),
+    desc: t('skillEditor.layout_same_type_continuous_description') },
+] as const);
 const docLayout = computed(() => pkg.value?.document_layout ?? "single");
 /** The 高级 card promises "一份文件多种单据": entering advanced mode from the
  *  default layout starts at 多种单据混合 so that promise holds (B-01). */
@@ -1213,18 +1214,19 @@ const fieldShape = computed<"object" | "list">({
   get: () => (activeCat.value ?? pkg.value!).output_shape ?? "object",
   set: (v) => { (activeCat.value ?? pkg.value!).output_shape = v; },
 });
-const catName = (c: CategorySpec) =>
-  c.is_other ? "Other（兜底）" : (c.doc_type || "未命名类别");
-function catBadge(c: CategorySpec): string {
-  if (c.handler === "existing_skill") return "引用";
-  if (c.handler === "classify_only") return "仅分类";
-  return `${c.fields.length} 字段`;
+const catName = (c: CategorySpec): DisplayMessage =>
+  c.is_other ? { key: "skillEditor.other_category" }
+    : (c.doc_type || { key: "skillEditor.unnamed_category" });
+function catBadge(c: CategorySpec): DisplayMessage {
+  if (c.handler === "existing_skill") return { key: "skillEditor.reference_badge" };
+  if (c.handler === "classify_only") return { key: "skillEditor.classification_only_badge" };
+  return { key: "skillEditor.fields_badge", params: { count: c.fields.length } };
 }
 function catSummary(c: CategorySpec): string {
   if (c.handler === "existing_skill")
-    return c.skill_ref?.skill_code ? `引用技能「${refName(c)}」` : "引用已有技能（未选择）";
-  if (c.handler === "classify_only") return "仅分类，不提取";
-  return `本技能内配置 ${c.fields.length} 个字段`;
+    return c.skill_ref?.skill_code ? t('skillEditor.reference_skill', { name: refName(c) ?? "" }) : t('skillEditor.reference_skill_unselected');
+  if (c.handler === "classify_only") return t('skillEditor.classification_without_extraction');
+  return t('skillEditor.inline_fields', { count: c.fields.length });
 }
 function gotoCategoryFields(c: CategorySpec) {
   activeCatId.value = c.id;
@@ -1232,36 +1234,33 @@ function gotoCategoryFields(c: CategorySpec) {
 }
 
 // —— F-01: which model / channel actually runs, spelled out in the editor ——
-const channelLabel = (c?: string | null) => (c === "rules_first" ? "规则优先" : "模型提取");
+const channelLabel = (c?: string | null): DisplayMessage => ({
+  key: c === "rules_first" ? "skillEditor.channel_rules_first" : "skillEditor.channel_model",
+});
 function modelLabel(name?: string | null): string {
-  return name || `平台默认${activeProvider.value ? `（${activeProvider.value}）` : ""}`;
+  return name || t('skillEditor.platform_default_model', { model: activeProvider.value ? ` (${activeProvider.value})` : "" });
 }
 const classifierEffective = computed(() => {
   const mb = pkg.value!.model_binding;
-  return mb.classifier || `与抽取模型相同 · ${modelLabel(mb.extractor)}`;
+  return mb.classifier || t('skillEditor.same_as_extraction_model', { model: modelLabel(mb.extractor) });
 });
 /** Mirrors app/skillengine/effective.category_subpackage. */
 function catEffective(c: CategorySpec): string {
   const p = pkg.value!;
-  if (c.handler === "classify_only") return "生效配置：只分类，不调用抽取模型。";
+  if (c.handler === "classify_only") return t('skillEditor.effective_classify_only');
   if (c.handler === "existing_skill") {
     const m = refMeta(c);
-    if (!m) return "选择要复用的技能后，这里显示它实际使用的模型与提取通道。";
-    return `生效配置：沿用「${m.name}」自己的抽取模型 ${modelLabel(m.extractor)}、`
-      + `提取通道「${channelLabel(m.extraction_channel)}」；复核策略与解析器沿用本技能。`;
+    if (!m) return t('skillEditor.select_reference_for_configuration');
+    return t('skillEditor.effective_reference_configuration', { name: m.name, model: modelLabel(m.extractor), channel: translateMessage(channelLabel(m.extraction_channel)) });
   }
-  return `生效配置：本技能的抽取模型 ${modelLabel(p.model_binding.extractor)}、`
-    + `提取通道「${channelLabel(p.extraction_channel)}」（在「基础」中设置）。`;
+  return t('skillEditor.effective_inline_configuration', { model: modelLabel(p.model_binding.extractor), channel: translateMessage(channelLabel(p.extraction_channel)) });
 }
 /** F-02 §3.18: what changing the referenced skill does to this one (R10
  *  pinning: a publish freezes the referenced version; drafts follow latest). */
-function refImpact(c: CategorySpec): string {
-  const v = c.skill_ref?.version;
-  const pin = v != null
-    ? `固定使用 v${v}：原技能之后发布的新版本不影响本技能。`
-    : "跟随最新发布版：本技能发布时锁定原技能当时的最新发布版；原技能再发布新版本后，"
-      + "本技能需重新发布才会使用，测试页试跑始终用原技能最新发布版。";
-  return `${pin}原技能可能被多个技能共享，在原技能里修改并发布会按上述规则影响所有引用它的技能。`;
+function refImpact(c: CategorySpec): DisplayMessage {
+  const version = c.skill_ref?.version;
+  return version != null ? { key: "skillEditor.pinned_reference_impact", params: { version } }
+    : { key: "skillEditor.latest_reference_impact" };
 }
 
 // —— Playground (9.15 WP5, 图21): sample test runs against the current draft ——
@@ -1339,8 +1338,8 @@ const pgStageBoxes = computed(() => {
   return out;
 });
 
-function stLabel(status: string): string { return STATUS_LABELS[status] ?? status; }
-function runLabel(status: string): string { return RUN_STATUS_LABELS[status] ?? status; }
+function stLabel(status: string): string { return STATUS_LABELS()[status] ?? status; }
+function runLabel(status: string): string { return RUN_STATUS_LABELS()[status] ?? status; }
 function pgIsTable(v: unknown): boolean {
   return Array.isArray(v) && v.length > 0 && typeof v[0] === "object"
     && !Array.isArray(v[0]);
@@ -1362,9 +1361,9 @@ function pgRowsOf(doc: TxnDocument): [string, unknown][] {
 const pgFilteredSamples = computed(() => pgSamples.value.filter(
   (s) => !pgSearch.value || s.file_name.toLowerCase().includes(pgSearch.value.toLowerCase())));
 
-const sampleStatus = ref<Record<string, string>>({});
+const sampleStatus = ref<Record<string, DisplayMessage>>({});
 function pgStatus(sampleId: string): string {
-  return sampleStatus.value[sampleId] ?? "";
+  return translateMessage(sampleStatus.value[sampleId] ?? "");
 }
 
 watch([tab, () => props.code], async ([t]) => {
@@ -1380,9 +1379,9 @@ async function pgUpload(e: Event) {
   try {
     await api.studioUploadSample(input.files[0], props.code);
     pgSamples.value = (await api.studioSamples(props.code)).samples;
-    toast.ok("样本已上传");
+    toast.ok(t('skillEditor.sample_uploaded'));
   } catch (err) {
-    toast.error(`样本上传失败：${err instanceof Error ? err.message : err}`);
+    toast.error(t('skillEditor.sample_upload_error', { error: String(err instanceof Error ? err.message : err) }));
   }
   input.value = "";
 }
@@ -1418,12 +1417,12 @@ async function startPlaygroundRun(sampleIds: string[], version?: number): Promis
     for (const run of r.runs) {
       runBySample.value[run.sample_id] = { runId: run.run_id, txnId: r.transaction_id,
                                          fileId: run.file_id ?? undefined };
-      sampleStatus.value[run.sample_id] = "运行中…";
+      sampleStatus.value[run.sample_id] = { key: "skillEditor.sample_running" };
     }
     pgPollTransaction(r.transaction_id);
     return r.transaction_id;
   } catch (err) {
-    if (request === runRequest) toast.error(`运行失败：${err instanceof Error ? err.message : err}`);
+    if (request === runRequest) toast.error(t('skillEditor.run_error', { error: String(err instanceof Error ? err.message : err) }));
     return null;
   } finally {
     if (request === runRequest) pgCreating.value = false;
@@ -1444,7 +1443,7 @@ function pgPollTransaction(txnId: string) {
     if (Date.now() - pgStartedAt > PG_POLL_LIMIT_MS) {
       pgStopPolling();
       pgTimeoutNote.value =
-        "运行超时（超过 10 分钟仍未结束），已停止轮询。请到「运行历史」查看，或稍后重试。";
+        t('skillEditor.run_timed_out_still_not_finished_after_10_minutes');
       return;
     }
     inFlight = true;
@@ -1481,7 +1480,7 @@ function pgPollTransaction(txnId: string) {
     } catch (err) {
       if (pgCurrentTxnId.value !== txnId) return;
       pgStopPolling();
-      pgTimeoutNote.value = `测试状态或结果加载失败：${err instanceof Error ? err.message : err}。请在运行历史中重试查看。`;
+      pgTimeoutNote.value = t('skillEditor.test_state_error', { error: String(err instanceof Error ? err.message : err) });
     } finally {
       inFlight = false;
     }
@@ -1506,13 +1505,17 @@ function pgUpdateSampleStatuses(files: { file_id: string; status: string }[],
     r.fileId = f.file_id;
     const reviews = pgDocsForFile(f.file_id).reduce(
       (n, d) => n + (d.review_fields?.length ?? 0), 0);
-    sampleStatus.value[sid] =
-      f.status === "error" || f.status === "rejected" ? "失败"
-        : f.status === "pending_verification"
-          ? (reviews ? `完成（待复核 ${reviews}）` : "完成（待复核）")
-          : f.status === "split" ? (reviews ? `完成（待复核 ${reviews}）` : "完成")
-            : ["completed", "passed"].includes(f.status) ? "完成" : "运行中…";
+    sampleStatus.value[sid] = sampleStatusMessage(f.status, reviews);
   }
+}
+
+function sampleStatusMessage(status: string, reviews: number): DisplayMessage {
+  if (["error", "rejected"].includes(status)) return { key: "skillEditor.sample_failed" };
+  if (status === "pending_verification" || status === "split" && reviews > 0)
+    return reviews ? { key: "skillEditor.sample_review_count", params: { count: reviews } }
+      : { key: "skillEditor.sample_needs_review" };
+  if (["split", "completed", "passed"].includes(status)) return { key: "skillEditor.sample_completed" };
+  return { key: "skillEditor.sample_running" };
 }
 
 function pgDocsForFile(fileId: string): TxnDocument[] {
@@ -1560,7 +1563,7 @@ async function pgLoadDocuments(txnId: string) {
     if (pgCurrent.value && !pgFast.value) await pgLoadStage(txnId, active);
   } catch (err) {
     if (pgCurrentTxnId.value !== txnId) return;
-    pgTimeoutNote.value = `提取结果加载失败：${err instanceof Error ? err.message : err}`;
+    pgTimeoutNote.value = t('skillEditor.result_load_error', { error: String(err instanceof Error ? err.message : err) });
     throw err;
   }
 }
@@ -1607,7 +1610,7 @@ async function pgOpenDetail() {
     const detail = await api.studioRun(runId);
     if (pgCurrentRun.value === runId) pgDetail.value = detail;
   } catch (err) {
-    if (pgCurrentRun.value === runId) pgDetailError.value = `详情加载失败：${err instanceof Error ? err.message : err}`;
+    if (pgCurrentRun.value === runId) pgDetailError.value = t('skillEditor.detail_load_error', { error: String(err instanceof Error ? err.message : err) });
   } finally {
     if (pgCurrentRun.value === runId) pgDetailLoading.value = false;
   }
@@ -1636,7 +1639,7 @@ async function pgRunCurrent() {
   const fileId = pgCurrent.value?.file_id;
   const sid = Object.entries(runBySample.value)
     .find(([, r]) => r.fileId === fileId)?.[0];
-  if (!sid) { toast.error("找不到该文件对应的样本，请直接勾选样本运行"); return; }
+  if (!sid) { toast.error(t('skillEditor.no_sample_found_for_this_file_please_select_a')); return; }
   pgSelected.value = [sid];
   await pgRun();
 }
@@ -1675,7 +1678,7 @@ async function pgLoadRun(runId: string) {
       if (f && pgCurrent.value?.file_id !== f.file_id) pgSelectFile(f.file_id);
     }
   } catch (err) {
-    toast.error(`载入运行失败：${err instanceof Error ? err.message : err}`);
+    toast.error(t('skillEditor.run_load_error', { error: String(err instanceof Error ? err.message : err) }));
   }
 }
 
@@ -1698,10 +1701,10 @@ const fieldTrialDoc = computed(() => fieldTrialDocs.value[fieldTrialDocIndex.val
 const fieldTrialError = computed(() => {
   if (!fieldTrialMatches.value || fieldTrialRunning.value) return "";
   if (pgTimeoutNote.value) return pgTimeoutNote.value;
-  if (pgRunStatus.value === "failed") return "试抽失败，请检查字段配置或稍后重试。";
+  if (pgRunStatus.value === "failed") return t('skillEditor.test_extraction_failed_please_check_the_field_configuration_or');
   if (fieldTrialDoc.value?.error) return fieldTrialDoc.value.error;
   if (["completed", "needs_review"].includes(pgRunStatus.value) && !fieldTrialDocs.value.length)
-    return activeCat.value ? "当前样本未识别到这个类别，请切换类别或样本。" : "本次试抽没有返回字段结果。";
+    return activeCat.value ? t('skillEditor.this_category_was_not_recognized_in_the_current_sample') : t('skillEditor.this_test_extraction_returned_no_field_results');
   return "";
 });
 const fieldTrialReady = computed(() => fieldTrialMatches.value && !fieldTrialRunning.value
@@ -1730,7 +1733,7 @@ function fieldResultStatus(name: string): string {
     if (!hasFieldValue(trialValue(name))) return "missing";
     if (fieldTrialDoc.value?.review_fields?.includes(name)
         || fieldTrialDoc.value?.field_sources?.[name] === "review") return "review";
-    return fieldTrialBoxes.value.some((b) => b.key === name) ? "已定位" : "已提取";
+    return fieldTrialBoxes.value.some((b) => b.key === name) ? "success" : "extracted";
   }
   return Object.prototype.hasOwnProperty.call(generatedExamples.value[exampleScope.value] ?? {}, name)
     ? "generated" : "idle";
@@ -1844,33 +1847,32 @@ const flowNodes = computed(() => {
     (() => {   // #27: say what is actually configured, not "已配置"
       const m = p.review_policy.mode;
       const th = p.review_policy.confidence_threshold;
-      const sub = m === "never" ? "无需复核"
-        : m === "always" ? "全部复核"
-          : `${th ?? 2} 分以下复核（默认）`;
-      return { key: "basic" as const, label: "基础", sub, bad: false };
+      const sub = m === "never" ? t('skillEditor.no_review')
+        : m === "always" ? t('skillEditor.review_all')
+          : t('skillEditor.review_below_threshold', { threshold: th ?? 2 });
+      return { key: "basic" as const, label: t('skillEditor.basics'), sub, bad: false };
     })(),
     ...(p.skill_mode === "advanced"
-      ? [{ key: "classify" as const, label: "文档分类",
-           sub: `${(p.categories ?? []).length} 个类别 · ${
-             LAYOUTS.find((l) => l.value === (p.document_layout ?? "single"))?.label ?? ""}`,
+      ? [{ key: "classify" as const, label: t('skillEditor.document_classification'),
+           sub: t('skillEditor.category_layout_summary', { count: (p.categories ?? []).length, layout: LAYOUTS.value.find((l) => l.value === (p.document_layout ?? "single"))?.label ?? "" }),
            bad: badCats }]
       : []),
-    { key: "fields" as const, label: "字段提取",
+    { key: "fields" as const, label: t('skillEditor.field_extraction'),
       // #21: an advanced skill keeps its fields inside the categories, so the
       // subtitle must count those (it used to read "0 个字段")
       sub: p.skill_mode === "advanced"
-        ? `${(p.categories ?? []).length} 个类别 / ${catFieldCount(p)} 个字段`
-        : `${p.fields.length} 个字段${p.output_shape === "list" ? " · List" : ""}`,
+        ? t('skillEditor.category_field_summary', { categories: (p.categories ?? []).length, fields: catFieldCount(p) })
+        : t('skillEditor.field_count_summary', { count: p.fields.length, shape: p.output_shape === "list" ? " · List" : "" }),
       bad: badFields },
     (() => {   // 9.15 WP6 (图18-20): subtitle counts enabled output items
       const o = p.output;
       if (!o?.enabled || o.action === "off") {
-        return { key: "output" as const, label: "文件产出",
-                 sub: "未开启下载", bad: false };
+        return { key: "output" as const, label: t('skillEditor.output_files'),
+                 sub: t('skillEditor.download_disabled'), bad: false };
       }
       const n = 1 + (o.searchable_pdf ? 1 : 0);   // an action + maybe searchable
-      return { key: "output" as const, label: "文件产出",
-               sub: `已开启 ${n} 项`, bad: false };
+      return { key: "output" as const, label: t('skillEditor.output_files'),
+               sub: t('skillEditor.enabled_output_count', { count: n }), bad: false };
     })(),
   ];
 });
@@ -1907,7 +1909,7 @@ onBeforeUnmount(() => {
 onBeforeRouteLeave(() => {
   if (!dirty.value) return true;
   // synchronous confirm is the only browser-native option here
-  return window.confirm("有未保存的修改，离开将丢失。确定离开？");
+  return window.confirm(t('skillEditor.leave_unsaved_confirmation'));
 });
 
 // —— field order (P07) ——
@@ -1950,14 +1952,14 @@ function applyGenerated(fields: FieldSpec[], replaceAll: boolean, examples: Reco
     ...Object.fromEntries(fresh.filter((f) => Object.prototype.hasOwnProperty.call(examples, f.name))
       .map((f) => [f.name, examples[f.name]])),
   };
-  if (skipped) toast.ok(`跳过 ${skipped} 个同名字段（未覆盖你的修改）`);
+  if (skipped) toast.ok(t('skillEditor.skipped_duplicate_fields', { count: skipped }));
 }
 function undoGenerate() {
   const last = undoStack.value.pop();
   if (!pkg.value || !last) return;
   if (last.cat) {
     const cat = pkg.value.categories?.find((c) => c.id === last.cat);
-    if (!cat) { toast.error("该类别已删除，无法撤销"); return; }
+    if (!cat) { toast.error(t('skillEditor.this_category_has_been_deleted_and_cannot_be_undone')); return; }
     cat.fields = last.fields;
     activeCatId.value = cat.id;
   } else {
@@ -1966,11 +1968,11 @@ function undoGenerate() {
   generatedExamples.value[last.exampleKey] = last.examples;
   expandedField.value = null;
   activeFieldName.value = null;
-  toast.ok("已撤销上一次生成");
+  toast.ok(t('skillEditor.last_generation_undone'));
 }
 function clearFields() {
   if (!pkg.value || !curFields.value.length) return;
-  if (!confirm(`清空全部 ${curFields.value.length} 个字段？可用「撤销上次生成」恢复。`)) return;
+  if (!confirm(t('skillEditor.clear_fields_confirmation', { count: curFields.value.length }))) return;
   pushUndo();
   setCurFields([]);
   generatedExamples.value[exampleScope.value] = {};
@@ -1979,7 +1981,7 @@ function clearFields() {
 
 /** Save = update the draft on screen (P04). Outbound payloads are always v2. */
 const saveLabel = computed(() =>
-  selectedStatus.value && selectedStatus.value !== "draft" ? "另存为新草稿" : "保存");
+  selectedStatus.value && selectedStatus.value !== "draft" ? t('skillEditor.save_as_new_draft') : t('skillEditor.save'));
 const saving = ref(false);
 function outbound(): SkillPackage {
   return JSON.parse(JSON.stringify({ ...pkg.value!, schema_version: 2 }));
@@ -1989,20 +1991,20 @@ function validPkg(): boolean {
   if (!pkg.value) return false;
   if (!pkg.value.name.trim() || !pkg.value.skill_code.trim()) {
     const missingName = !pkg.value.name.trim();
-    toast.error(missingName ? "请先填写技能名称，再保存或试抽" : "请先填写 skill_code，再保存或试抽");
+    toast.error(missingName ? t('skillEditor.please_enter_a_skill_name_before_saving_or_testing') : t('skillEditor.please_enter_skill_code_before_saving_or_testing'));
     tab.value = "design";
     step.value = "basic";
     void nextTick(() => (missingName ? skillNameInput.value : skillCodeInput.value)?.focus());
     return false;
   }
   if (!pkg.value.fields.length && pkg.value.skill_mode !== "advanced") {
-    toast.error("至少定义一个字段"); return false;
+    toast.error(t('skillEditor.define_at_least_one_field')); return false;
   }
   const checkFields = (fields: FieldSpec[]): boolean => {
     const names = new Set<string>();
     for (const field of fields) {
-      if (!field.name.trim()) { toast.error("请填写所有字段名称"); step.value = "fields"; return false; }
-      if (names.has(field.name.trim())) { toast.error(`字段名称重复：${field.name}`); step.value = "fields"; return false; }
+      if (!field.name.trim()) { toast.error(t('skillEditor.please_fill_in_all_field_names')); step.value = "fields"; return false; }
+      if (names.has(field.name.trim())) { toast.error(t('skillEditor.duplicate_field_name', { name: field.name })); step.value = "fields"; return false; }
       names.add(field.name.trim());
       if (field.type === "table" && !checkFields(field.columns ?? [])) return false;
     }
@@ -2024,7 +2026,7 @@ async function save(): Promise<boolean> {
       if (epoch !== skillEpoch) return false;
       let adopted = true;
       try { await samplePanel.value?.adoptSamples(payload.skill_code); }
-      catch (e) { adopted = false; toast.error(`技能已创建，样本关联失败：${e instanceof Error ? e.message : e}`); }
+      catch (e) { adopted = false; toast.error(t('skillEditor.sample_association_error', { error: String(e instanceof Error ? e.message : e) })); }
       if (epoch !== skillEpoch) return false;
       preservedCreatedCode = payload.skill_code;
       markClean();
@@ -2032,20 +2034,20 @@ async function save(): Promise<boolean> {
       await nextTick();
       if (epoch !== skillEpoch || props.code !== payload.skill_code) return false;
       if (!await load(1)) return false;
-      toast.ok("技能已创建（v1 草稿）");
+      toast.ok(t('skillEditor.skill_created_v1_draft'));
       markClean();
       return adopted;
     } else if (selectedStatus.value === "draft" && selectedVersion.value) {
       const version = selectedVersion.value;
       const r = await api.skillSaveDraft(skillCode, version, payload, changelog.value);
       if (epoch !== skillEpoch) return false;
-      toast.ok(`v${selectedVersion.value} 草稿已保存（未新增版本）`);
+      toast.ok(t('skillEditor.draft_saved', { version: selectedVersion.value ?? "" }));
       for (const w of r.warnings ?? []) toast.ok(w);
       if (!await load(version)) return false;
     } else {
       const r = await api.skillNewDraft(skillCode, payload, changelog.value);
       if (epoch !== skillEpoch) return false;
-      toast.ok(`已以 v${selectedVersion.value} 为底新建 v${r.version} 草稿`);
+      toast.ok(t('skillEditor.draft_forked', { base: selectedVersion.value ?? "", version: r.version }));
       if (!await load(r.version)) return false;
     }
     if (epoch !== skillEpoch) return false;
@@ -2059,7 +2061,7 @@ async function newVersion() {
   if (sampleUploading.value || saving.value || fieldTrialStarting.value || !validPkg() || !pkg.value) return;
   try {
     const r = await api.skillNewDraft(props.code, outbound(), changelog.value);
-    toast.ok(`已新建 v${r.version} 草稿`);
+    toast.ok(t('skillEditor.draft_created', { version: r.version }));
     await load(r.version);
     markClean();
   } catch (e) { toast.error(e); }
@@ -2068,7 +2070,7 @@ async function publishSelected() {
   if (sampleUploading.value || saving.value || fieldTrialStarting.value || !selectedVersion.value) return;
   try {
     await api.skillPublish(props.code, selectedVersion.value);
-    toast.ok(`v${selectedVersion.value} 已发布（旧版本自动归档）`);
+    toast.ok(t('skillEditor.version_published', { version: selectedVersion.value ?? "" }));
     await load(selectedVersion.value);
     markClean();
   } catch (e) { toast.error(e); }
@@ -2093,12 +2095,11 @@ function comboClose(ev: Event) {
 
 async function removeVersion() {
   if (!selectedVersion.value) return;
-  const ok = confirm(`确定删除 v${selectedVersion.value}（${verLabel(selectedStatus.value ?? "")}）？\n`
-    + "该版本的定义将从版本历史中移除，技能与其它版本不受影响。");
+  const ok = confirm(t('skillEditor.delete_version_confirmation', { version: selectedVersion.value, status: verLabel(selectedStatus.value ?? "") }));
   if (!ok) return;
   try {
     await api.skillDeleteVersion(props.code, selectedVersion.value);
-    toast.ok(`v${selectedVersion.value} 已删除`);
+    toast.ok(t('skillEditor.version_deleted', { version: selectedVersion.value ?? "" }));
     await load();
   } catch (e) { toast.error(e); }
 }
@@ -2109,7 +2110,7 @@ async function copyCode() {
     await copyText(pkg.value?.skill_code ?? "");
     copied.value = true;
     setTimeout(() => (copied.value = false), 1500);
-  } catch { toast.error("复制失败，请手动选择技能代码"); }
+  } catch { toast.error(t('skillEditor.copy_failed_please_select_the_skill_code_manually')); }
 }
 
 // —— draft channels ——
@@ -2133,7 +2134,7 @@ async function tableImport(ev: Event) {
   try {
     const r = await api.skillDraftFromTable(file);
     if (epoch !== skillEpoch || targetFields !== curFields.value) return;
-    toast.ok(`表格导入完成：新增 ${mergeDraft(r.fields)} 个字段。可用「✨ AI 补全说明」扩写规则`);
+    toast.ok(t('skillEditor.table_import_complete', { count: mergeDraft(r.fields) }));
   } catch (e) { if (epoch === skillEpoch) toast.error(e); }
   finally {
     if (epoch === skillEpoch) importing.value = false;
@@ -2162,7 +2163,7 @@ async function enrich() {
       }
     };
     apply(curFields.value, r.fields);
-    toast.ok(`已补全 ${n} 处字段说明（${r.provider_used}），请核对后保存`);
+    toast.ok(t('skillEditor.descriptions_enriched', { count: n, provider: r.provider_used }));
   } catch (e) { if (epoch === skillEpoch) toast.error(e); }
   finally { if (epoch === skillEpoch) enriching.value = false; }
 }
@@ -2198,10 +2199,10 @@ async function addGolden() {
   if (!goldenFile.value) return;
   let expected: Record<string, string> = {};
   try { expected = goldenExpected.value ? JSON.parse(goldenExpected.value) : {}; }
-  catch { toast.error("期望值不是合法 JSON"); return; }
+  catch { toast.error(t('skillEditor.expected_value_is_not_valid_json')); return; }
   try {
     await api.goldenAdd(props.code, goldenFile.value, expected);
-    toast.ok("金样本已挂载");
+    toast.ok(t('skillEditor.golden_sample_attached'));
     goldenFile.value = null;
     goldenExpected.value = "";
   } catch (e) { toast.error(e); }

@@ -1,14 +1,14 @@
 <template>
   <main class="page">
-    <PageHeader title="任务" desc="全部处理任务的工作台：筛选、认领、进入校验。">
-      <button class="ghost" title="刷新" @click="reload">⟳ 刷新</button>
-      <router-link to="/upload"><button class="primary">＋ 上传文档</button></router-link>
+    <PageHeader :title="$t('tasks.tasks')" :desc="$t('tasks.workbench_for_all_processing_tasks_filter_claim_and_enter')">
+      <button class="ghost" :title="$t('tasks.refresh')" @click="reload">{{ $t('tasks.refresh_8fa31b') }}</button>
+      <router-link to="/upload"><button class="primary">{{ $t('tasks.upload_document') }}</button></router-link>
     </PageHeader>
 
     <TaskSourceSwitch />
     <div v-if="source === 'api'" class="bar">
-      <button :class="{ primary: !showCalls }" @click="router.replace({ query: { ...route.query, api_tab: undefined } })">API 任务</button>
-      <button :class="{ primary: showCalls }" @click="router.replace({ query: { ...route.query, api_tab: 'calls' } })">接口调用</button>
+      <button :class="{ primary: !showCalls }" @click="router.replace({ query: { ...route.query, api_tab: undefined } })">{{ $t('tasks.api_tasks') }}</button>
+      <button :class="{ primary: showCalls }" @click="router.replace({ query: { ...route.query, api_tab: 'calls' } })">{{ $t('tasks.api_calls') }}</button>
     </div>
     <ApiCallHistory v-if="showCalls" />
     <section v-else class="card-panel block">
@@ -17,16 +17,16 @@
            once applied, so the table itself keeps a normal single header. -->
       <div class="bar">
         <input class="search" v-model="f.q" type="search"
-               placeholder="搜索文件名、技能名称或代码…" @keyup.enter="applyNow" />
+               :placeholder="$t('tasks.search_file_name_skill_name_or_code')" @keyup.enter="applyNow" />
         <div class="chips">
           <span v-for="c in chips" :key="c.key" class="chip-f">
             {{ c.text }}
-            <button class="chip-x" title="移除此条件" @click="c.clear()">✕</button>
+            <button class="chip-x" :title="$t('tasks.remove_this_condition')" @click="c.clear()">✕</button>
           </span>
-          <button v-if="chips.length" class="ghost slim" @click="clearFilters">清空全部</button>
-          <span v-else class="dim hint">点表头的 ⏷ 按列筛选</span>
+          <button v-if="chips.length" class="ghost slim" @click="clearFilters">{{ $t('tasks.clear_all') }}</button>
+          <span v-else class="dim hint">{{ $t('tasks.click_in_the_header_to_filter_by_column') }}</span>
         </div>
-        <span class="dim total-note">共 {{ total }} 条</span>
+        <span class="dim total-note">{{ $t('tasks.total') }} {{ total }} {{ $t('tasks.items') }}</span>
       </div>
 
       <div class="table-scroll" ref="scrollEl">
@@ -40,7 +40,7 @@
                   <button v-if="col.filter" class="fbtn"
                           :class="{ on: activeCols.has(col.key), open: openCol === col.key }"
                           :ref="(el) => setTrigger(col.key, el as HTMLElement)"
-                          :title="`按${col.label}筛选`"
+                          :title="t('tasks.filter_by', { label: col.label })"
                           @click.stop="toggleMenu(col.key)">⏷</button>
                 </span>
               </th>
@@ -58,7 +58,7 @@
                 <div class="code-sub">{{ r.skill_code }}</div>
               </td>
               <!-- 9.15 R21: initiator snapshot; legacy rows render "—" -->
-              <td class="initiator-cell" :title="initiatorTitle(r)">
+              <td class="initiator-cell" :title="translateMessage(initiatorTitle(r))">
                 <template v-if="r.initiator_label">{{
                   whoLabel(r.initiator_label) }}</template>
                 <span v-else class="dim">—</span>
@@ -66,18 +66,18 @@
               <td class="fname" :title="r.file_name">
                 <span class="file-label">{{ r.file_name }}</span>
                 <span v-if="r.child_count" class="split-note">
-                  内含 {{ r.child_count }} 份单据<span v-if="r.pending_children">
-                    · {{ r.pending_children }} 份待校验</span>
+                  {{ $t('tasks.contains') }} {{ r.child_count }} {{ $t('tasks.documents') }}<span v-if="r.pending_children">
+                    · {{ r.pending_children }} {{ $t('tasks.pending_validation') }}</span>
                 </span>
               </td>
               <td><span class="ftype">{{ r.type }}</span></td>
               <td class="dim">{{ size(r.size) }}</td>
               <td>{{ r.page_count }}</td>
-              <td class="nowrap" :title="speedTitle(r)">
+              <td class="nowrap" :title="translateMessage(speedTitle(r))">
                 <span v-if="r.processing_seconds != null" class="speed">
                   {{ fmtSeconds(r.processing_seconds) }}
                   <template v-if="r.page_count > 0">
-                    · {{ (r.page_count / r.processing_seconds).toFixed(2) }} 页/s</template>
+                    · {{ (r.page_count / r.processing_seconds).toFixed(2) }} {{ $t('tasks.pages_s') }}</template>
                 </span>
                 <span v-else class="dim">—</span>
               </td>
@@ -88,7 +88,7 @@
               </td>
               <td>
                 <span v-if="r.verified_by" class="dim">✓ {{ r.verified_by }}</span>
-                <span v-else-if="r.error" class="err" :title="r.error">⚠ 错误</span>
+                <span v-else-if="r.error" class="err" :title="r.error">{{ $t('tasks.error') }}</span>
                 <span v-else class="dim">-</span>
               </td>
               <td class="row-act">
@@ -96,11 +96,11 @@
                              :to="reviewLink(r.file_id)">
                   <button class="primary slim">Verify</button></router-link>
                 <router-link v-else :to="reviewLink(r.file_id)">
-                  <button class="ghost slim">查看</button></router-link>
+                  <button class="ghost slim">{{ $t('tasks.view') }}</button></router-link>
                 <!-- 2026-09-18 需求: 只有管理员能删除任务 -->
                 <button v-if="isAdmin" class="del slim" data-testid="task-delete"
-                        :title="`删除任务「${r.file_name}」`"
-                        @click.stop="askDelete(r)">删除</button>
+                        :title="t('tasks.delete_task', { name: r.file_name })"
+                        @click.stop="askDelete(r)">{{ $t('tasks.delete') }}</button>
               </td>
             </tr>
           </tbody>
@@ -108,16 +108,16 @@
       </div>
 
       <Skeleton v-if="!rows.length && isLoading" :rows="10" />
-      <EmptyState v-else-if="!rows.length && chips.length" title="没有符合筛选条件的任务" glyph="🔍">
-        换个条件，或清空筛选查看全部任务。
+      <EmptyState v-else-if="!rows.length && chips.length" :title="$t('tasks.no_tasks_match_the_filter_criteria')" glyph="🔍">
+        {{ $t('tasks.change_the_criteria_or_clear_filters_to_view_all') }}
         <template #action>
-          <button @click="clearFilters">清空筛选</button>
+          <button @click="clearFilters">{{ $t('tasks.clear_filters') }}</button>
         </template>
       </EmptyState>
-      <EmptyState v-else-if="!rows.length" title="还没有任务" glyph="🚀">
-        上传第一份文档开始处理，或通过 API <code>POST /api/v1/process</code> 提交。
+      <EmptyState v-else-if="!rows.length" :title="t('tasks.no_tasks')" glyph="🚀">
+        <I18nT keypath="tasks.upload_or_api" tag="p" scope="global"><template #endpoint><code>POST /api/v1/process</code></template></I18nT>
         <template #action>
-          <router-link to="/upload"><button class="primary">上传文档</button></router-link>
+          <router-link to="/upload"><button class="primary">{{ t('tasks.upload_document') }}</button></router-link>
         </template>
       </EmptyState>
 
@@ -126,33 +126,33 @@
       <div class="pager" v-if="totalPages > 1">
         <span class="dim range">
           {{ (page - 1) * PAGE_SIZE + 1 }}–{{ Math.min(page * PAGE_SIZE, total) }}
-          / 共 {{ total }} 条
+          {{ $t('tasks.of') }} {{ total }} {{ $t('tasks.items') }}
         </span>
         <div class="pager-ctrl">
-          <button class="pg" :disabled="page <= 1" title="第一页"
+          <button class="pg" :disabled="page <= 1" :title="$t('tasks.first_page')"
                   data-testid="page-first" @click="goPage(1)">«</button>
-          <button class="pg" :disabled="page <= 1" title="上一页"
+          <button class="pg" :disabled="page <= 1" :title="$t('tasks.previous')"
                   data-testid="page-prev" @click="goPage(page - 1)">‹</button>
           <template v-for="(p, i) in pageNumbers" :key="`${p}-${i}`">
             <span v-if="p === 0" class="ellipsis">…</span>
             <button v-else class="pg num" :class="{ on: p === page }"
-                    :disabled="p === page" :title="`第 ${p} 页`"
+                    :disabled="p === page" :title="t('tasks.page_number', { page: p })"
                     :data-testid="`page-${p}`" @click="goPage(p)">{{ p }}</button>
           </template>
-          <button class="pg" :disabled="page >= totalPages" title="下一页"
+          <button class="pg" :disabled="page >= totalPages" :title="$t('tasks.next')"
                   data-testid="page-next" @click="goPage(page + 1)">›</button>
-          <button class="pg" :disabled="page >= totalPages" title="最后一页"
+          <button class="pg" :disabled="page >= totalPages" :title="$t('tasks.last_page')"
                   data-testid="page-last" @click="goPage(totalPages)">»</button>
         </div>
         <label class="jump">
-          跳至
+          {{ $t('tasks.go_to') }}
           <!-- 直接读输入框的值，不用 v-model：type=number 在值违反 min 时不发
                input 事件、纯数字文本经 v-model 取回也可能是空串（两者实测都会让
                跳转静默失效）。这里自己解析并夹取到 [1, totalPages]。 -->
           <input type="text" inputmode="numeric" autocomplete="off" ref="jumpEl"
-                 :value="jumpTo" data-testid="page-jump" placeholder="页码"
+                 :value="jumpTo" data-testid="page-jump" :placeholder="$t('tasks.page_number')"
                  @keyup.enter="applyJump" @blur="applyJump" />
-          页
+          {{ $t('tasks.page') }}
         </label>
       </div>
     </section>
@@ -160,32 +160,29 @@
     <!-- 管理员删除任务：不可恢复，所以先摆清楚删的是哪一份、会删掉什么 -->
     <AppModal v-if="delTarget" @close="closeDelete">
       <div class="del-modal" data-testid="task-delete-modal">
-        <h4>删除任务</h4>
-        <p class="del-lead">
-          「{{ delTarget.file_name }}」将被<strong>永久删除</strong>，无法恢复。
-        </p>
+        <h4>{{ $t('tasks.delete_task') }}</h4>
+        <I18nT keypath="tasks.delete_warning" tag="p" scope="global" class="del-lead"><template #name>{{ delTarget.file_name }}</template><template #permanent><strong>{{ t('tasks.permanently_deleted') }}</strong></template></I18nT>
         <dl class="del-facts">
-          <dt>技能</dt>
+          <dt>{{ $t('tasks.skills') }}</dt>
           <dd>{{ delTarget.skill_name || delTarget.skill_code }}
             <span class="dim">（{{ delTarget.skill_code }}）</span></dd>
-          <dt>页数 / 类型</dt>
-          <dd>{{ delTarget.page_count }} 页 · {{ delTarget.type }}</dd>
-          <dt>上传时间</dt>
+          <dt>{{ $t('tasks.pages_type') }}</dt>
+          <dd>{{ delTarget.page_count }} {{ $t('tasks.pages_c53d75') }} {{ delTarget.type }}</dd>
+          <dt>{{ $t('tasks.upload_time') }}</dt>
           <dd>{{ ts(delTarget.created_at) }}</dd>
-          <dt v-if="delTarget.child_count">内含单据</dt>
+          <dt v-if="delTarget.child_count">{{ $t('tasks.contains_documents') }}</dt>
           <dd v-if="delTarget.child_count">
-            {{ delTarget.child_count }} 份（一并删除）</dd>
+            {{ delTarget.child_count }} {{ $t('tasks.documents_deleted_together') }}</dd>
         </dl>
         <p class="del-scope dim">
-          删除范围：任务记录、识别结果与人工修正、原件与拆分文件、
-          已生成的产出文件。<template v-if="inFlight(delTarget)">
-            该任务仍在处理中，删除后它会停止处理并释放占用的额度。</template>
+          {{ $t('tasks.deletion_scope_task_records_recognition_results_and_manual_corrections') }}<template v-if="inFlight(delTarget)">
+            {{ $t('tasks.this_task_is_still_processing_deleting_it_will_stop') }}</template>
         </p>
         <div class="modal-actions">
           <button class="ghost" data-testid="task-delete-cancel"
-                  @click="closeDelete">取消</button>
+                  @click="closeDelete">{{ $t('tasks.cancel') }}</button>
           <button class="danger" data-testid="task-delete-confirm" :disabled="deleting"
-                  @click="confirmDelete">{{ deleting ? "删除中…" : "确认删除" }}</button>
+                  @click="confirmDelete">{{ deleting ? $t('tasks.deleting') : $t('tasks.confirm_delete') }}</button>
         </div>
       </div>
     </AppModal>
@@ -196,13 +193,13 @@
     <Teleport to="body">
       <div v-if="openCol" ref="menuEl" class="fmenu" :style="menuStyle" @click.stop>
         <template v-if="openCol === 'created'">
-          <label>起<input type="date" v-model="f.date_from" :max="f.date_to || undefined" /></label>
-          <label>止<input type="date" v-model="f.date_to" :min="f.date_from || undefined" /></label>
+          <label>{{ $t('tasks.from') }}<input type="date" v-model="f.date_from" :max="f.date_to || undefined" /></label>
+          <label>{{ $t('tasks.to') }}<input type="date" v-model="f.date_to" :min="f.date_from || undefined" /></label>
         </template>
         <template v-else-if="openCol === 'updated'">
-          <label>起<input type="date" v-model="f.updated_from"
+          <label>{{ $t('tasks.from') }}<input type="date" v-model="f.updated_from"
                           :max="f.updated_to || undefined" /></label>
-          <label>止<input type="date" v-model="f.updated_to"
+          <label>{{ $t('tasks.to') }}<input type="date" v-model="f.updated_to"
                           :min="f.updated_from || undefined" /></label>
         </template>
         <template v-else-if="MULTI_COLS[openCol]">
@@ -221,16 +218,16 @@
           <p v-if="menuNote" class="dim fmenu-note">{{ menuNote }}</p>
         </template>
         <template v-else-if="openCol === 'file_name'">
-          <input type="search" v-model="f.file_name" placeholder="文件名包含…"
+          <input type="search" v-model="f.file_name" :placeholder="$t('tasks.file_name_contains')"
                  @keyup.enter="closeMenu" />
         </template>
         <template v-else-if="openCol === 'pages'">
-          <label>最少<input type="number" min="0" v-model="f.pages_min" placeholder="不限" /></label>
-          <label>最多<input type="number" min="0" v-model="f.pages_max" placeholder="不限" /></label>
+          <label>{{ $t('tasks.min') }}<input type="number" min="0" v-model="f.pages_min" :placeholder="$t('tasks.any')" /></label>
+          <label>{{ $t('tasks.max') }}<input type="number" min="0" v-model="f.pages_max" :placeholder="$t('tasks.any')" /></label>
         </template>
         <div class="fmenu-act">
-          <button class="ghost slim" @click="clearCol(openCol)">清除本列</button>
-          <button class="primary slim" @click="closeMenu">完成</button>
+          <button class="ghost slim" @click="clearCol(openCol)">{{ $t('tasks.clear_this_column') }}</button>
+          <button class="primary slim" @click="closeMenu">{{ $t('tasks.completed') }}</button>
         </div>
       </div>
     </Teleport>
@@ -238,6 +235,10 @@
 </template>
 
 <script setup lang="ts">
+import { I18nT, useI18n } from "vue-i18n";
+const { t, locale } = useI18n();
+import { translateMessage, type MessageDescriptor } from "../i18n";
+
 import TaskSourceSwitch from "../components/TaskSourceSwitch.vue";
 import ApiCallHistory from "../components/ApiCallHistory.vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
@@ -263,20 +264,20 @@ const PAGE_SIZE = 20;
 
 // Columns of the task table. `filter` names the menu each header opens; the
 // keys it owns drive both the ⏷ highlight and the condition chip.
-const COLUMNS = [
-  { key: "created", label: "时间", width: 8, filter: true, keys: ["date_from", "date_to"] },
-  { key: "skill", label: "技能", width: 11, filter: true, keys: ["skill_code"] },
-  { key: "initiator", label: "发起人 / Key", width: 11, filter: true, keys: ["initiator"] },
-  { key: "file_name", label: "文件名", width: 17, filter: true, keys: ["file_name"] },
-  { key: "file_type", label: "类型", width: 5, filter: true, keys: ["file_type"] },
-  { key: "size", label: "大小", width: 5, filter: false, keys: [] },
-  { key: "pages", label: "页数", width: 4, filter: true, keys: ["pages_min", "pages_max"] },
-  { key: "speed", label: "处理速度", width: 10, filter: false, keys: [] },
-  { key: "status", label: "状态", width: 8, filter: true, keys: ["status"] },
-  { key: "updated", label: "更新时间", width: 8, filter: true, keys: ["updated_from", "updated_to"] },
-  { key: "verify", label: "校验", width: 5, filter: true, keys: ["verify"] },
+const COLUMNS = computed(() => [
+  { key: "created", label: t('tasks.time'), width: 8, filter: true, keys: ["date_from", "date_to"] },
+  { key: "skill", label: t('tasks.skill'), width: 11, filter: true, keys: ["skill_code"] },
+  { key: "initiator", label: t('tasks.initiator_key'), width: 11, filter: true, keys: ["initiator"] },
+  { key: "file_name", label: t('tasks.file_name'), width: 17, filter: true, keys: ["file_name"] },
+  { key: "file_type", label: t('tasks.type'), width: 5, filter: true, keys: ["file_type"] },
+  { key: "size", label: t('tasks.size'), width: 5, filter: false, keys: [] },
+  { key: "pages", label: t('tasks.pages'), width: 4, filter: true, keys: ["pages_min", "pages_max"] },
+  { key: "speed", label: t('tasks.processing_speed'), width: 10, filter: false, keys: [] },
+  { key: "status", label: t('tasks.status'), width: 8, filter: true, keys: ["status"] },
+  { key: "updated", label: t('tasks.updated_time'), width: 8, filter: true, keys: ["updated_from", "updated_to"] },
+  { key: "verify", label: t('tasks.verification'), width: 5, filter: true, keys: ["verify"] },
   { key: "act", label: "", width: 8, filter: false, keys: [] },
-] as const;
+] as const);
 
 type ScalarKey = "q" | "date_from" | "date_to" | "file_name" | "pages_min"
   | "pages_max" | "updated_from" | "updated_to";
@@ -360,7 +361,7 @@ const isSet = (k: string): boolean => isMulti(k as FilterKey)
   : !!(f[k as ScalarKey]);
 const activeCols = computed(() => {
   const s = new Set<string>();
-  for (const c of COLUMNS)
+  for (const c of COLUMNS.value)
     if (c.keys.some((k) => isSet(k))) s.add(c.key);
   return s;
 });
@@ -386,7 +387,7 @@ function closeMenu() {
   openCol.value = "";
 }
 function clearCol(key: string) {
-  const col = COLUMNS.find((c) => c.key === key);
+  const col = COLUMNS.value.find((c) => c.key === key);
   for (const k of col?.keys ?? []) {
     if (isMulti(k as FilterKey)) m[k as MultiKey] = [];
     else f[k as ScalarKey] = "";
@@ -397,16 +398,16 @@ function clearCol(key: string) {
 // —— 枚举列的多选菜单（2026-10-15）——
 // 技能 / 发起人 / 类型 / 状态 / 校验 都是可枚举的列，菜单改成复选清单：一列里可以
 // 同时挑多项，列内取并集、列间取交集——与台账接口的重复查询参数同一套契约。
-const MULTI_COLS: Record<string, { key: MultiKey; all: string }> = {
-  skill: { key: "skill_code", all: "全部技能" },
-  initiator: { key: "initiator", all: "全部发起人" },
-  file_type: { key: "file_type", all: "全部类型" },
-  status: { key: "status", all: "全部状态" },
-  verify: { key: "verify", all: "全部" },
-};
-const VERIFY_LABELS: Record<string, string> = {
-  verified: "已校验", error: "有错误", none: "未校验",
-};
+const MULTI_COLS = computed<Record<string, { key: MultiKey; all: string }>>(() => ({
+  skill: { key: "skill_code", all: t('tasks.all_skills') },
+  initiator: { key: "initiator", all: t('tasks.all_initiators') },
+  file_type: { key: "file_type", all: t('tasks.all_types') },
+  status: { key: "status", all: t('tasks.all_statuses') },
+  verify: { key: "verify", all: t('tasks.all') },
+}));
+const VERIFY_LABELS = computed<Record<string, string>>(() => ({
+  verified: t('tasks.verified'), error: t('tasks.with_errors'), none: t('tasks.unverified'),
+}));
 /** Options of the open menu — only one menu is open at a time, so one computed
  *  serves all five columns. */
 const menuOptions = computed<{ value: string; label: string }[]>(() => {
@@ -416,8 +417,7 @@ const menuOptions = computed<{ value: string; label: string }[]>(() => {
       // visible value must remain selectable (9.15 R20)
       return skillList.value.map((s) => ({
         value: s.skill_code,
-        label: `${s.name || s.skill_code}（${s.skill_code}）`
-          + (s.state === "deleted" ? " · 已删除" : ""),
+        label: t(s.state === "deleted" ? 'tasks.deleted_skill_option' : 'tasks.skill_option', { name: s.name || s.skill_code, code: s.skill_code }),
       }));
     case "initiator":
       return initiatorList.value.map((o) => ({
@@ -427,9 +427,9 @@ const menuOptions = computed<{ value: string; label: string }[]>(() => {
       return typeOptions.value.map((t) => ({
         value: t, label: t.replace(".", "").toUpperCase() }));
     case "status":
-      return Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }));
+      return Object.entries(STATUS_LABELS()).map(([value, label]) => ({ value, label }));
     case "verify":
-      return Object.entries(VERIFY_LABELS).map(([value, label]) => ({ value, label }));
+      return Object.entries(VERIFY_LABELS.value).map(([value, label]) => ({ value, label }));
     default:
       return [];
   }
@@ -438,16 +438,16 @@ const menuOptions = computed<{ value: string; label: string }[]>(() => {
 const menuNote = computed(() => {
   if (openCol.value !== "initiator" || initiatorList.value.length) return "";
   return initiatorLoading.value
-    ? "正在读取发起人…"
-    : "暂无发起人可筛选（该租户的任务都早于发起人记录功能）。";
+    ? t('tasks.loading_initiators')
+    : t('tasks.no_initiators_available_to_filter_all_tasks_in_this');
 });
 const picked = (colKey: string): string[] => {
-  const col = MULTI_COLS[colKey];
+  const col = MULTI_COLS.value[colKey];
   return col ? m[col.key] : [];
 };
 const isPicked = (colKey: string, value: string) => picked(colKey).includes(value);
 function togglePicked(colKey: string, value: string) {
-  const col = MULTI_COLS[colKey];
+  const col = MULTI_COLS.value[colKey];
   if (!col) return;
   const cur = m[col.key];
   // always a fresh array: `applied` compares by value, and mutating in place
@@ -455,7 +455,7 @@ function togglePicked(colKey: string, value: string) {
   m[col.key] = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
 }
 function clearPicked(colKey: string) {
-  const col = MULTI_COLS[colKey];
+  const col = MULTI_COLS.value[colKey];
   if (col) m[col.key] = [];
 }
 function onEsc(e: KeyboardEvent) { if (e.key === "Escape") closeMenu(); }
@@ -482,51 +482,52 @@ onUnmounted(() => {
 // —— applied conditions, as removable chips in the top bar ——
 /** Chip wording for a multi-select column: the single pick itself, otherwise
  *  the first one plus how many — a chip has to stay on one line. */
-function pickText(names: string[]): string {
-  return names.length > 1 ? `${names[0]} 等 ${names.length} 项` : names[0];
+function pickText(names: string[]): MessageDescriptor | string {
+  return names.length > 1 ? { key: 'tasks.multiple_selections', params: { first: names[0], count: names.length } } : names[0];
 }
+const selectionText = (names: string[]) => translateMessage(pickText(names));
 const chips = computed(() => {
   const out: { key: string; text: string; clear: () => void }[] = [];
   const range = (key: string, label: string, a: ScalarKey, b: ScalarKey) => {
     if (!f[a] && !f[b]) return;
-    out.push({ key, text: `${label} ${f[a] || "不限"} ~ ${f[b] || "不限"}`,
+    out.push({ key, text: t('tasks.range', { label, from: f[a] || t('tasks.unlimited'), to: f[b] || t('tasks.unlimited') }),
                clear: () => { f[a] = ""; f[b] = ""; } });
   };
-  if (f.q) out.push({ key: "q", text: `关键字「${f.q}」`, clear: () => { f.q = ""; } });
-  range("created", "时间", "date_from", "date_to");
+  if (f.q) out.push({ key: "q", text: t('tasks.keyword', { query: f.q }), clear: () => { f.q = ""; } });
+  range("created", t('tasks.time'), "date_from", "date_to");
   if (m.skill_code.length) {
     out.push({ key: "skill",
-               text: `技能 ${pickText(m.skill_code.map((code) =>
-                 skillList.value.find((x) => x.skill_code === code)?.name || code))}`,
+               text: t('tasks.skill_filter', { selection: selectionText(m.skill_code.map((code) =>
+                 skillList.value.find((x) => x.skill_code === code)?.name || code)) }),
                clear: () => { m.skill_code = []; } });
   }
   if (m.initiator.length) {
     // the option list may not have loaded yet (deep link) — fall back to the
     // raw value's label part instead of showing "user:alice@x.com"
     out.push({ key: "initiator",
-               text: `发起人 ${pickText(m.initiator.map((v) =>
-                 initiatorLabel(initiatorList.value.find((x) => x.value === v)?.label
-                                ?? v.replace(/^(user|api_key):/, ""))))}`,
+               text: t('tasks.initiator_filter', { selection: selectionText(m.initiator.map((v) =>
+                 whoLabel(initiatorList.value.find((x) => x.value === v)?.label
+                                ?? v.replace(/^(user|api_key):/, "")))) }),
                clear: () => { m.initiator = []; } });
   }
-  if (f.file_name) out.push({ key: "file_name", text: `文件名含「${f.file_name}」`,
+  if (f.file_name) out.push({ key: "file_name", text: t('tasks.filename_contains', { name: f.file_name }),
                               clear: () => { f.file_name = ""; } });
   if (m.file_type.length) {
     out.push({ key: "file_type",
-               text: `类型 ${pickText(m.file_type.map((t) =>
-                 t.replace(".", "").toUpperCase()))}`,
+               text: t('tasks.type_filter', { selection: selectionText(m.file_type.map((t) =>
+                 t.replace(".", "").toUpperCase())) }),
                clear: () => { m.file_type = []; } });
   }
-  range("pages", "页数", "pages_min", "pages_max");
+  range("pages", t('tasks.pages'), "pages_min", "pages_max");
   if (m.status.length) {
     out.push({ key: "status",
-               text: `状态 ${pickText(m.status.map((s) => STATUS_LABELS[s] ?? s))}`,
+               text: t('tasks.status_filter', { selection: selectionText(m.status.map((s) => STATUS_LABELS()[s] ?? s)) }),
                clear: () => { m.status = []; } });
   }
-  range("updated", "更新时间", "updated_from", "updated_to");
+  range("updated", t('tasks.updated'), "updated_from", "updated_to");
   if (m.verify.length) {
     out.push({ key: "verify",
-               text: `校验 ${pickText(m.verify.map((v) => VERIFY_LABELS[v] ?? v))}`,
+               text: t('tasks.verification_filter', { selection: selectionText(m.verify.map((v) => VERIFY_LABELS.value[v] ?? v)) }),
                clear: () => { m.verify = []; } });
   }
   return out;
@@ -645,8 +646,8 @@ async function confirmDelete() {
   try {
     const res = await api.deleteTask(r.file_id);
     toast.ok(res.deleted_children
-      ? `任务「${r.file_name}」已删除（含 ${res.deleted_children} 份子单据）`
-      : `任务「${r.file_name}」已删除`);
+      ? t('tasks.deleted_with_children', { name: r.file_name, count: res.deleted_children })
+      : t('tasks.task_deleted', { name: r.file_name }));
     delTarget.value = null;
     // the current page may now be empty: re-read it and step back if so
     const left = (await qc.fetchQuery({
@@ -683,24 +684,25 @@ const ts = (v: string | null) => v ? new Date(v).toLocaleString() : "-";
 /** Ledger timestamps are stacked date-over-time: at 1280 the two 165px
  *  single-line stamps alone pushed the table 127px past the viewport. */
 const tsDate = (v: string | null) =>
-  v ? new Date(v).toLocaleDateString("zh-CN") : "-";
+  v ? new Date(v).toLocaleDateString(locale.value === "en" ? "en-US" : "zh-CN") : "-";
 const tsTime = (v: string | null) =>
-  v ? new Date(v).toLocaleTimeString("zh-CN", { hour12: false }) : "";
+  v ? new Date(v).toLocaleTimeString(locale.value === "en" ? "en-US" : "zh-CN", { hour12: false }) : "";
 function size(n: number | null): string {
   if (n == null) return "-";
   if (n < 1024) return `${n} B`;
   if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1048576).toFixed(2)} MB`;
 }
-const stLabel = (s: string) => STATUS_LABELS[s] ?? s;
+const stLabel = (s: string) => STATUS_LABELS()[s] ?? s;
 
 // 9.15 R21: legacy rows (predating the initiator snapshot) show "—" with a
 // hint instead of a fabricated name
-function initiatorTitle(r: FileRow): string {
-  if (r.initiator_label) return `发起人：${whoLabel(r.initiator_label)}`;
-  return "该任务早于发起人记录功能";
+function initiatorTitle(r: FileRow): MessageDescriptor {
+  if (r.initiator_label === 'anonymous') return { key: 'tasks.anonymous_initiator_title' };
+  if (r.initiator_label) return { key: 'tasks.initiator_title', params: { name: r.initiator_label } };
+  return { key: 'tasks.legacy_initiator' };
 }
-const whoLabel = initiatorLabel;
+const whoLabel = (name: string | null | undefined) => translateMessage(initiatorLabel(name));
 
 // —— per-document processing speed (需求1) ——
 function fmtSeconds(sec: number): string {
@@ -709,10 +711,10 @@ function fmtSeconds(sec: number): string {
   const s = Math.round(sec % 60);
   return `${m}m ${s}s`;
 }
-function speedTitle(r: FileRow): string {
-  if (r.processing_seconds == null) return "处理尚未完成";
-  const pages = r.page_count > 0 ? ` · ${(r.page_count / r.processing_seconds).toFixed(2)} 页/s` : "";
-  return `处理用时 ${fmtSeconds(r.processing_seconds)}${pages}`;
+function speedTitle(r: FileRow): MessageDescriptor {
+  if (r.processing_seconds == null) return { key: 'tasks.processing_incomplete' };
+  return { key: r.page_count > 0 ? 'tasks.processing_duration_rate' : 'tasks.processing_duration',
+    params: { seconds: fmtSeconds(r.processing_seconds), rate: (r.page_count / r.processing_seconds).toFixed(2) } };
 }
 </script>
 

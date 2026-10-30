@@ -2,15 +2,15 @@
   <div class="sample-panel" :class="{ collapsed }">
     <header class="sp-head">
       <template v-if="!collapsed">
-        <strong>参考样本</strong>
-        <select v-if="samples.length" :value="activeId" aria-label="当前参考样本"
+        <strong>{{ $t('samplePanel.reference_sample') }}</strong>
+        <select v-if="samples.length" :value="activeId" :aria-label="$t('samplePanel.current_reference_sample')"
                 @change="selectById(($event.target as HTMLSelectElement).value)">
           <option v-for="s in samples" :key="s.id" :value="s.id">{{ s.file_name }}</option>
         </select>
-        <span v-else class="dim">尚未上传</span>
+        <span v-else class="dim">{{ $t('samplePanel.not_uploaded_yet') }}</span>
       </template>
-      <button class="sp-toggle" :aria-expanded="!collapsed" :title="collapsed ? '展开样本' : '收起样本'"
-              @click="toggleCollapse">{{ collapsed ? '展开样本 ›' : '‹ 收起' }}</button>
+      <button class="sp-toggle" :aria-expanded="!collapsed" :title="collapsed ? $t('samplePanel.expand_sample') : $t('samplePanel.collapse_sample')"
+              @click="toggleCollapse">{{ collapsed ? $t('samplePanel.expand_sample_c5a235') : $t('samplePanel.collapse') }}</button>
     </header>
     <template v-if="!collapsed">
       <div v-if="activeId" class="sp-stage">
@@ -20,23 +20,26 @@
                   @pick="emit('pick', $event)" />
       </div>
       <label v-else class="sp-empty">
-        <span class="upload-mark">＋</span><strong>上传一份参考样本</strong>
-        <span class="dim">对照原件定义字段，也可以从样本生成建议</span>
-        <span class="btn-like">{{ uploading ? '上传中…' : '选择文件' }}</span>
+        <span class="upload-mark">＋</span><strong>{{ $t('samplePanel.upload_a_reference_sample') }}</strong>
+        <span class="dim">{{ $t('samplePanel.define_fields_against_the_original_document_or_generate_suggestions') }}</span>
+        <span class="btn-like">{{ uploading ? $t('samplePanel.uploading') : $t('samplePanel.choose_file') }}</span>
         <input type="file" hidden :disabled="uploading" @change="upload" />
       </label>
       <footer v-if="activeId" class="sp-footer">
-        <span class="dim">{{ samples.length }} 份样本 · 点击原件标注可定位字段</span>
+        <span class="dim">{{ samples.length }} {{ $t('samplePanel.samples_click_an_annotation_on_the_original_to_locate') }}</span>
         <label class="file-btn slim"><input type="file" hidden @change="upload" :disabled="uploading" />
-          <span class="btn-like">{{ uploading ? '上传中…' : '＋ 上传' }}</span></label>
-        <button class="delete-sample" @click="removeSample(activeId)">删除样本</button>
+          <span class="btn-like">{{ uploading ? $t('samplePanel.uploading') : $t('samplePanel.upload') }}</span></label>
+        <button class="delete-sample" @click="removeSample(activeId)">{{ $t('samplePanel.delete_sample') }}</button>
       </footer>
-      <p v-if="parseError" class="dim sp-warn">预解析未成功（{{ parseError }}），仍可手工对照。</p>
+      <p v-if="parseError" class="dim sp-warn">{{ $t('samplePanel.pre_parsing_failed') }}{{ parseError }}{{ $t('samplePanel.you_can_still_compare_manually') }}</p>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
+
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { api } from "../api";
 import DocStage from "./DocStage.vue";
@@ -125,12 +128,12 @@ async function upload(ev: Event) {
     samples.value.push({ id: r.id, file_name: r.file_name, skill_code: code || null, created_at: "" });
     activeId.value = r.id;
     await load();
-    toast.ok("样本已上传");
+    toast.ok(t('samplePanel.sample_uploaded'));
   } catch (e) { if (alive) toast.error(e); }
   finally { uploading.value = false; if (alive) emit("uploading", false); input.value = ""; }
 }
 async function removeSample(id: string) {
-  if (!confirm("删除该样本？仅影响编辑器里的参考文件。")) return;
+  if (!confirm(t('samplePanel.delete_this_sample_only_affects_reference_files_in_the'))) return;
   const code = props.skillCode;
   try {
     await api.studioDeleteSample(id);

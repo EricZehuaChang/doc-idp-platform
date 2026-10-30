@@ -1,43 +1,45 @@
 <template>
-  <AuthCard title="登录" :error="error">
+  <AuthCard :title="$t('login.log_in')" :error="displayError">
     <form @submit.prevent="submit">
-      <label>邮箱
+      <label>{{ $t('login.email') }}
         <input v-model="email" type="email" required autocomplete="username" autofocus />
       </label>
-      <label>密码
+      <label>{{ $t('login.password') }}
         <input v-model="password" type="password" required autocomplete="current-password" />
       </label>
       <button class="primary" type="submit" :disabled="busy">
-        {{ busy ? "登录中…" : "登 录" }}</button>
+        {{ busy ? $t('login.signing_in') : $t('login.sign_in') }}</button>
     </form>
-    <router-link class="aux" to="/forgot">忘记密码？</router-link>
-    <a v-if="ssoEnabled" class="sso" href="/api/v1/auth/oidc/login">🔑 使用企业账号登录（SSO）</a>
+    <router-link class="aux" to="/forgot">{{ $t('login.forgot_password') }}</router-link>
+    <a v-if="ssoEnabled" class="sso" href="/api/v1/auth/oidc/login">{{ $t('login.sign_in_with_enterprise_account_sso') }}</a>
   </AuthCard>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../../api";
 import { setSession } from "../../session";
 import AuthCard from "./AuthCard.vue";
+import { translateMessage, type DisplayMessage } from "../../i18n";
 
 const router = useRouter();
 const route = useRoute();
 const email = ref("");
 const password = ref("");
-const error = ref("");
+const error = ref<DisplayMessage>("");
+const displayError = computed(() => translateMessage(error.value));
 const busy = ref(false);
 const ssoEnabled = ref(false);
 
 const SSO_ERRORS: Record<string, string> = {
-  sso_state: "SSO 会话已过期，请重试",
-  sso_exchange: "SSO 令牌交换失败，请联系管理员检查 IdP 配置",
-  sso_denied: "SSO 账号不可用（可能已被停用）",
+  sso_state: "login.sso_session_expired",
+  sso_exchange: "login.sso_exchange_failed",
+  sso_denied: "login.sso_account_unavailable",
 };
 onMounted(async () => {
   const err = String(route.query.error || "");
-  if (err) error.value = SSO_ERRORS[err] ?? err;
+  if (err) error.value = SSO_ERRORS[err] ? { key: SSO_ERRORS[err] } : err;
   try { ssoEnabled.value = (await api.oidcEnabled()).enabled; } catch { /* probe only */ }
 });
 

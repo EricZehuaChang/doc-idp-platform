@@ -1,3 +1,5 @@
+import { translateMessage, type DisplayMessage } from "./i18n";
+
 // Recognition-result export (review page): turn one reviewed document's result
 // into a downloadable JSON or Markdown file, entirely client-side — the review
 // page already holds the whole result, so no new API surface is needed.
@@ -74,32 +76,32 @@ export function buildResultJson(input: ResultExportInput,
 }
 
 /** Human-readable report: metadata, scalar fields, then one table per detail list. */
-export function buildResultMarkdown(input: ResultExportInput, at: Date): string {
-  const lines: string[] = [
-    `# 识别结果 · ${input.fileName}`,
+export function buildResultMarkdownLines(input: ResultExportInput, at: Date): DisplayMessage[] {
+  const lines: DisplayMessage[] = [
+    { key: "result_export.heading", params: { name: input.fileName } },
     "",
-    `- 文件 ID：\`${input.fileId}\``,
-    `- 状态：${input.statusLabel}`,
-    `- 页数：${input.pageCount}`,
-    `- 校验人：${input.verifiedBy || "—"}`,
-    `- 导出时间：${stamp(at)}`,
+    { key: "result_export.file_id", params: { id: input.fileId } },
+    { key: "result_export.status", params: { status: input.statusLabel } },
+    { key: "result_export.pages", params: { count: input.pageCount } },
+    { key: "result_export.verified_by", params: { name: input.verifiedBy || "—" } },
+    { key: "result_export.exported_at", params: { time: stamp(at) } },
     "",
-    "## 字段",
+    { key: "result_export.fields" },
     "",
   ];
   if (!input.fields.length) {
-    lines.push("（无字段）", "");
+    lines.push({ key: "result_export.no_fields" }, "");
   } else {
-    lines.push("| 字段 | 值 | 置信度 |", "| --- | --- | --- |");
+    lines.push({ key: "result_export.column_headers" }, "| --- | --- | --- |");
     for (const f of input.fields)
       lines.push(`| ${mdCell(f.name)} | ${mdCell(f.value)} | ${f.confidence} |`);
     lines.push("");
   }
   for (const t of input.tables) {
-    lines.push(`## 明细表：${t.name}`, "");
+    lines.push({ key: "result_export.table", params: { name: t.name } }, "");
     const cols = columnsOf(t.rows);
-    if (!t.rows.length) lines.push("（无明细行）", "");
-    else if (!cols.length) lines.push("（无可见列）", "");
+    if (!t.rows.length) lines.push({ key: "result_export.no_rows" }, "");
+    else if (!cols.length) lines.push({ key: "result_export.no_columns" }, "");
     else {
       lines.push(`| ${cols.map(mdCell).join(" | ")} |`,
                  `| ${cols.map(() => "---").join(" | ")} |`);
@@ -108,7 +110,12 @@ export function buildResultMarkdown(input: ResultExportInput, at: Date): string 
       lines.push("");
     }
   }
-  return lines.join("\n");
+  return lines;
+}
+
+/** Resolve display messages only at the export boundary, using the current locale. */
+export function buildResultMarkdown(input: ResultExportInput, at: Date): string {
+  return buildResultMarkdownLines(input, at).map(translateMessage).join("\n");
 }
 
 function downloadText(filename: string, text: string, mime: string): void {

@@ -6,7 +6,7 @@
   <div class="gallery">
     <Skeleton v-if="isLoading" :rows="3" />
     <p v-else-if="!templates.length" class="dim none">
-      没有内置模板可用，请从空白新建。
+      {{ $t('skillTemplateGallery.no_built_in_template_available_please_create_from_blank') }}
     </p>
     <div v-else class="cards">
       <button v-for="t in templates" :key="t.id" class="card"
@@ -14,13 +14,13 @@
               @click="use(t)">
         <span class="card-head">
           <span class="name">{{ t.name }}</span>
-          <span v-if="importing === t.id" class="dim tag">导入中…</span>
-          <span v-else class="tag">{{ t.field_count }} 个字段</span>
+          <span v-if="importing === t.id" class="dim tag">{{ $t('skillTemplateGallery.importing') }}</span>
+          <span v-else class="tag">{{ t.field_count }} {{ $t('skillTemplateGallery.fields') }}</span>
         </span>
         <span class="desc">{{ t.description }}</span>
         <span class="meta dim">
-          <span v-if="t.table_count">明细表 {{ t.column_count }} 列</span>
-          <span v-if="t.validator_count">校验 {{ t.validator_count }} 条</span>
+          <span v-if="t.table_count">{{ $t('skillTemplateGallery.detail_table') }} {{ t.column_count }} {{ $t('skillTemplateGallery.column') }}</span>
+          <span v-if="t.validator_count">{{ $t('skillTemplateGallery.validation') }} {{ t.validator_count }} {{ $t('skillTemplateGallery.items') }}</span>
           <span v-if="t.doc_type_hint" class="hint-type">{{ t.doc_type_hint }}</span>
         </span>
       </button>
@@ -54,7 +54,7 @@ async function use(t: SkillTemplate) {
   importing.value = t.id;
   try {
     const r = await api.skillTemplateImport(t.id);
-    toast.ok(`已从模板「${t.name}」创建草稿，核对字段后发布即可使用`);
+    toast.ok({ key: "skillTemplateGallery.created_draft", params: { name: t.name } });
     qc.invalidateQueries({ queryKey: ["skills"] });
     router.push(`/skills/${r.skill_code}`);
   } catch (e) {

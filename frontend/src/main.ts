@@ -2,6 +2,7 @@ import { VueQueryPlugin } from "@tanstack/vue-query";
 import { createApp } from "vue";
 import { createRouter, createWebHashHistory } from "vue-router";
 import App from "./App.vue";
+import { i18n, initI18n } from "./i18n";
 import { probeAuth, session } from "./session";
 import "./style.css";
 import ChangePasswordView from "./views/auth/ChangePasswordView.vue";
@@ -59,7 +60,9 @@ router.beforeEach(async (to) => {
 
 // TanStack Query (caching design §9.0 layer ①): server state cached across
 // route hops; stale-while-revalidate keeps weak networks usable.
+initI18n();
 createApp(App)
+  .use(i18n)
   .use(router)
   .use(VueQueryPlugin, {
     queryClientConfig: {

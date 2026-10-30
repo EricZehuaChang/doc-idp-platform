@@ -1,12 +1,12 @@
 <template>
   <main class="page">
-    <PageHeader title="看板" desc="用量趋势与技能质量：credits 消耗、直通率与修正率。" />
+    <PageHeader :title="$t('dashboard.dashboard')" :desc="$t('dashboard.usage_trends_and_skill_quality_credits_consumption_straight_through')" />
 
     <div class="charts">
       <!-- credits by day -->
       <section class="panel">
         <div class="chart-head">
-          <h3>Credits 消耗趋势</h3>
+          <h3>{{ $t('dashboard.credits_consumption_trend') }}</h3>
           <div class="ranges">
             <button v-for="r in RANGES" :key="r.d" class="range"
                     :class="{ primary: days === r.d }" @click="days = r.d">{{ r.label }}</button>
@@ -18,9 +18,9 @@
       <!-- credits by skill -->
       <section class="panel">
         <div class="chart-head">
-          <h3>按技能用量</h3>
+          <h3>{{ $t('dashboard.usage_by_skill') }}</h3>
           <select v-model="skillFilter" class="sel">
-            <option value="">全部技能</option>
+            <option value="">{{ $t('dashboard.all_skills') }}</option>
             <option v-for="s in skills" :key="s.skill_code" :value="s.skill_code">
               {{ s.name }}</option>
           </select>
@@ -30,36 +30,37 @@
     </div>
 
     <!-- skill quality (former stats page) -->
-    <h2 class="q-head">技能质量</h2>
-    <p class="dim">修正率 = 人工改动字段数 / 已决文件数；直通率 = 免人审直接完成占比。</p>
+    <h2 class="q-head">{{ $t('dashboard.skill_quality') }}</h2>
+    <p class="dim">{{ $t('dashboard.correction_rate_manually_edited_fields_decided_files_straight_through') }}</p>
     <div class="cards">
       <div v-for="s in quality" :key="s.skill_code" class="card">
         <div class="card-head">
           <strong>{{ s.skill_code }}</strong>
-          <span class="dim">{{ s.total }} 文件</span>
+          <span class="dim">{{ s.total }} {{ $t('dashboard.file') }}</span>
         </div>
         <div class="metrics">
           <div class="metric"><span class="num">{{ pct(s.straight_through_rate) }}</span>
-            <span class="dim">直通率</span></div>
+            <span class="dim">{{ $t('dashboard.straight_through_rate') }}</span></div>
           <div class="metric">
             <span class="num" :class="{ warn: (s.correction_rate ?? 0) > 0.3 }">
               {{ pct(s.correction_rate) }}</span>
-            <span class="dim">修正率</span></div>
+            <span class="dim">{{ $t('dashboard.correction_rate') }}</span></div>
           <div class="metric"><span class="num">{{ s.by_status["pending_verification"] || 0 }}</span>
-            <span class="dim">待审积压</span></div>
+            <span class="dim">{{ $t('dashboard.pending_review_backlog') }}</span></div>
         </div>
         <div v-if="s.top_corrected_fields.length" class="hot">
-          <span class="dim">高频被改：</span>
+          <span class="dim">{{ $t('dashboard.most_frequently_edited') }}</span>
           <span v-for="f in s.top_corrected_fields" :key="f.field" class="chip">
             {{ f.field }} ×{{ f.count }}</span>
         </div>
       </div>
     </div>
-    <p v-if="!quality.length" class="dim">暂无质量数据——跑一些任务并人工校验后出现。</p>
+    <p v-if="!quality.length" class="dim">{{ $t('dashboard.no_quality_data_yet_it_will_appear_after_running') }}</p>
   </main>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import { useQuery } from "@tanstack/vue-query";
 import { computed, defineComponent, h, ref } from "vue";
 import { api, type SkillStat } from "../api";
@@ -91,11 +92,12 @@ const BarChart = defineComponent({
            color: { type: String, default: "var(--accent)" },
            unit: { type: String, default: "" } },
   setup(props) {
+    const { t } = useI18n();
     return () => {
       const items = props.items;
       if (!items.length)
         return h("p", { class: "dim", style: "padding:30px 0;text-align:center" },
-                 "暂无数据");
+                 t('dashboard.no-data'));
       const W = 640, H = 220, padL = 44, padB = 34, padT = 12;
       const max = Math.max(...items.map((i) => i.value), 1);
       const bw = Math.min(56, (W - padL) / items.length * 0.6);
