@@ -593,16 +593,15 @@ onBeforeUnmount(() => {
 .page-inner img, .page-inner canvas { display: block; background: #fff;
   user-select: none; -webkit-user-drag: none; }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-/* selected-field highlight: translucent amber, thin — must never hide the text
-   under it (需求6) */
-.hl { fill: rgba(240, 180, 41, 0.10); stroke: var(--accent); stroke-width: 2; }
-/* located fields: faint translucent boxes that never fight the document;
-   each table cell draws its own box(es), not one table-wide block */
-.fieldbox { fill: rgba(90, 170, 255, 0.04); stroke: rgba(90, 170, 255, 0.30);
+/* Outline-only locations keep the source readable even when many table cells
+   share the same OCR region. Per-box alpha fills accumulate into an opaque mask. */
+.hl { fill: none; stroke: var(--accent); stroke-width: 2; }
+.fieldbox { fill: none; stroke: rgba(90, 170, 255, 0.30);
   stroke-width: 1.2; }
-.fieldbox.pick { pointer-events: auto; cursor: pointer; }
-.fieldbox.pick:hover { fill: rgba(90, 170, 255, 0.12); stroke: var(--blue); stroke-width: 2; }
-.fieldbox.active { fill: rgba(240, 180, 41, 0.12); stroke: var(--accent); stroke-width: 2; }
+/* A transparent interior must still support canvas -> field selection. */
+.fieldbox.pick { pointer-events: all; cursor: pointer; }
+.fieldbox.pick:hover { stroke: var(--blue); stroke-width: 2; }
+.fieldbox.active { stroke: var(--accent); stroke-width: 2; }
 .region { stroke-width: 3; pointer-events: none; }
 .region.seal { fill: rgba(229, 72, 77, 0.14); stroke: #e5484d; }
 .region.signature { fill: rgba(90, 170, 255, 0.12); stroke: var(--blue); }
