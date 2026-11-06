@@ -339,8 +339,12 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     return SubmitResponse(transaction_id=txn_id, files=out)
 
 
-_IMMUTABLE = {"Cache-Control": "private, max-age=86400, immutable",
-              "Vary": "Authorization"}
+def _preview_headers() -> dict[str, str]:
+    # A role can be downgraded while its session token stays the same. Check
+    # the tenant administrator's live scope before reusing a cached original.
+    revalidate = current_actor().get("role") == "tenant_admin"
+    policy = "private, no-cache" if revalidate else "private, max-age=86400, immutable"
+    return {"Cache-Control": policy, "Vary": "Authorization"}
 
 
 @router.get("/files/{file_id}/download")
@@ -370,7 +374,7 @@ async def download(file_id: str, save: bool = False):
         # (frontend caching design v0.2 §9.0 layer ③). Vary keeps one browser's
         # cache from serving it across accounts now that visibility is per user.
         return FileResponse(st.local_path(f.storage_path),
-                            filename=f.file_name, headers=_IMMUTABLE)
+                            filename=f.file_name, headers=_preview_headers())
 
 
 @router.get("/files/{file_id}/preview")
@@ -392,7 +396,7 @@ async def preview(file_id: str):
         suffix = Path(f.file_name).suffix.lower()
         stem = Path(f.file_name).stem
     st = get_storage()
-    immutable = _IMMUTABLE
+    headers = _preview_headers()
     cached_key = f"preview/{file_id}.pdf"
     has_cache = (suffix in _OFFICE_PREVIEW
                  and st.exists(cached_key) and st.size(cached_key) > 0)
@@ -400,15 +404,15 @@ async def preview(file_id: str):
         if not has_cache:
             raise HTTPException(404, detail=_ORIGINAL_MISSING)
         return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
-                            headers=immutable)
+                            headers=headers)
     if suffix in (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"):
         return FileResponse(st.local_path(f.storage_path),
-                            filename=f"{stem}{suffix}", headers=immutable)
+                            filename=f"{stem}{suffix}", headers=headers)
     if suffix not in _OFFICE_PREVIEW:
         raise HTTPException(422, f"{suffix} 格式暂不支持原件预览，请下载原件查看")
     if has_cache:
         return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
-                            headers=immutable)
+                            headers=headers)
     soffice = _find_soffice()
     if not soffice:
         raise HTTPException(422, "该格式的原件预览需要服务器安装 LibreOffice，"
@@ -418,7 +422,7 @@ async def preview(file_id: str):
         # re-check under the lock: a concurrent request may have just converted
         if st.exists(cached_key) and st.size(cached_key) > 0:
             return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
-                                headers=immutable)
+                                headers=headers)
         work_dir = Path(tempfile.mkdtemp(prefix=f"idp-preview-{file_id}-"))
         try:
             out = await _convert_office_to_pdf(soffice, src, work_dir)
@@ -428,7 +432,7 @@ async def preview(file_id: str):
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
     return FileResponse(st.local_path(cached_key), filename=f"{stem}.pdf",
-                        headers=immutable)
+                        headers=headers)
 
 
 def _is_layout_txn(txn: Transaction) -> bool:

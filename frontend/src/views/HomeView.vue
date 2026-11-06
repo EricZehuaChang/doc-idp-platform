@@ -56,7 +56,7 @@
               <td>{{ r.page_count }}</td>
               <td><span class="chip" :class="`chip-${r.status}`">{{ stLabel(r.status) }}</span></td>
               <td class="row-act">
-                <router-link v-if="r.status === 'pending_verification'"
+                <router-link v-if="r.can_review && r.status === 'pending_verification'"
                              :to="reviewLink(r.file_id)">
                   <button class="primary slim">Verify</button></router-link>
                 <router-link v-else :to="reviewLink(r.file_id)">

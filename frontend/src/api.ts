@@ -18,6 +18,9 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (resp.status === 401 && url === "/api/v1/auth/login") {
+    throw new Error(i18n.global.t("login.check_credentials"));
+  }
   if (resp.status === 401 && session.authRequired) {
     clearSession();
     window.location.hash = "#/login";
@@ -122,6 +125,7 @@ export interface DocumentView {
   effective_fields: string[];
 }
 export interface ReviewItem {
+  can_review: boolean;
   file_id: string; file_name: string; status: string;
   result: Record<string, FieldCell | Record<string, string>[]>;
   pages: { page_no: number; width: number; height: number }[];
@@ -285,6 +289,7 @@ export interface HomeStats {
   queued: number; processing: number; today_completed: number;
 }
 export interface FileRow {
+  can_review: boolean;
   file_id: string; transaction_id: string; file_name: string; skill_code: string;
   /** 9.15 R20: skill display name (falls back to the code server-side) */
   skill_name?: string | null;
@@ -495,6 +500,8 @@ export const api = {
     req("PATCH", `/api/v1/review/${id}/fields`, { edits }),
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
+  downloadOriginal: (id: string, filename: string) =>
+    downloadFile(`/api/v1/files/${id}/download?save=1`, filename),
   downloadUrl: (id: string) => `/api/v1/files/${id}/download`,
   /** renderable original for the review left pane: Office files come back as
    *  a server-converted PDF (需求3), PDF/images stream as-is */
@@ -727,8 +734,8 @@ export const api = {
           provider_used: string }>("POST", "/api/v1/studio/generate-fields", body),
 
   // account (§11.8)
-  login: (email: string, password: string) =>
-    req<LoginResult>("POST", "/api/v1/auth/login", { email, password }),
+  login: (email: string, password: string, tenantId?: string) =>
+    req<LoginResult>("POST", "/api/v1/auth/login", { email, password, tenant_id: tenantId }),
   forgot: (email: string) => req("POST", "/api/v1/auth/forgot", { email }),
   reset: (token: string, password: string) =>
     req("POST", "/api/v1/auth/reset", { token, password }),

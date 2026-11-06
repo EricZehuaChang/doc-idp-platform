@@ -34,7 +34,8 @@ _PUBLIC_API_PATHS = {"/api/v1/auth/login", "/api/v1/auth/activate",
                      "/api/v1/auth/oidc/enabled", "/api/v1/auth/oidc/login",
                      "/api/v1/auth/oidc/callback"}
 
-_ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
+USER_ROLES = ("viewer", "operator", "tenant_admin", "admin")
+_ROLE_RANK = {role: rank for rank, role in enumerate(USER_ROLES)}
 
 
 def current_tenant() -> str:
@@ -48,11 +49,9 @@ def current_actor() -> dict:
 
 @contextmanager
 def as_tenant(tenant_id: str):
-    """Platform-operator write scope (§12.4 manual billing ops): sessions
-    opened inside run with the RLS GUC pinned to the TARGET tenant, so a
-    cross-tenant topup/gift insert passes the WITH CHECK policy. Use only for
-    audited platform actions — never to read tenant business data (support
-    access has its own authorization trail, §11.10 rule 2)."""
+    """Pin the tenant GUC of sessions opened inside this block. Callers must
+    establish the scope via credential resolution, account login, or an
+    explicitly authorized platform action before reading tenant business data."""
     token = _tenant_ctx.set(tenant_id)
     try:
         yield
@@ -61,7 +60,7 @@ def as_tenant(tenant_id: str):
 
 
 def has_role(min_role: str) -> bool:
-    """Role-rank check (admin > operator > viewer). Unknown roles rank below
+    """Role-rank check (admin > tenant_admin > operator > viewer). Unknown roles rank below
     everything: legacy/bogus rows deny instead of KeyError-500."""
     return _ROLE_RANK.get(current_actor()["role"], -1) >= _ROLE_RANK[min_role]
 
@@ -131,12 +130,18 @@ async def _resolve_bearer(token: str) -> tuple[str, dict] | None:
     except security.InvalidTokenError:
         payload = None
     if payload is not None:
-        async with sf() as s:
-            user = await s.get(User, payload.get("sub"))
+        # RLS must use the signed tenant for this lookup as well as for the
+        # request itself. A session cannot follow an account moved to a new tenant.
+        tenant = payload.get("tenant")
+        if not isinstance(tenant, str) or not tenant:
+            return None
+        with as_tenant(tenant):
+            async with sf() as s:
+                user = await s.get(User, payload.get("sub"))
         # a password reset bumps session_epoch: tokens minted before it (missing
         # claim = epoch 0) no longer resolve — the reset really cuts old
         # sessions, including one an attacker may still hold
-        if user is None or not user.active \
+        if user is None or user.tenant_id != tenant or not user.active \
                 or payload.get("ep", 0) != user.session_epoch:
             return None
         return user.tenant_id, {"name": user.email, "role": user.role, "user_id": user.id,

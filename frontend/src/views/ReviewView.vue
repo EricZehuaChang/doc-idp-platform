@@ -158,6 +158,8 @@
       <div class="actions">
         <!-- export is read-only and independent of the lock: an already-decided
              document is exactly the one people want to hand downstream -->
+        <button class="ghost" @click="api.downloadOriginal(detail.file_id, detail.file_name).catch(toast.error)">
+          {{ $t('docStage.download_original') }}</button>
         <button class="ghost" :disabled="!activeItem"
                 :title="$t('review.export_current_document_recognition_results_json_field_values_and')"
                 @click="exportResult('json')">{{ $t('review.export_json') }}</button>
@@ -171,7 +173,7 @@
               <span class="dim">{{ a.size != null ? Math.round(a.size / 1024) + " KB" : "" }}
                 {{ a.status === "error" ? $t('review.failed') : a.searchable ? $t('review.searchable') : "" }}</span>
               <button v-if="a.status === 'ready'" class="ghost"
-                      @click="api.artifactDownload(a.artifact_id, a.name)">{{ $t('review.download') }}</button>
+                      @click="api.artifactDownload(a.artifact_id, a.name).catch(toast.error)">{{ $t('review.download') }}</button>
             </li>
           </ul>
         </details>
@@ -180,7 +182,7 @@
                 @click="exportResult('md')">{{ $t('review.export_md') }}</button>
         <button v-if="!locked && reviewable" class="primary big" @click="acquire">
           {{ $t('review.start_validation_lock_l') }}</button>
-        <span v-else-if="!locked" class="dim decided-note">{{ $t('review.this_document_has_been_processed_and_is_read_only') }}</span>
+        <span v-else-if="!locked" class="dim decided-note">{{ activeItem?.can_review ? t('review.this_document_has_been_processed_and_is_read_only') : t('review.read_only') }}</span>
         <template v-else>
           <button class="ghost" @click="saveEdits" :disabled="!dirty">
             {{ $t('review.save_corrections_s') }}<span v-if="dirty" class="dot">●</span></button>
@@ -280,7 +282,7 @@ const activeItem = computed<ReviewItem | null>(() => {
   return detail.value.children.find((c) => c.file_id === activeFileId.value)
     ?? detail.value.children[0];
 });
-const reviewable = computed(() => activeItem.value?.status === "pending_verification");
+const reviewable = computed(() => activeItem.value?.can_review && activeItem.value.status === "pending_verification");
 const activePartIdx = computed(() => {
   const kids = detail.value?.children ?? [];
   const idx = kids.findIndex((c) => c.file_id === activeItem.value?.file_id);
@@ -585,7 +587,7 @@ function setCellHit(t: string, ri: number, col: string, page: number, bbox: numb
 // unsaved-draft persistence (caching design §9.0 layer ④)
 const draftKey = () => `idp_draft_${activeItem.value?.file_id ?? props.fileId}`;
 function saveDraft() {
-  if (dirty.value) sessionStorage.setItem(draftKey(), JSON.stringify(edits.value));
+  if (activeItem.value?.can_review && dirty.value) sessionStorage.setItem(draftKey(), JSON.stringify(edits.value));
 }
 function restoreDraft() {
   const raw = sessionStorage.getItem(draftKey());
@@ -613,7 +615,7 @@ function syncFromDetail() {
   }
   tableEdits.value = tEdits;
   tableOriginal.value = tOrig;
-  restoreDraft();
+  if (activeItem.value?.can_review) restoreDraft();
 }
 function resetPartState() {
   locked.value = false;
@@ -679,6 +681,7 @@ async function acquire() {
   catch (e) { toast.error(e); }
 }
 async function saveEdits(): Promise<boolean> {
+  if (!locked.value || !activeItem.value?.can_review) return false;
   const changed: { field: string; value: string; bbox?: number[]; page?: number;
                    rows?: Record<string, string>[] }[] =
     Object.keys(edits.value)

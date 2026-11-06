@@ -38,11 +38,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useQueryClient } from "@tanstack/vue-query";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import HelpPanel from "./components/HelpPanel.vue";
 import Toasts from "./components/Toasts.vue";
 import { clearSession, session } from "./session";
+
+const queryClient = useQueryClient();
+// A subsequent login can see a smaller set of tasks, even in the same tenant.
+watch(() => session.token, () => queryClient.clear(), { flush: "sync" });
 
 const route = useRoute();
 const router = useRouter();

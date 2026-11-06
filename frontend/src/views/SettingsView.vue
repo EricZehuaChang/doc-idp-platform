@@ -52,6 +52,7 @@
         <select v-model="invRole">
           <option value="viewer">{{ $t('settings.viewer_read_only') }}</option>
           <option value="operator">{{ $t('settings.operator_review') }}</option>
+          <option value="tenant_admin">{{ $t('settings.tenant_admin') }}</option>
           <option value="admin">{{ $t('settings.admin_manage') }}</option>
         </select>
         <button class="primary" @click="invite">{{ $t('settings.email_invitation') }}</button>
@@ -67,6 +68,7 @@
             <td>
               <select :value="u.role" @change="setRole(u, ($event.target as HTMLSelectElement).value)">
                 <option value="viewer">viewer</option><option value="operator">operator</option>
+                <option value="tenant_admin">{{ $t('settings.tenant_admin') }}</option>
                 <option value="admin">admin</option>
               </select>
             </td>
@@ -458,7 +460,7 @@ import { useI18n } from "vue-i18n";
 const { t, locale } = useI18n();
 import { setLanguage } from "../i18n";
 import { session } from "../session";
-const isAdmin = computed(() => !session.authRequired || session.role === "admin");
+const isAdmin = computed(() => session.authRequired === false || session.role === "admin");
 
 import AppModal from "../components/AppModal.vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";

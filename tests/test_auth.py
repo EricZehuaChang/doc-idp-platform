@@ -93,6 +93,78 @@ async def test_role_gate_on_user_creation(authed_app):
     assert r.status_code == 403                 # operator cannot mint users
 
 
+async def test_tenant_admin_assignment_and_revocation(authed_app):
+    hdr = {"Authorization": f"Bearer {await _login(authed_app)}"}
+    member = {"email": "lead@example.com", "password": "lead-password",
+              "role": "tenant_admin"}
+    created = await authed_app.post("/api/v1/auth/users", headers=hdr, json=member)
+    assert created.status_code == 201, created.text
+    user_id = created.json()["id"]
+    token = await _login(authed_app, member["email"], member["password"])
+    lead = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "foreign"}
+    me = (await authed_app.get("/api/v1/auth/me", headers=lead)).json()
+    assert (me["role"], me["tenant_id"]) == ("tenant_admin", "default")
+
+    # A tenant-admin session may not create privileged accounts, change its
+    # own role, or enter the platform administration surface.
+    assert (await authed_app.post("/api/v1/auth/users", headers=lead,
+                                  json={**member, "tenant_id": "foreign"})).status_code == 403
+    assert (await authed_app.patch(f"/api/v1/auth/users/{user_id}", headers=lead,
+                                   json={"role": "admin"})).status_code == 403
+    assert (await authed_app.get("/api/v1/settings/api-keys", headers=lead)).status_code == 403
+    assert (await authed_app.get("/api/v1/billing/account", headers=lead)).status_code == 403
+
+    for role in ("operator", "tenant_admin"):
+        r = await authed_app.patch(f"/api/v1/auth/users/{user_id}", headers=hdr, json={"role": role})
+        assert r.status_code == 200, r.text
+        assert (await authed_app.get("/api/v1/auth/me", headers=lead)).json()["role"] == role
+
+
+async def test_customer_admin_cannot_provision_across_tenants(authed_app):
+    platform = {"Authorization": f"Bearer {await _login(authed_app)}"}
+    admin = {"email": "customer@example.com", "password": "customer-pass-123",
+             "role": "admin", "tenant_id": "customer"}
+    created = await authed_app.post("/api/v1/auth/users", headers=platform, json=admin)
+    assert created.status_code == 201, created.text
+    customer = {"Authorization": f"Bearer {await _login(authed_app, admin['email'], admin['password'])}"}
+    lead = {"email": "lead@example.com", "password": "lead-password", "role": "tenant_admin"}
+    denied = await authed_app.post("/api/v1/auth/users", headers=customer,
+                                   json={**lead, "tenant_id": "foreign"})
+    assert denied.status_code == 403
+    local = await authed_app.post("/api/v1/auth/users", headers=customer, json=lead)
+    assert local.status_code == 201, local.text
+    assert local.json()["tenant_id"] == "customer"
+    # A valid signature alone must never authorize looking up a different tenant's row.
+    mismatched = security.create_session_token(user_id=local.json()["id"], tenant_id="foreign",
+                                                role="tenant_admin", email=lead["email"])
+    assert (await authed_app.get("/api/v1/auth/me", headers={
+        "Authorization": f"Bearer {mismatched}"})).status_code == 401
+
+
+async def test_login_disambiguates_by_explicit_tenant(authed_app):
+    platform = {"Authorization": f"Bearer {await _login(authed_app)}"}
+    base = {"email": "shared@example.com", "role": "tenant_admin"}
+    for tenant in ("tenant-a", "tenant-b"):
+        created = await authed_app.post("/api/v1/auth/users", headers=platform,
+                                        json={**base, "tenant_id": tenant, "password": f"{tenant}-pw"})
+        assert created.status_code == 201, created.text
+
+    creds = {"email": base["email"], "password": "tenant-b-pw"}
+    ambiguous = await authed_app.post("/api/v1/auth/login", json=creds)
+    mismatch = await authed_app.post("/api/v1/auth/login", json={**creds, "tenant_id": "tenant-a"})
+    missing = await authed_app.post("/api/v1/auth/login", json={**creds, "tenant_id": "missing"})
+    assert ambiguous.status_code == mismatch.status_code == missing.status_code == 401
+    assert ambiguous.json() == mismatch.json() == missing.json()
+
+    for tenant in ("tenant-a", "tenant-b"):
+        matched = await authed_app.post("/api/v1/auth/login", headers={"X-Tenant-Id": "foreign"},
+                                        json={**creds, "password": f"{tenant}-pw", "tenant_id": tenant})
+        assert matched.status_code == 200, matched.text
+        token = matched.json()["access_token"]
+        me = await authed_app.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200 and me.json()["tenant_id"] == tenant
+
+
 async def test_disabled_user_rejected_next_request(authed_app):
     admin_token = await _login(authed_app)
     hdr = {"Authorization": f"Bearer {admin_token}"}

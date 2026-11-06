@@ -22,7 +22,7 @@ from app.models import AuditLog, Correction, FileRecord, Transaction
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant, require_role
 
-from app.visibility import require_file, visible_file_cond
+from app.visibility import require_file, reviewable_file_cond, visible_file_cond
 
 router = APIRouter(prefix="/api/v1/review", tags=["review"])
 
@@ -45,10 +45,6 @@ def _lock_expired(f: FileRecord) -> bool:
         return True
     locked_at = f.locked_at if f.locked_at.tzinfo else f.locked_at.replace(tzinfo=timezone.utc)
     return _now() - locked_at > LOCK_TTL
-
-
-async def _get_file(s, file_id: str) -> FileRecord:
-    return await require_file(s, file_id)
 
 
 def _pages(f: FileRecord) -> list[dict]:
@@ -141,15 +137,19 @@ async def detail(file_id: str):
     (bbox overlay coordinate base — bboxes live in page pixel space)."""
     sf = session_factory()
     async with sf() as s:
-        requested = await _get_file(s, file_id)
+        requested = await require_file(s, file_id)
         root = requested if requested.parent_file_id is None \
-            else await _get_file(s, requested.parent_file_id)
+            else await require_file(s, requested.parent_file_id)
         children = (await s.execute(
             select(FileRecord)
             .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    FileRecord.parent_file_id == root.id)
             .order_by(FileRecord.created_at, FileRecord.id))).scalars().all()
+        file_ids = [root.id] + [child.id for child in children]
+        reviewable_ids = set((await s.scalars(select(FileRecord.id).where(
+            FileRecord.id.in_(file_ids), reviewable_file_cond()))).all())
         payload = _detail_payload(root)
+        payload["can_review"] = root.id in reviewable_ids
         payload["children"] = []
         payload["child_count"] = len(children)
         payload["pending_children"] = 0
@@ -163,6 +163,7 @@ async def detail(file_id: str):
         child_payloads = []
         for child in children:
             item = _detail_payload(child)
+            item["can_review"] = child.id in reviewable_ids
             item["page_offset"] = offset
             # 9.15 WP4 (§3.6): classification metadata for advanced children —
             # page mapping prefers source_pages; legacy children keep the
@@ -192,7 +193,7 @@ async def assign(file_id: str, body: AssignBody,
                  x_user: str = Header(default="anonymous")):
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
+        f = await require_file(s, file_id, for_review=True)
         f.assignee = body.assignee
         s.add(AuditLog(tenant_id=f.tenant_id, actor=_identity(x_user), action="review.assign",
                        detail={"file_id": file_id, "assignee": body.assignee}))
@@ -207,7 +208,7 @@ async def lock(file_id: str, x_user: str = Header(default="anonymous")):
     user = _identity(x_user)
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
+        f = await require_file(s, file_id, for_review=True)
         if f.status != "pending_verification":
             raise HTTPException(400, f"file not reviewable, status={f.status}")
         if f.locked_by and f.locked_by != user and not _lock_expired(f):
@@ -222,7 +223,7 @@ async def lock(file_id: str, x_user: str = Header(default="anonymous")):
 async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
+        f = await require_file(s, file_id, for_review=True)
         if f.locked_by == _identity(x_user):
             f.locked_by = None
             f.locked_at = None
@@ -253,7 +254,7 @@ async def patch_fields(file_id: str, body: FieldsPatch,
     user = _identity(x_user)
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
+        f = await require_file(s, file_id, for_review=True)
         if f.locked_by != user or _lock_expired(f):
             raise HTTPException(423, "acquire the lock before editing")
         txn = await s.get(Transaction, f.transaction_id)
@@ -330,7 +331,7 @@ async def reject(file_id: str, body: DecisionBody | None = None,
 async def _decide(file_id: str, new_status: str, actor: str, comment: str) -> dict:
     sf = session_factory()
     async with sf() as s:
-        f = await _get_file(s, file_id)
+        f = await require_file(s, file_id, for_review=True)
         if f.status != "pending_verification":
             raise HTTPException(400, f"file not reviewable, status={f.status}")
         f.status = new_status

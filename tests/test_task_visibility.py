@@ -13,7 +13,7 @@ async def env(tmp_path, monkeypatch):
         from app.db import session_factory
         from app.storage import get_storage
         users = {name: await _seed_user(f'{name}@example.com', role) for name, role in
-                 [('admin', 'admin'), ('a', 'operator'), ('b', 'operator'), ('v', 'viewer')]}
+                 [('admin', 'admin'), ('ta', 'tenant_admin'), ('a', 'operator'), ('b', 'operator'), ('v', 'viewer')]}
         headers = {name: _headers(u) for name, u in users.items()}
         async with session_factory()() as s:
             for name, owner, kind in [('ka', 'a', 'agent'), ('kb', 'b', 'agent'), ('app', None, 'application')]:
@@ -58,6 +58,7 @@ async def env(tmp_path, monkeypatch):
 async def test_visibility_matrix(env):
     c, headers, _ = env
     expected = {'admin': {'a', 'b', 'ka', 'kb', 'app', 'legacy', 'assigned'},
+                'ta': {'a', 'b', 'ka', 'kb', 'app', 'legacy', 'assigned'},
                 'a': {'a', 'ka'}, 'b': {'b', 'kb', 'assigned'}, 'v': set(),
                 'app': {'app'}}
     for who, ids in expected.items():
@@ -96,7 +97,7 @@ async def test_visibility_matrix(env):
 
 async def test_role_write_gates(env):
     c, headers, _ = env
-    for who in ('a', 'b', 'v', 'app'):
+    for who in ('a', 'b', 'v', 'app', 'ta'):
         assert (await c.post('/api/v1/review/a/assign', headers=headers[who], json={'assignee': 'a@example.com'})).status_code == 403
         for method, url, body in [('GET', '/api/v1/webhooks', None), ('POST', '/api/v1/webhooks', {'url': 'https://example.com'}), ('DELETE', '/api/v1/webhooks/x', None)]:
             assert (await c.request(method, url, headers=headers[who], json=body)).status_code == 403
@@ -112,7 +113,7 @@ async def test_role_write_gates(env):
 async def test_other_account_child_writes_never_mutate_task(env):
     c, h, _ = env
     from app.db import session_factory
-    for who in ('a', 'app'):
+    for who in ('a', 'app', 'ta'):
         for file_id in ('b', 'assigned'):
             for suffix in ('lock', 'unlock', 'confirm', 'reject'):
                 r = await c.post(f'/api/v1/review/{file_id}/{suffix}', headers=h[who])
@@ -171,7 +172,7 @@ async def test_split_children_and_studio_sample_results_follow_task_owner(env):
                            config_hash='test', action='split', storage_key=parent.storage_path,
                            display_name='b-child.pdf', status='ready'))
         await s.commit()
-    for who, expected in [('a', 404), ('b', 200), ('admin', 200)]:
+    for who, expected in [('a', 404), ('b', 200), ('admin', 200), ('ta', 200)]:
         for suffix in ('review/bchild', 'files/bchild/download', 'files/bchild/preview',
                        'files/bchild/artifacts', 'artifacts/arbchild/download'):
             r = await c.get('/api/v1/'+suffix, headers=h[who])
@@ -285,3 +286,67 @@ async def test_unknown_pending_tasks_are_admin_only_and_review_history_does_not_
     assert (await c.get('/api/v1/review/shared', headers=h['a'])).status_code == 404
     assert 'shared' not in await ids('b')
     assert (await c.get('/api/v1/review/shared', headers=h['b'])).status_code == 404
+
+
+async def test_tenant_admin_reads_file_bytes_only_in_credential_tenant(env):
+    from tests.test_delete_task import _seed_task
+    c, headers, _ = env
+    task = await _seed_task(file_id='external', tenant='other')
+    outsider = await _seed_user('other-admin@example.com', 'tenant_admin', 'other')
+    # A forged header must not switch either session's tenant.
+    local = {**headers['ta'], 'X-Tenant-Id': 'other'}
+    remote = {**_headers(outsider), 'X-Tenant-Id': 'default'}
+
+    for actor, visible, hidden in [(local, 'b', 'external'), (remote, 'external', 'b')]:
+        listing = (await c.get('/api/v1/files', headers=actor)).json()
+        ids = {f['file_id'] for f in listing['data']}
+        assert visible in ids and hidden not in ids
+        for suffix in ('download?save=1', 'preview', 'artifacts'):
+            denied = await c.get(f'/api/v1/files/{hidden}/{suffix}', headers=actor)
+            assert denied.status_code == 404
+        res = await c.get(f'/api/v1/files/{visible}/download?save=1', headers=actor)
+        assert res.status_code == 200
+        assert res.content == (b'%PDF-test' if visible == 'b' else b'%PDF-orig')
+        assert 'attachment' in res.headers['content-disposition']
+
+    txn = task['transaction_id']
+    for path in (f'status/{txn}', f'transactions/{txn}/documents',
+                 f'transactions/{txn}/artifacts', 'review/external'):
+        assert (await c.get('/api/v1/'+path, headers=local)).status_code == 404
+    artifact_id = (await c.get('/api/v1/files/external/artifacts',
+                               headers=remote)).json()['artifacts'][0]['artifact_id']
+    url = f'/api/v1/artifacts/{artifact_id}/download'
+    assert (await c.get(url, headers=remote)).content == b'%PDF-a1'
+    assert (await c.get(url, headers=local)).status_code == 404
+
+
+async def test_tenant_admin_keys_stay_scoped_to_the_submitting_key(env):
+    from app.db import session_factory
+    c, headers, users = env
+    async with session_factory()() as s:
+        for key_id in ('ka', 'app'):
+            key = await s.get(ApiKey, key_id)
+            key.owner_user_id = users['ta']['id']
+        await s.commit()
+
+    for key_id in ('ka', 'app'):
+        for target, expected in [(key_id, 200), ('b', 404), ('legacy', 404)]:
+            url = f'/api/v1/transactions/t{target}/documents'
+            assert (await c.get(url, headers=headers[key_id])).status_code == expected
+
+
+async def test_tenant_admin_demotion_revokes_peer_download_on_the_same_session(env):
+    c, headers, users = env
+    url = '/api/v1/files/b/download'
+    peer = await c.get(url, headers=headers['ta'])
+    assert peer.status_code == 200
+    assert 'no-cache' in peer.headers['cache-control']
+    assert peer.headers['vary'] == 'Authorization'
+    assert (await c.get('/api/v1/review/b', headers=headers['ta'])).json()['can_review'] is False
+
+    changed = await c.patch('/api/v1/auth/users/' + users['ta']['id'], headers=headers['admin'],
+                            json={'role': 'operator'})
+    assert changed.status_code == 200
+    for path in (url, url + '?save=1', '/api/v1/artifacts/arb/download'):
+        assert (await c.get(path, headers=headers['ta'])).status_code == 404
+    assert (await c.get('/api/v1/files', headers=headers['ta'])).json()['data'] == []

@@ -494,6 +494,7 @@
     "export_current_document_recognition_results_markdown_table_easy_to": "导出当前单据识别结果（Markdown 表格，便于阅读与转贴）",
     "export_md": "导出 MD",
     "start_validation_lock_l": "开始校验（锁定） L",
+    "read_only": "该任务为只读。",
     "this_document_has_been_processed_and_is_read_only": "当前单据已处理，可只读查看",
     "save_corrections_s": "保存修正 S",
     "save_the_corrections_made_exit_without_changing_the_review": "保存已做的修正，退出但不改变审核状态",
@@ -577,6 +578,7 @@
     "email": "邮箱",
     "viewer_read_only": "viewer（只读）",
     "operator_review": "operator（审单）",
+    "tenant_admin": "租户管理员",
     "admin_manage": "admin（管理）",
     "email_invitation": "邮件邀请",
     "or": "或",
@@ -1235,6 +1237,8 @@
     "pages": "页数",
     "updated": "更新时间",
     "tasks": "任务",
+    "tenant_tasks": "租户任务",
+    "tenant_tasks_description": "查看本租户的人工和 API 任务，下载原件，或上传文档进行测试。",
     "workbench_for_all_processing_tasks_filter_claim_and_enter": "全部处理任务的工作台：筛选、认领、进入校验。",
     "refresh": "刷新",
     "refresh_8fa31b": "⟳ 刷新",
@@ -1406,6 +1410,8 @@
     "back_to_login": "返回登录"
   },
   "login": {
+    "check_credentials": "登录失败，请检查邮箱、密码和租户 ID。",
+    "tenant_id_optional": "租户 ID（可选）",
     "log_in": "登录",
     "email": "邮箱",
     "password": "密码",

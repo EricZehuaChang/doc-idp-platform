@@ -8,9 +8,10 @@ from sqlalchemy import select
 from app.api_grants import ApiGrants
 from app.auth import security
 from app.billing import engine as billing
+from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, User
-from app.tenancy import current_actor, current_tenant, has_role
+from app.tenancy import USER_ROLES, as_tenant, current_actor, current_tenant, has_role
 
 
 def _enforce_member_seat(e: billing.EntitlementExceeded) -> HTTPException:
@@ -20,45 +21,56 @@ def _enforce_member_seat(e: billing.EntitlementExceeded) -> HTTPException:
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+def _validate_role(role: str) -> None:
+    if role not in USER_ROLES:
+        raise HTTPException(400, f"role must be {'|'.join(USER_ROLES)}")
+
+
 class LoginBody(BaseModel):
     email: EmailStr
     password: str
+    tenant_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)     # enterprise floor; policy knob later
-    role: str = "operator"                  # viewer | operator | admin
-    tenant_id: str | None = None            # default: creator's tenant
+    role: str = "operator"
+    tenant_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 @router.post("/login")
 async def login(body: LoginBody):
     sf = session_factory()
-    async with sf() as s:
-        user = (await s.execute(
-            select(User).where(User.email == body.email, User.active))).scalar_one_or_none()
-        # timing-safe-ish: verify against a dummy hash when the user is unknown
-        # so the response time doesn't leak account existence
-        ph = user.password_hash if user and user.password_hash else security.hash_password("!")
-        ok = security.verify_password(body.password, ph) and user is not None \
-            and user.password_hash is not None and user.email_verified
-        if not ok:
-            # Unknown accounts belong to the configured default tenant, never
-            # the caller-controlled X-Tenant-Id on this public route.
-            from app.config import get_settings
-            s.add(AuditLog(tenant_id=user.tenant_id if user else get_settings().default_tenant,
-                           actor=str(body.email), action="auth.login_failed",
-                           detail={"reason": "invalid_credentials"}))
+    lookup = select(User).where(User.email == body.email, User.active)
+    if body.tenant_id is not None:
+        lookup = lookup.where(User.tenant_id == body.tenant_id)
+    with as_tenant(body.tenant_id or current_tenant()):
+        async with sf() as s:
+            rows = (await s.scalars(lookup.limit(2))).all()
+    # An email-only login can resolve only one account. Never choose a tenant
+    # by password or whichever duplicate row the database happens to return first.
+    user = rows[0] if len(rows) == 1 else None
+    ph = user.password_hash if user and user.password_hash else security.hash_password("!")
+    ok = security.verify_password(body.password, ph) and user is not None \
+        and user.password_hash is not None and user.email_verified
+    # Unknown accounts are audited in the configured tenant, never in a
+    # caller-supplied tenant. Open the audit transaction in the correct RLS scope.
+    tenant = user.tenant_id if user else get_settings().default_tenant
+    with as_tenant(tenant):
+        async with sf() as s:
+            if not ok:
+                s.add(AuditLog(tenant_id=tenant, actor=str(body.email), action="auth.login_failed",
+                               detail={"reason": "invalid_credentials"}))
+                await s.commit()
+                raise HTTPException(401, "invalid email or password")
+            s.add(AuditLog(tenant_id=tenant, actor=user.email, action="auth.login"))
             await s.commit()
-            raise HTTPException(401, "invalid email or password")
-        token = security.create_session_token(
-            user_id=user.id, tenant_id=user.tenant_id, role=user.role,
-            email=user.email, session_epoch=user.session_epoch)
-        s.add(AuditLog(tenant_id=user.tenant_id, actor=user.email, action="auth.login"))
-        await s.commit()
+    token = security.create_session_token(
+        user_id=user.id, tenant_id=tenant, role=user.role,
+        email=user.email, session_epoch=user.session_epoch)
     return {"access_token": token, "token_type": "bearer",
-            "role": user.role, "tenant_id": user.tenant_id, "email": user.email,
+            "role": user.role, "tenant_id": tenant, "email": user.email,
             "must_change_password": user.must_change_password}
 
 
@@ -72,33 +84,35 @@ async def me():
 async def create_user(body: UserCreate):
     if not has_role("admin"):
         raise HTTPException(403, "admin role required")
-    if body.role not in ("viewer", "operator", "admin"):
-        raise HTTPException(400, "role must be viewer|operator|admin")
+    _validate_role(body.role)
     tenant = body.tenant_id or current_tenant()
+    if tenant != current_tenant() and current_tenant() != get_settings().default_tenant:
+        raise HTTPException(403, "cross-tenant user creation requires platform admin")
     sf = session_factory()
-    async with sf() as s:
-        dup = (await s.execute(
-            select(User).where(User.email == body.email,
-                               User.tenant_id == tenant))).scalar_one_or_none()
-        if dup is not None:
-            raise HTTPException(409, "user already exists in this tenant")
-        # plan seat cap (§12.3); Owner Root is exempt from feature gates (§12.7)
-        if not current_actor().get("unlimited"):
-            try:
-                await billing.enforce_member_cap(s, tenant)
-            except billing.EntitlementExceeded as e:
-                raise _enforce_member_seat(e)
-        # admin activation mode (§11.8): initial password + forced change on
-        # first login — the SMTP-less path for air-gapped deployments
-        user = User(tenant_id=tenant, email=body.email, role=body.role,
-                    password_hash=security.hash_password(body.password),
-                    must_change_password=True)
-        s.add(user)
-        s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
-                       action="auth.user_created", detail={"email": body.email,
-                                                           "role": body.role}))
-        await s.commit()
-        return {"id": user.id, "email": user.email, "role": user.role, "tenant_id": tenant}
+    with as_tenant(tenant):
+        async with sf() as s:
+            dup = (await s.execute(
+                select(User).where(User.email == body.email,
+                                   User.tenant_id == tenant))).scalar_one_or_none()
+            if dup is not None:
+                raise HTTPException(409, "user already exists in this tenant")
+            # plan seat cap (§12.3); Owner Root is exempt from feature gates (§12.7)
+            if not current_actor().get("unlimited"):
+                try:
+                    await billing.enforce_member_cap(s, tenant)
+                except billing.EntitlementExceeded as e:
+                    raise _enforce_member_seat(e)
+            # admin activation mode (§11.8): initial password + forced change on
+            # first login — the SMTP-less path for air-gapped deployments
+            user = User(tenant_id=tenant, email=body.email, role=body.role,
+                        password_hash=security.hash_password(body.password),
+                        must_change_password=True)
+            s.add(user)
+            s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
+                           action="auth.user_created", detail={"email": body.email,
+                                                               "role": body.role}))
+            await s.commit()
+            return {"id": user.id, "email": user.email, "role": user.role, "tenant_id": tenant}
 
 
 @router.get("/users")
@@ -129,8 +143,8 @@ async def patch_user(user_id: str, body: UserPatch):
     """Deactivate/reactivate or change role (offboarding: 人走号停)."""
     if not has_role("admin"):
         raise HTTPException(403, "admin role required")
-    if body.role is not None and body.role not in ("viewer", "operator", "admin"):
-        raise HTTPException(400, "role must be viewer|operator|admin")
+    if body.role is not None:
+        _validate_role(body.role)
     actor = current_actor()
     sf = session_factory()
     async with sf() as s:
@@ -170,8 +184,7 @@ async def invite(body: InviteBody):
 
     if not has_role("admin"):
         raise HTTPException(403, "admin role required")
-    if body.role not in ("viewer", "operator", "admin"):
-        raise HTTPException(400, "role must be viewer|operator|admin")
+    _validate_role(body.role)
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:

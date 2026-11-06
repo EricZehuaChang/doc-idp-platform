@@ -93,11 +93,12 @@ async def test_invite_without_smtp_degrades(app_client):
     assert "SMTP" in r.json()["detail"]
 
 
-async def test_invite_activate_login_flow(app_client):
+@pytest.mark.parametrize("role", ["operator", "tenant_admin"])
+async def test_invite_activate_login_flow(app_client, role):
     hdr = await _admin(app_client)
     await _configure_smtp(app_client, hdr)
     r = await app_client.post("/api/v1/auth/invite", headers=hdr,
-                              json={"email": "op@example.com", "role": "operator"})
+                              json={"email": "op@example.com", "role": role})
     assert r.status_code == 201, r.text
     assert SENT and SENT[-1]["to"] == "op@example.com"
     token = _token_from(SENT[-1]["body"])
@@ -114,6 +115,7 @@ async def test_invite_activate_login_flow(app_client):
                               json={"email": "op@example.com", "password": "fresh-pw-123"})
     assert r.status_code == 200
     assert r.json()["must_change_password"] is False
+    assert r.json()["role"] == role
 
     # token is single-use
     r = await app_client.post("/api/v1/auth/activate",

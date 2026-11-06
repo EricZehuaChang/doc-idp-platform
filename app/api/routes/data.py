@@ -24,7 +24,7 @@ from app.models import (AuditLog, Correction, CreditAccount, CreditLedger,
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant, require_role
 
-from app.visibility import visible_file_cond, visible_txn_cond
+from app.visibility import review_txn_cond, visible_file_cond, visible_txn_cond
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
 
@@ -151,7 +151,7 @@ async def list_files(source: Literal["manual", "api"] | None = None,
         # display name (fallback = code when the skill row is gone). Scoped to
         # this tenant — Skill.code is a global PK, tenant_id is a plain column.
         base = (select(FileRecord, Transaction.skill_code, Skill.name,
-                       Transaction.initiator_type, Transaction.initiator_label)
+                       Transaction.initiator_type, Transaction.initiator_label, review_txn_cond())
                 .join(Transaction, FileRecord.transaction_id == Transaction.id)
                 .outerjoin(Skill, and_(Skill.code == Transaction.skill_code,
                                        Skill.tenant_id == FileRecord.tenant_id))
@@ -187,7 +187,7 @@ async def list_files(source: Literal["manual", "api"] | None = None,
         for c in conds:
             base = base.where(c)
         rows = (await s.execute(base.order_by(FileRecord.created_at.desc()))).all()
-        root_ids = [f.id for f, _, _, _, _ in rows]
+        root_ids = [row[0].id for row in rows]
         children_by_parent: dict[str, list[FileRecord]] = {}
         if root_ids:
             children = (await s.execute(
@@ -199,7 +199,7 @@ async def list_files(source: Literal["manual", "api"] | None = None,
                 children_by_parent.setdefault(child.parent_file_id, []).append(child)
 
         all_data = []
-        for f, sc, sname, itype, ilabel in rows:
+        for f, sc, sname, itype, ilabel, can_review in rows:
             children = children_by_parent.get(f.id, [])
             meta = task_summary(f, children)
             if status and meta["status"] not in status:
@@ -228,7 +228,7 @@ async def list_files(source: Literal["manual", "api"] | None = None,
                 if start is not None:
                     processing_seconds = round((end - start).total_seconds(), 1)
             all_data.append({
-                "file_id": f.id, "transaction_id": f.transaction_id,
+                "file_id": f.id, "transaction_id": f.transaction_id, "can_review": bool(can_review),
                 "file_name": f.file_name, "skill_code": sc,
                 "skill_name": sname or sc,
                 "initiator_type": itype or "unknown",

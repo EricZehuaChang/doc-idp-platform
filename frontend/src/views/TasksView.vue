@@ -1,6 +1,7 @@
 <template>
   <main class="page">
-    <PageHeader :title="$t('tasks.tasks')" :desc="$t('tasks.workbench_for_all_processing_tasks_filter_claim_and_enter')">
+    <PageHeader :title="session.role === 'tenant_admin' ? t('tasks.tenant_tasks') : t('tasks.tasks')"
+                :desc="session.role === 'tenant_admin' ? t('tasks.tenant_tasks_description') : t('tasks.workbench_for_all_processing_tasks_filter_claim_and_enter')">
       <button class="ghost" :title="$t('tasks.refresh')" @click="reload">{{ $t('tasks.refresh_8fa31b') }}</button>
       <router-link to="/upload"><button class="primary">{{ $t('tasks.upload_document') }}</button></router-link>
     </PageHeader>
@@ -92,7 +93,7 @@
                 <span v-else class="dim">-</span>
               </td>
               <td class="row-act">
-                <router-link v-if="r.status === 'pending_verification'"
+                <router-link v-if="r.can_review && r.status === 'pending_verification'"
                              :to="reviewLink(r.file_id)">
                   <button class="primary slim">Verify</button></router-link>
                 <router-link v-else :to="reviewLink(r.file_id)">
@@ -631,7 +632,7 @@ function applyJump(e: Event) {
 // The role gate is server-side (require_role("admin")); this only decides
 // whether the button is offered. auth-required=false (lite/dev) is admin by
 // definition, the same rule App.vue uses for the 平台设置 entry.
-const isAdmin = computed(() => !session.authRequired || session.role === "admin");
+const isAdmin = computed(() => session.authRequired === false || session.role === "admin");
 const delTarget = ref<FileRow | null>(null);
 const deleting = ref(false);
 const inFlight = (r: FileRow) => r.status === "queued" || r.status === "processing";

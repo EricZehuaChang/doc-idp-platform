@@ -494,6 +494,7 @@
     "export_current_document_recognition_results_markdown_table_easy_to": "Export current document recognition results (Markdown table, easy to read and paste)",
     "export_md": "Export MD",
     "start_validation_lock_l": "Start validation (lock) L",
+    "read_only": "You have read-only access to this task.",
     "this_document_has_been_processed_and_is_read_only": "This document has been processed and is read-only",
     "save_corrections_s": "Save Corrections S",
     "save_the_corrections_made_exit_without_changing_the_review": "Save the corrections made, exit without changing the review status",
@@ -577,6 +578,7 @@
     "email": "Email",
     "viewer_read_only": "viewer (read-only)",
     "operator_review": "operator (review)",
+    "tenant_admin": "Tenant administrator",
     "admin_manage": "admin (manage)",
     "email_invitation": "Email Invitation",
     "or": "or",
@@ -1235,6 +1237,8 @@
     "pages": "Pages",
     "updated": "Updated",
     "tasks": "Tasks",
+    "tenant_tasks": "Tenant tasks",
+    "tenant_tasks_description": "View manual and API tasks in this tenant, download originals, or upload a document to test processing.",
     "workbench_for_all_processing_tasks_filter_claim_and_enter": "Workbench for all processing tasks: filter, claim, and enter validation.",
     "refresh": "Refresh",
     "refresh_8fa31b": "⟳ Refresh",
@@ -1406,6 +1410,8 @@
     "back_to_login": "Back to login"
   },
   "login": {
+    "check_credentials": "Sign-in failed. Check your email, password, and tenant ID.",
+    "tenant_id_optional": "Tenant ID (optional)",
     "log_in": "Log in",
     "email": "Email",
     "password": "Password",

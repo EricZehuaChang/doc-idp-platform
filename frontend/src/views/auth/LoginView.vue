@@ -7,6 +7,9 @@
       <label>{{ $t('login.password') }}
         <input v-model="password" type="password" required autocomplete="current-password" />
       </label>
+      <label>{{ $t('login.tenant_id_optional') }}
+        <input v-model.trim="tenantId" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+      </label>
       <button class="primary" type="submit" :disabled="busy">
         {{ busy ? $t('login.signing_in') : $t('login.sign_in') }}</button>
     </form>
@@ -27,6 +30,7 @@ const router = useRouter();
 const route = useRoute();
 const email = ref("");
 const password = ref("");
+const tenantId = ref("");
 const error = ref<DisplayMessage>("");
 const displayError = computed(() => translateMessage(error.value));
 const busy = ref(false);
@@ -47,7 +51,7 @@ async function submit() {
   busy.value = true;
   error.value = "";
   try {
-    const res = await api.login(email.value, password.value);
+    const res = await api.login(email.value, password.value, tenantId.value || undefined);
     setSession(res);
     // admin-created accounts must set their own password before anything else
     router.push(res.must_change_password ? "/change-password" : "/queue");
