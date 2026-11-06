@@ -98,8 +98,10 @@ nav a.router-link-active { color: var(--accent); font-weight: 600;
 .dim { color: var(--text-dim); font-size: 12px; padding: 8px 10px; }
 
 @media (max-width: 700px) {
-  .navbar { gap: 10px; padding: 0 10px; overflow-x: auto; }
-  nav a { padding: 0 8px; font-size: 13px; }
+  .navbar { gap: 10px; padding: 0 10px; }
+  .logo, .user-menu { flex-shrink: 0; }
+  nav { min-width: 0; overflow-x: auto; }
+  nav a { flex: none; white-space: nowrap; padding: 0 8px; font-size: 13px; }
   .uname { display: none; }
 }
 </style>

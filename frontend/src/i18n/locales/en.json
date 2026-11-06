@@ -528,6 +528,10 @@
     "annotation_inactive": "▣ Select area"
   },
   "settings": {
+    "sections": "Settings category",
+    "service_configuration": "Service configuration",
+    "platform_management": "Platform management",
+    "personal_preferences": "Personal preferences",
     "smtp_configuration_saved": "SMTP configuration saved",
     "enter_a_test_recipient_email": "Enter a test recipient email",
     "test_email_sent_please_check_your_inbox": "Test email sent, please check your inbox",
@@ -561,6 +565,8 @@
     "single_sign_on_sso": "Single Sign-On (SSO)",
     "api_keys": "API Keys",
     "platform_email_configuration_used_for_invitation_activation_and_password": "Platform email configuration: used for invitation activation and password recovery. If not configured, it automatically falls back to \"admin creates accounts directly\" mode.",
+    "smtp_connection": "SMTP connection",
+    "smtp_sender": "Sender details",
     "smtp_host": "SMTP Host",
     "port": "Port",
     "encryption": "Encryption",

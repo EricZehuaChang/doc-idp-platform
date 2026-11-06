@@ -528,6 +528,10 @@
     "annotation_inactive": "▣ 框选"
   },
   "settings": {
+    "sections": "设置分类",
+    "service_configuration": "服务配置",
+    "platform_management": "平台管理",
+    "personal_preferences": "个人偏好",
     "smtp_configuration_saved": "SMTP 配置已保存",
     "enter_a_test_recipient_email": "填写测试收件邮箱",
     "test_email_sent_please_check_your_inbox": "测试邮件已发送，请查收",
@@ -561,6 +565,8 @@
     "single_sign_on_sso": "单点登录（SSO）",
     "api_keys": "API 密钥",
     "platform_email_configuration_used_for_invitation_activation_and_password": "平台发信配置：邀请激活、找回密码都靠它。未配置时自动降级为「管理员直接建号」模式。",
+    "smtp_connection": "SMTP 连接",
+    "smtp_sender": "发件人信息",
     "smtp_host": "SMTP 主机",
     "port": "端口",
     "encryption": "加密方式",
