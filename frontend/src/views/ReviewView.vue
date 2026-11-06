@@ -143,7 +143,9 @@
             <table>
               <thead>
                 <tr>
-                  <th v-for="c in tableCols(t)" :key="c">{{ c }}</th>
+                  <th v-for="c in tableCols(t)" :key="c" scope="col">{{ tableColumnLabel(t, c) }}
+                    <small v-if="headerInfo(t)?.sources[c] === 'inferred'" class="badge-inferred">{{ $t('review.inferred_header') }}</small>
+                  </th>
                   <th v-if="locked"></th>
                 </tr>
               </thead>
@@ -444,13 +446,22 @@ const reasonLabels: Record<string, string> = {
   vision_first_unavailable: "review.vision_first_unavailable",
   vision_first_failed: "review.vision_first_failed",
   table_shape_mismatch: "review.table_shape_mismatch",
+  table_headers_inferred: "review.table_headers_inferred",
   table_arithmetic_mismatch: "review.table_arithmetic_mismatch",
 };
 function reasonLabel(code: string) { return reasonLabels[code] ? t(reasonLabels[code]) : code; }
 
+function headerInfo(name: string) {
+  const path = isList.value ? `records[${recordIndex.value}].${name}` : name;
+  return activeItem.value?.table_headers?.[path];
+}
+function tableColumnLabel(name: string, column: string) {
+  const ordinal = headerInfo(name)?.sources[column] === "positional" && /\d+$/.exec(column);
+  return ordinal ? t("review.positional_column", { n: ordinal[0] }) : column;
+}
 function tableCols(t: string): string[] {
   const rows = tableEdits.value[t] ?? [];
-  const cols = new Set<string>(isList.value ? activeItem.value?.table_columns?.[t] : []);
+  const cols = new Set<string>(headerInfo(t)?.columns ?? (isList.value ? activeItem.value?.table_columns?.[t] : []));
   // $-prefixed keys are engine metadata ($cells locations), not columns
   for (const r of rows) Object.keys(r).filter((c) => !c.startsWith("$")).forEach((c) => cols.add(c));
   return [...cols];

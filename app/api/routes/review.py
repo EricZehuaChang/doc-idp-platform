@@ -8,6 +8,7 @@ skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
 (headers can't impersonate past the credential); X-User header in dev mode.
 """
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -67,6 +68,7 @@ def _detail_payload(f: FileRecord, snapshot_pkg: dict | None = None) -> dict:
     return {
         "output_shape": output_shape_of(f, snapshot_pkg),
         "review_reasons": meta.get("review_reasons") or [],
+        **({"table_headers": meta["table_headers"]} if meta.get("table_headers") else {}),
         "result_revision": f.result_revision or 0,
         "table_columns": {field["name"]: [column["name"] for column in field.get("columns", [])]
                           for field in schema.get("fields", []) if field.get("type") == "table"},
@@ -369,12 +371,15 @@ def _record_at(result: dict, index: int) -> dict:
     return records[index]
 
 
-async def _save_list_result(session, file: FileRecord, result: dict, expected: int) -> None:
+async def _save_list_result(session, file: FileRecord, result: dict, expected: int, meta=None) -> None:
     # A7: compare-and-swap also protects two same-user sessions on SQLite.
+    values = {"result": result, "result_revision": expected + 1}
+    if meta is not None:
+        values["document_meta"] = meta
     changed = await session.execute(update(FileRecord).where(
         FileRecord.id == file.id, FileRecord.tenant_id == current_tenant(),
         func.coalesce(FileRecord.result_revision, 0) == expected,
-    ).values(result=result, result_revision=expected + 1).execution_options(synchronize_session=False))
+    ).values(**values).execution_options(synchronize_session=False))
     if changed.rowcount != 1:
         raise HTTPException(409, "result changed; reload before editing")
 
@@ -406,7 +411,18 @@ async def delete_record(file_id: str, record: int, expected_revision: int | None
         result = deepcopy(file.result or {})
         removed = _record_at(result, record)
         result["records"].pop(record)
-        await _save_list_result(s, file, result, expected_revision)
+        meta = deepcopy(file.document_meta or {})
+        if meta.get("table_headers"):
+            shifted = {}
+            for path, header in meta["table_headers"].items():
+                match = re.match(r"records\[(\d+)\](.*)", path)
+                if match and int(match[1]) == record:
+                    continue
+                if match and int(match[1]) > record:
+                    path = f"records[{int(match[1]) - 1}]{match[2]}"
+                shifted[path] = header
+            meta["table_headers"] = shifted
+        await _save_list_result(s, file, result, expected_revision, meta)
         s.add(Correction(tenant_id=file.tenant_id, file_id=file.id,
                          skill_code=txn.skill_code, skill_version=txn.skill_version,
                          field=f"records[{record}]", old_value=json.dumps(removed, ensure_ascii=False)[:4000],

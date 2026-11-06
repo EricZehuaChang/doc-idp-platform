@@ -102,6 +102,7 @@ syncText();
 // Ignore our own parent echo so a trailing comma and the input caret survive.
 watch(() => props.field, (field) => {
   if (JSON.stringify(field) === lastPublished) return;
+  delete draft.infer_headers;
   Object.assign(draft, { rule: null, output_format: null }, copy(field));
   syncText();
 }, { deep: true });
@@ -117,7 +118,10 @@ function setList(key: "enum_values" | "anchor_hints", value: string) {
   publish();
 }
 function changeType() {
-  if (draft.type !== "table") draft.columns = [];
+  if (draft.type !== "table") {
+    draft.columns = [];
+    delete draft.infer_headers;
+  }
   if (draft.type !== "enum") { draft.enum_values = []; enumText.value = ""; }
   if (draft.type !== "date" && draft.type !== "number") draft.output_format = null;
   if (draft.type === "date" && draft.output_format?.decimal_places != null) draft.output_format = null;

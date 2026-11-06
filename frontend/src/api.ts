@@ -141,6 +141,10 @@ export interface FieldEdit {
   field: string; record?: number; value?: string; bbox?: number[]; page?: number;
   rows?: Record<string, string>[];
 }
+export interface TableHeaderInfo {
+  columns: string[];
+  sources: Record<string, "original" | "positional" | "inferred">;
+}
 export interface ReviewItem {
   can_review: boolean;
   file_id: string; file_name: string; status: string;
@@ -148,6 +152,7 @@ export interface ReviewItem {
   output_shape?: "object" | "list";
   review_reasons?: string[];
   table_columns?: Record<string, string[]>;
+  table_headers?: Record<string, TableHeaderInfo>;
   result_revision?: number;
   pages: { page_no: number; width: number; height: number }[];
   locked_by: string | null; verified_by: string | null;
@@ -205,6 +210,7 @@ export interface TxnDocument {
   data: Record<string, unknown> | unknown[] | null;
   field_sources?: Record<string, string>;
   review_fields: string[];
+  table_headers?: Record<string, TableHeaderInfo>;
   metrics: Record<string, number | string> | null;
   artifacts: Artifact[];
 }
@@ -241,6 +247,8 @@ export interface ExtractionRule {
   stop_words: string[]; on_miss: 'model' | 'review';
 }
 export interface FieldSpec {
+  entity_list?: boolean;
+  infer_headers?: boolean;
   rule?: ExtractionRule | null;
   name: string; type: string; instruction: string; mode: string; required: boolean;
   anchor_hints: string[]; enum_values: string[]; columns: FieldSpec[];

@@ -79,6 +79,14 @@ def _field_lines(fields: list[FieldSpec], list_mode: bool = False) -> str:
             if f.columns:
                 lines.append("  每行对象的列定义：")
                 lines.extend(_spec_line(c, "·", "  ") for c in f.columns)
+            elif not f.entity_list:
+                lines.append(
+                    "  按原表从左到右保留全部列，按原顺序保留所有数据行。"
+                    "原文有表头时逐字使用表头原文；无表头时用列1、列2……列N。"
+                    "输出示例仅表示命名格式，实际列数必须与原表一致，禁止限制为两列。"
+                    "首行是数据时必须保留，每行键集合一致，空单元格用空字符串。")
+                lines.append("  允许按内容推断无表头列名，推断列名需要人工确认。"
+                             if f.infer_headers else "  禁止按内容自拟原文中不存在的表头。")
         else:
             lines.append(_spec_line(f, "-", ""))
     return "\n".join(lines)
@@ -92,7 +100,8 @@ def _output_contract(fields: list[FieldSpec], list_mode: bool = False) -> dict:
     out: dict = {}
     for f in fields:
         if f.type == "table":
-            out[f.name] = [{c.name: "..." for c in f.columns}]
+            out[f.name] = ([{c.name: "..." for c in f.columns}] if f.columns or f.entity_list
+                           else [{"列1": "...", "列2": "..."}])
         elif f.mode == "inferred":
             out[f.name] = {"value": "...", "reasoning": "..."}
         else:

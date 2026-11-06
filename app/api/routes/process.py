@@ -537,7 +537,11 @@ async def transaction_documents(transaction_id: str):
 
         def _review_meta(file):
             reasons = (file.document_meta or {}).get("review_reasons")
-            return {"review_reasons": reasons} if reasons else {}
+            extra = {"review_reasons": reasons} if reasons else {}
+            headers = (file.document_meta or {}).get("table_headers")
+            if headers:
+                extra["table_headers"] = headers
+            return extra
 
         def _extraction_status(f: FileRecord) -> str:
             """#7: meta first, file status as the honest fallback (D8: rejected

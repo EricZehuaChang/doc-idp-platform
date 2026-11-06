@@ -59,6 +59,8 @@ class FieldSpec(BaseModel):
     # layout table — exempt from the paid-OCR table escalation (§4.3) and the
     # compiler adds a full-document enumeration instruction.
     entity_list: bool = False
+    # C2: inferred column names require an explicit opt-in on an untyped table.
+    infer_headers: bool = False
     # 9.15: display formatting applied AFTER confidence scoring (§ WP3)
     output_format: FieldOutputFormat | None = None
 

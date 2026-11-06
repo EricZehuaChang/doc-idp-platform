@@ -65,6 +65,8 @@
     "click_to_choose": "点击选择"
   },
   "fieldCard": {
+    "infer_headers": "智能推断列名",
+    "infer_headers_hint": "原件没有表头时，默认按位置显示“列1、列2”；开启后使用推断名称，并转人工复核。",
     "not_yet_extracted": "尚未试抽",
     "press_and_drag_to_reorder_fields": "按住拖动可调整字段顺序",
     "unnamed_field": "未命名字段",
@@ -420,6 +422,9 @@
     "revoke_confirm": "吊销 Key「{name}」？使用它的终端将立即失效。"
   },
   "review": {
+    "inferred_header": "推断列名",
+    "positional_column": "列{n}",
+    "table_headers_inferred": "部分列名由模型推断，请对照原件核对。",
     "vision_first_unavailable": "原图首抽不可用，请对照原件复核。",
     "vision_first_failed": "原图首抽失败，请对照原件复核。",
     "record_count": "{n} 条记录",

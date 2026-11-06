@@ -30,6 +30,11 @@
       <FieldEditor :field="field" :is-column="depth > 0" @update="$emit('update', $event)" />
     </div>
     <div v-if="field.type === 'table' && (!inline || expanded)" ref="colsEl" class="children">
+      <label v-if="!field.columns.length && !field.entity_list" class="infer-headers">
+        <input type="checkbox" :checked="field.infer_headers === true"
+               @change="emit('update', { ...field, infer_headers: ($event.target as HTMLInputElement).checked })" />
+        <span>{{ t('fieldCard.infer_headers') }}<small class="dim">{{ t('fieldCard.infer_headers_hint') }}</small></span>
+      </label>
       <FieldCard v-for="(column, i) in field.columns" :key="i" :field="column" :index="i" :depth="depth + 1"
                  :inline="inline" :expanded="expandedColumn === i" :active="expandedColumn === i"
                  :result="columnResult(column.name)" :result-status="columnStatus(column.name)"
@@ -107,7 +112,12 @@ function columnStatus(name: string): string {
   // The trial supplies location evidence for the table, not for individual cells.
   return present(columnResult(name)) ? "review" : "missing";
 }
-function updateColumns(columns: FieldSpec[]) { emit("update", { ...props.field, columns }); }
+function updateColumns(columns: FieldSpec[]) {
+  const next = { ...props.field, columns };
+  // C4: configured columns always use their explicit names.
+  if (columns.length) delete next.infer_headers;
+  emit("update", next);
+}
 function updateColumn(index: number, field: FieldSpec) {
   const columns = [...props.field.columns];
   columns[index] = field;
@@ -166,6 +176,9 @@ function startColDrag(index: number, event: PointerEvent) {
 .fc-instr { margin: 6px 0 0 20px; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
 .fc-extra { margin: 4px 0 0 20px; font-size: 12px; }
 .children { margin: 10px 0 2px 20px; display: flex; flex-direction: column; gap: 8px; border-left: 1px dashed var(--border); padding-left: 12px; }
+.infer-headers { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.infer-headers input { width: auto; }
+.infer-headers small { display: block; margin-top: 2px; }
 .add-child { align-self: stretch; border-style: dashed; font-size: 12px; padding: 7px; background: transparent; }
 .dim { color: var(--text-dim); }
 .fc-inline { padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
