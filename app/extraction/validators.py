@@ -34,6 +34,17 @@ def run_validators(values: dict[str, object], validators: list[Validator]) -> di
             val = str(values.get(v.field) or "")
             if val and re.fullmatch(v.pattern, val) is None:
                 fail(v.field, f"regex mismatch: {v.pattern}")
+        elif v.type == "row_product" and v.field and v.target and len(v.parts) == 2:
+            # B2: explicitly named quantity/price columns are checked, never filled.
+            rows = values.get(v.field)
+            for index, row in enumerate(rows if isinstance(rows, list) else []):
+                if not isinstance(row, dict):
+                    continue
+                factors = [_to_number(row.get(name)) for name in v.parts]
+                target = _to_number(row.get(v.target))
+                if target is not None and all(n is not None and n.is_finite() for n in factors):
+                    if target.is_finite() and abs(target - factors[0] * factors[1]) > Decimal("0.01"):
+                        fail(f"{v.field}[{index}].{v.target}", "row product check failed")
         elif v.type == "sum_equals" and v.target and v.parts:
             target = _to_number(values.get(v.target))
             parts = [_to_number(values.get(p)) for p in v.parts]

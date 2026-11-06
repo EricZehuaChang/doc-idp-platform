@@ -70,6 +70,12 @@ def validate_package(pkg: SkillPackage, stage: str = "save",
                        "code": "fast_mode_advanced_conflict",
                        "message": "极速模式不支持高级提取，请先切换为标准提取"})
 
+    # B2: image-first is an explicit model route with human review on anomalies.
+    if pkg.vision_first and (pkg.processing_mode != "balanced"
+                             or pkg.extraction_channel != "model" or pkg.kind != "extract"):
+        errors.append({"path": "vision_first",
+                       "message": "原图首抽仅支持均衡模式的模型提取技能"})
+
     # skill code shape — enforced for new (v2) packages only; legacy v1 codes
     # keep loading untouched
     if pkg.schema_version >= 2 and not _CODE_RE.match(pkg.skill_code or ""):

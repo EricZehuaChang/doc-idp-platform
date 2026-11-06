@@ -282,6 +282,7 @@ export interface SkillPackage {
   schema_version?: number;
   extraction_channel?: "model" | "rules_first";
   processing_mode?: "balanced" | "fast";
+  vision_first?: boolean;
   skill_mode?: "standard" | "advanced";
   document_layout?: "single" | "mixed" | "same_type_independent" | "same_type_continuous";
   classification_rules?: string;

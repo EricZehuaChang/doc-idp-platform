@@ -76,6 +76,7 @@ class Validator(BaseModel):
     - {type: regex, field, pattern}
     - {type: required, field}
     - {type: sum_equals, target, parts[]}  (invoice arithmetic checks)
+    - {type: row_product, field: table, target: amount, parts: [quantity, price]}
     """
     type: str
     field: str | None = None
@@ -146,6 +147,7 @@ class _SkillPackageCore(BaseModel):
     doc_type_hint: str = ""
     # —— v2 execution shape ——
     extraction_channel: Literal["model", "rules_first"] = "model"
+    vision_first: bool = False
     processing_mode: Literal["balanced", "fast"] = "balanced"
     skill_mode: Literal["standard", "advanced"] = "standard"
     document_layout: Literal["single", "mixed", "same_type_independent",

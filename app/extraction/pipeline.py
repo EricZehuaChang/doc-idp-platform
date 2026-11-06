@@ -118,7 +118,9 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
     page_map = pkg.output_shape != "list" and not single_call and len(udr.pages) > 1 and any(
         f.type == "table" and not f.entity_list for f in pkg.fields)
     list_mode = pkg.output_shape == "list"
-    if list_mode:
+    image_first = single_call and bool(page_images) and not list_mode
+    if list_mode or image_first:
+        # B2: image-first Object batches obey the same lossless text/raster limits.
         units = list_units(udr, page_images or {}, _MAX_VISION_IMAGES)
     else:
         pages = [_page_udr(udr, page) for page in udr.pages] if page_map else [udr]
@@ -153,7 +155,7 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
         if chunk_reasons:
             total_usage["review_reasons"] = list(dict.fromkeys(chunk_reasons))
         return {"records": records}, total_usage, providers
-    merged = _merge_page_raw(parts, pkg) if page_map else parts[0]
+    merged = _merge_page_raw(parts, pkg) if page_map or (image_first and len(parts) > 1) else parts[0]
     return merged, total_usage, providers
 
 
@@ -358,7 +360,7 @@ def _build_records(raw: dict, pkg: SkillPackage, udr: UDR, challenger_raw: dict 
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
             provider_override: str | None = None,
             page_images: dict[int, str] | None = None,
-            fast: bool = False) -> tuple[dict, dict, bool]:
+            fast: bool = False, single_call: bool = False) -> tuple[dict, dict, bool]:
     """Returns (result, usage, needs_review). Resilience: extractor -> fallback
     chain with cooldown (M1 acceptance hit exactly this failure mode).
     Challenger arbitration (§5.3 model channel): a second model re-extracts and
@@ -401,7 +403,7 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
     if model_pkg.fields:
         raw, usage, providers_used = _raw_extract(
             udr, model_pkg, chain, transport=transport, page_images=page_images,
-            single_call=fast)
+            single_call=fast or single_call)
         if rules_first:
             raw = {f.name: raw.get(f.name) for f in model_pkg.fields}
     else:

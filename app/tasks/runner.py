@@ -443,6 +443,24 @@ async def _complete_classify_only(file_id: str) -> None:
     await output_stage(file_id)
 
 
+def _vision_first_images(storage_path: str, udr: UDR, source_pages=None) -> dict[int, str]:
+    """B2: map physical or shared-original pages to the child's local coordinates."""
+    from app.parsers import raster
+    path = get_storage().local_path(storage_path)
+    try:
+        if Path(path).suffix.lower() == ".pdf":
+            wanted = source_pages or [page.page_no for page in udr.pages]
+            images = raster.pdf_pages_to_images(path, max(wanted, default=0))
+            return {page.page_no: images[original]
+                    for page, original in zip(udr.pages, wanted) if original in images}
+        if len(udr.pages) == 1 and Path(path).suffix.lower() in {
+                ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+            return {udr.pages[0].page_no: raster.image_to_data_uri(path)}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
 async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
                        deps: dict, fast: bool = False,
                        page_images: dict[int, str] | None = None,
@@ -453,12 +471,34 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         f = await s.get(FileRecord, file_id)
         tenant = f.tenant_id
         meta = dict(f.document_meta or {})
+    image_source_pages = None
+    if f.parent_file_id:
+        async with sf() as s:
+            parent = await s.get(FileRecord, f.parent_file_id)
+            if parent and parent.storage_path == f.storage_path:
+                image_source_pages = (f.document_meta or {}).get("source_pages")
     _x0 = datetime.now(timezone.utc)
     if getattr(pkg, "kind", "extract") == "layout" and not pkg.fields:
         # pure layout skill: the parsed regions (served by /status from the
         # persisted UDR) ARE the product — no model call, nothing to review;
         # pages still bill at settle because the file completes
         result, usage, needs_review = {}, {}, False
+    elif pkg.vision_first:
+        from app.extraction.vision_first import extract_from_images
+        if page_images is None:
+            page_images = await asyncio.to_thread(
+                _vision_first_images, f.storage_path, udr, image_source_pages)
+        result, usage, needs_review = await asyncio.to_thread(
+            extract_from_images, udr, pkg, page_images, tenant)
+        from app.extraction.completeness import parse_completeness
+        findings = parse_completeness(udr, pkg, result,
+                                     is_image=Path(f.file_name).suffix.lower() in
+                                     {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"})
+        reasons = list(dict.fromkeys([*usage.get("review_reasons", []),
+                                      *findings["review_reasons"]]))
+        if reasons:
+            usage["review_reasons"] = reasons
+            needs_review = True
     else:
         result, usage, needs_review = await asyncio.to_thread(
             extract, udr, pkg, page_images=page_images, fast=fast)
@@ -496,6 +536,8 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
                 metrics[key] = usage[key]
         if "field_sources" in usage:
             meta["field_sources"] = usage["field_sources"]
+        if "vision_first" in usage:
+            metrics["vision_first"] = usage["vision_first"]
         if classify_ms is not None:
             metrics["classify_ms"] = classify_ms
         # queue/parse already landed in parse_stage

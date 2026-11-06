@@ -200,6 +200,11 @@
                          @focus="comboOpen" @blur="comboClose"
                          @input="comboTyped($event); pkg.parser = ($event.target as HTMLInputElement).value || null" /></label>
               </div>
+              <div v-if="visionFirstAllowed" class="vision-first">
+                <label><input v-model="pkg.vision_first" type="checkbox" aria-describedby="vision-first-hint" />
+                  {{ t('skillEditor.vision_first') }}</label>
+                <p id="vision-first-hint" class="dim adv-note">{{ t('skillEditor.vision_first_hint') }}</p>
+              </div>
             </details>
           </section>
 
@@ -769,7 +774,7 @@ import { I18nT, useI18n } from "vue-i18n";
 import { translateMessage, type DisplayMessage } from "../i18n";
 const { t } = useI18n();
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type Artifact, type CategorySpec,
          type DryRunEntry, type FieldCell,
@@ -808,6 +813,12 @@ api.skillOptions()
   .catch(() => { /* pickers degrade to free text, which still works */ });
 
 const pkg = ref<SkillPackage | null>(null);
+const visionFirstAllowed = computed(() => pkg.value?.kind === "extract"
+  && pkg.value.processing_mode !== "fast" && pkg.value.extraction_channel !== "rules_first");
+// B1: changing mode cannot leave a hidden, billable image setting enabled.
+watchEffect(() => {
+  if (pkg.value?.vision_first && !visionFirstAllowed.value) pkg.value.vision_first = false;
+});
 const versions = ref<{ version: number; status: string; changelog: string;
                        created_at?: string }[]>([]);
 const selectedVersion = ref<number | null>(null);
@@ -2337,6 +2348,10 @@ async function goldenCheck() {
   border-radius: 10px; padding: 10px 12px; }
 .adv-settings summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
 .adv-settings .basic-grid { margin-top: 10px; }
+.vision-first { margin-top: 12px; }
+.vision-first label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.vision-first input { width: auto; }
+.vision-first .adv-note { margin-top: 4px; }
 .thr select, .adv-settings select { max-width: 100%; }
 
 /* fields step */

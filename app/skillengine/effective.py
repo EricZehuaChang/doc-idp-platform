@@ -56,6 +56,7 @@ def category_subpackage(pkg: SkillPackage, category_id: str,
     # validators of the category; the referenced skill's own parser pin loses
     sub.review_policy = deepcopy(pkg.review_policy)
     sub.parser = pkg.parser
+    sub.vision_first = pkg.vision_first
     sub.validators = deepcopy(cat.validators)
     sub.additional_rules = cat.additional_rules or sub.additional_rules
     sub.skill_mode = "standard"             # subpackages execute as standard

@@ -420,6 +420,8 @@
     "revoke_confirm": "Revoke key “{name}”? Clients using it will immediately lose access."
   },
   "review": {
+    "vision_first_unavailable": "Image extraction is unavailable. Check the original document.",
+    "vision_first_failed": "Image extraction failed. Check the original document.",
     "record_count": "{n} records",
     "record": "Record",
     "record_number": "Record {n}",
@@ -433,6 +435,7 @@
     "records_empty": "No records were extracted. Check the original document.",
     "challenger_record_count_mismatch": "The models found different record counts. Check the original document.",
     "parse_cells_collapsed": "The parser may have missed table cells. Check the original document.",
+    "table_arithmetic_mismatch": "A line-item amount differs from the product of its configured fields. Check the original document.",
     "table_shape_mismatch": "The table shape may differ from the original. Check its rows and columns.",
     "the_current_file_is_not_in_a_pending_approval": "The current file is not in a pending approval batch",
     "copied_file_id": "Copied file_id",
@@ -855,6 +858,8 @@
     "settings-title": "Settings"
   },
   "skillEditor": {
+    "vision_first": "Extract from the original image",
+    "vision_first_hint": "The first extraction sends the original image to the configured vision model. Image input counts toward model usage. If extraction fails or table cells appear missing, a reviewer checks the original.",
     "fields_per_record": "Fields per record",
     "please_switch_to_standard_extraction_and_configure_fields_first": "Please switch to Standard Extraction and configure fields first (fast_mode_requires_standard_fields)",
     "fast_mode_extracts_by_standard_fields_advanced_classification_settings": "Fast mode extracts by standard fields; advanced classification settings are retained but inactive",
