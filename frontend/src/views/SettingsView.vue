@@ -37,7 +37,7 @@
         </section>
         <template v-if="isAdmin">
     <!-- —— SMTP —— -->
-    <section v-if="tab === 'email'" class="panel">
+    <section v-if="tab === 'email'" class="panel smtp-panel">
       <p class="dim">{{ $t('settings.platform_email_configuration_used_for_invitation_activation_and_password') }}</p>
       <fieldset class="smtp-group">
         <legend>{{ $t('settings.smtp_connection') }}</legend>
@@ -64,12 +64,14 @@
           <label>{{ $t('settings.reply_to_address_optional') }}<input v-model="smtp.reply_to" /></label>
         </div>
       </fieldset>
-      <div class="row">
-        <button class="primary" @click="saveSmtp">{{ $t('settings.save_configuration') }}</button>
-      </div>
-      <div class="smtp-test">
-        <label>{{ $t('settings.test_recipient_email') }}<input v-model="testTo" type="email" placeholder="name@example.com" /></label>
-        <button @click="testSmtp" :disabled="testing">{{ testing ? $t('settings.sending') : $t('settings.send_test_email') }}</button>
+      <div class="smtp-actions">
+        <div class="row">
+          <button class="primary" @click="saveSmtp">{{ $t('settings.save_configuration') }}</button>
+        </div>
+        <div class="smtp-test">
+          <label>{{ $t('settings.test_recipient_email') }}<input v-model="testTo" type="email" placeholder="name@example.com" /></label>
+          <button @click="testSmtp" :disabled="testing">{{ testing ? $t('settings.sending') : $t('settings.send_test_email') }}</button>
+        </div>
       </div>
     </section>
 
@@ -987,9 +989,10 @@ watch(tab, (t) => {
 </script>
 
 <style scoped>
-.settings-page { max-width: 1540px; margin-inline: auto; padding: 26px clamp(16px, 3vw, 44px) 48px; }
+/* Match the workspace navbar gutter on desktop instead of centering a capped canvas. */
+.settings-page { padding: 18px 24px 32px; }
 .settings-page :deep(.page-head h1) { font-size: 28px; letter-spacing: -.035em; }
-.settings-layout { display: grid; grid-template-columns: clamp(190px, 17vw, 240px) minmax(0, 1fr); gap: clamp(20px, 2.8vw, 44px); align-items: start; }
+.settings-layout { display: grid; grid-template-columns: clamp(176px, 14vw, 204px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .settings-layout.personal-only { grid-template-columns: minmax(0, 680px); }
 .section-nav { position: sticky; top: 74px; }
 .tabs { display: grid; gap: 20px; }
@@ -1017,7 +1020,7 @@ label.section-picker { display: none; }
 .settings-page :is(button, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 820px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .settings-page { padding-top: 16px; }
+  .settings-page { padding: 16px clamp(16px, 3vw, 24px) 32px; }
   .section-nav { position: static; }
   .tabs { display: none; }
   label.section-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
@@ -1052,6 +1055,7 @@ label.section-picker { display: none; }
 .smtp-security { grid-column: span 2; }
 .smtp-sender { grid-template-columns: repeat(auto-fit, minmax(min(100%, 172px), 1fr)); }
 .smtp-group + .smtp-group { margin-top: 4px; }
+.smtp-actions { display: contents; }
 .smtp-test { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
   padding-top: 18px; border-top: 1px solid var(--border); }
 .smtp-test label { flex: 0 1 340px; }
@@ -1138,6 +1142,24 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; }
 .note-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 
+@media (min-width: 821px) {
+  .settings-page :deep(.page-head) { margin-bottom: 12px; }
+  .section-title { padding: 12px 18px; }
+  .panel { padding: 16px 18px; gap: 14px; }
+  .smtp-group legend { margin-bottom: 8px; }
+  .smtp-connection, .smtp-sender { gap: 10px 14px; }
+  .grid2, .bill-ops { max-width: none; }
+}
+@media (min-width: 1280px) {
+  .panel.smtp-panel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); column-gap: 24px; }
+  .smtp-panel > p, .smtp-actions { grid-column: 1 / -1; }
+  .smtp-group + .smtp-group { margin: 0; }
+  .smtp-sender { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .smtp-sender > label:last-child { grid-column: 1 / -1; }
+  .smtp-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 18px;
+    border-top: 1px solid var(--border); padding-top: 12px; }
+  .smtp-test { flex: 1 1 360px; border: 0; padding: 0 0 0 18px; border-inline-start: 1px solid var(--border); }
+}
 @media (max-width: 680px) {
   .smtp-connection, .grid2, .new-ch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .smtp-host, .smtp-user, .smtp-password { grid-column: 1 / -1; }
