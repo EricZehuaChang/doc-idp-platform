@@ -161,3 +161,112 @@ async def test_append_record_uses_frozen_shape_and_preserves_existing_rows(revie
     async with db.session_factory()() as session:
         correction = (await session.scalars(select(Correction))).one()
         assert correction.field == f"records[{index}]"
+
+
+@pytest.mark.parametrize("intervening", ["approve", "unlock", "unlock-relock", "expired"])
+async def test_interleaved_lock_or_decision_invalidates_stale_write(review_case, monkeypatch, intervening):
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+
+    from app.api.routes import review
+    from app.integrations import webhooks
+    from app.tasks import output_stage
+
+    client, db = review_case
+    assert (await client.post(URL + "/lock")).status_code == 200
+    monkeypatch.setattr(webhooks, "fire", AsyncMock())
+    monkeypatch.setattr(output_stage, "output_stage", AsyncMock())
+    checked, resume = asyncio.Event(), asyncio.Event()
+    real_save = review._save_list_result
+
+    async def pause_before_update(*args):
+        checked.set()
+        await resume.wait()
+        await real_save(*args)
+
+    monkeypatch.setattr(review, "_save_list_result", pause_before_update)
+    edit = asyncio.create_task(client.patch(URL + "/fields", json=patch_body(0, "receipt", "stale", 0)))
+    try:
+        await asyncio.wait_for(checked.wait(), 5)
+        if intervening == "approve":
+            assert (await client.post(URL + "/confirm")).status_code == 200
+        elif intervening == "expired":
+            later = review._now() + timedelta(minutes=16)
+            monkeypatch.setattr(review, "_now", lambda: later)
+        else:
+            assert (await client.post(URL + "/unlock")).status_code == 200
+            if intervening == "unlock-relock":
+                assert (await client.post(URL + "/lock")).status_code == 200
+    finally:
+        resume.set()
+    response = await asyncio.wait_for(edit, 5)
+    assert response.status_code == 409, response.text
+    async with db.session_factory()() as session:
+        file = await session.get(FileRecord, "receipt-scan")
+        assert file.result == receipts() and not file.result_revision
+        assert not (await session.scalars(select(Correction))).all()
+
+
+async def test_concurrent_edit_invalidates_decision_that_saw_the_old_revision(review_case, monkeypatch):
+    from app.api.routes import review
+
+    client, db = review_case
+    assert (await client.post(URL + "/lock")).status_code == 200
+    checked, resume = asyncio.Event(), asyncio.Event()
+    real_decide = review._finalize_list_review
+
+    async def pause_before_decision(*args):
+        checked.set()
+        await resume.wait()
+        await real_decide(*args)
+
+    monkeypatch.setattr(review, "_finalize_list_review", pause_before_decision)
+    decision = asyncio.create_task(client.post(URL + "/reject"))
+    try:
+        await asyncio.wait_for(checked.wait(), 5)
+        edit = await client.patch(URL + "/fields", json=patch_body(0, "receipt", "updated", 0))
+        assert edit.status_code == 200, edit.text
+    finally:
+        resume.set()
+    response = await asyncio.wait_for(decision, 5)
+    assert response.status_code == 409, response.text
+    async with db.session_factory()() as session:
+        file = await session.get(FileRecord, "receipt-scan")
+        assert file.status == "pending_verification" and file.result_revision == 1
+        assert file.result["records"][0]["receipt"]["$value"] == "updated"
+
+
+async def test_legacy_list_job_uses_pinned_version_across_read_write_and_export(review_case):
+    from app.models import Skill, SkillVersion
+
+    client, db = review_case
+    async with db.session_factory()() as session:
+        txn = await session.get(Transaction, "receipts-txn")
+        package = txn.execution_snapshot["package"]
+        session.add(Skill(code="receipts", name="legacy", tenant_id="default"))
+        await session.flush()
+        session.add(SkillVersion(skill_code="receipts", tenant_id="default", version=1, package=package))
+        txn.execution_snapshot = None
+        file = await session.get(FileRecord, "receipt-scan")
+        file.document_meta = {}
+        file.status = "completed"
+        old = receipts()
+        old["records"][0]["record_index"] = {"$value": "client index"}
+        file.result = old
+        await session.commit()
+    assert (await client.get(URL)).json()["output_shape"] == "list"
+    docs = (await client.get("/api/v1/transactions/receipts-txn/documents")).json()
+    assert docs["files"][0]["documents"][0]["data"][0]["receipt"] == "R-001"
+    status = (await client.get("/api/v1/status/receipts-txn?include_confidence_flag=false")).json()
+    assert status["files"][0]["result"][0]["receipt"] == "R-001"
+    table = await client.get("/api/v1/cabinet/receipts?limit=1")
+    only, = table.json()["rows"]
+    assert only["record_index"] == 1 and only["field.record_index"] == "client index"
+    async with db.session_factory()() as session:
+        file = await session.get(FileRecord, "receipt-scan")
+        file.status = "pending_verification"
+        await session.commit()
+    assert (await client.post(URL + "/lock")).status_code == 200
+    assert (await client.patch(URL + "/fields", json=patch_body(0, "receipt", "old job", 0))).status_code == 200
+    assert (await client.post(URL + "/records", json={"expected_revision": 1})).status_code == 200
+    assert (await client.delete(URL + "/records/0?expected_revision=2")).status_code == 200

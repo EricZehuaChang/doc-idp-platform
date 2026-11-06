@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, delete, func, or_, select
 
-from app.result_view import clean, output_shape_of
+from app.result_view import clean, execution_package, output_shape_of
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
@@ -449,37 +449,54 @@ def _flat_value(v) -> str:
 
 
 async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
-    sf = session_factory()
-    async with sf() as s:
-        rows = (await s.execute(
-            select(FileRecord, Transaction.skill_code, Transaction.execution_snapshot)
-            .join(Transaction, FileRecord.transaction_id == Transaction.id)
-            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
-                   Transaction.skill_code == skill_code,
-                   Transaction.purpose != "test",   # §3.9
-                   _NOT_DELETED,
-                   FileRecord.status.in_(_DONE))
-            .order_by(FileRecord.created_at.desc())
-            .limit(min(limit, 1000)))).all()
+    row_limit = min(max(limit, 0), 1000)
+    if not row_limit:
+        return []
     out = []
-    for f, sc, snapshot in rows:
-        shape = output_shape_of(f, (snapshot or {}).get("package"))
-        flat = {k: _flat_value(v) for k, v in (f.result or {}).items()}
-        meta = f.document_meta or {}
-        # 9.15 WP4: advanced skills emit one row per child document; doc_type
-        # is a new column, legacy rows just leave it out
-        row = {"file_id": f.id, "file_name": f.file_name,
-               "status": f.status, "verified_by": f.verified_by,
-               "created_at": f.created_at.isoformat()}
-        if meta.get("doc_index") is not None:
-            row["doc_type"] = meta.get("doc_type") or ""
-            row["source_pages"] = meta.get("source_pages") or []
-        if shape == "list":
-            for index, record in enumerate(clean(f.result or {}, shape), 1):
-                out.append({**row, "record_index": index,
-                            **{key: _flat_value(value) for key, value in record.items()}})
-        else:
-            out.append({**row, **flat})
+    legacy_versions = {}
+    async with session_factory()() as s:
+        stream = await s.stream(
+            select(FileRecord, Transaction).join(Transaction, FileRecord.transaction_id == Transaction.id)
+            .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
+                   Transaction.skill_code == skill_code, Transaction.purpose != "test",
+                   _NOT_DELETED, FileRecord.status.in_(_DONE))
+            .order_by(FileRecord.created_at.desc(), FileRecord.id).execution_options(yield_per=32))
+        async for f, txn in stream:
+            meta = f.document_meta or {}
+            snapshot = (txn.execution_snapshot or {}).get("package")
+            if snapshot is None and not (meta.get("output_shape") or meta.get("effective_schema")):
+                if txn.skill_version not in legacy_versions:
+                    legacy_versions[txn.skill_version] = await execution_package(s, txn)
+                snapshot = legacy_versions[txn.skill_version]
+            shape = output_shape_of(f, snapshot)
+            row = {"file_id": f.id, "file_name": f.file_name, "status": f.status,
+                   "verified_by": f.verified_by, "created_at": f.created_at.isoformat()}
+            if meta.get("doc_index") is not None:
+                row["doc_type"] = meta.get("doc_type") or ""
+                row["source_pages"] = meta.get("source_pages") or []
+            if shape == "list":
+                records = (f.result or {}).get("records") or []
+                if isinstance(records, list):
+                    for index, record in enumerate(records, 1):
+                        if not isinstance(record, dict):
+                            continue
+                        item = {**row, "record_index": index}
+                        values, = clean({"records": [record]}, shape)
+                        for key, value in values.items():
+                            name = key
+                            if name in item:
+                                name = f"field.{name}"
+                                while name in item or name in values:
+                                    name = f"field.{name}"
+                            item[name] = _flat_value(value)
+                        out.append(item)
+                        if len(out) == row_limit:
+                            break
+            else:
+                out.append({**row, **{k: _flat_value(v) for k, v in (f.result or {}).items()}})
+            if len(out) == row_limit:
+                break
+        await stream.close()
     return out
 
 
