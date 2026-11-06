@@ -1439,6 +1439,7 @@
     "product_second": "处理平台",
     "product_description": "识别业务文档，提取关键字段，回到原文复核。",
     "figure": "发票字段提取示例",
+    "replay": "重播演示",
     "login_help": "使用你的平台账号继续。",
     "password_hint": "输入密码",
     "tenant_hint": "按需填写租户 ID",

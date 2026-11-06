@@ -1439,6 +1439,7 @@
     "product_second": "document processing",
     "product_description": "Recognize documents, extract key fields, and review them against the source.",
     "figure": "Invoice field extraction example",
+    "replay": "Replay demo",
     "login_help": "Use your platform account to continue.",
     "password_hint": "Enter your password",
     "tenant_hint": "Enter a tenant ID if needed",

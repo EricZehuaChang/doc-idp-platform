@@ -10,13 +10,7 @@
           <h2>{{ $t('login.product_first') }}<br />{{ $t('login.product_second') }}</h2>
           <p>{{ $t('login.product_description') }}</p>
         </div>
-        <figure>
-          <img src="../../assets/login-document.svg" alt="" width="520" height="320" />
-          <figcaption>
-            <span>{{ $t('login.figure') }}</span>
-            <span class="formats" lang="en">PDF → JSON</span>
-          </figcaption>
-        </figure>
+        <InvoiceScan />
       </div>
     </aside>
 
@@ -79,6 +73,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import InvoiceScan from "./InvoiceScan.vue";
 import { api, LocalizedApiError } from "../../api";
 import { setSession } from "../../session";
 import { setLanguage, translateMessage, type DisplayMessage } from "../../i18n";
@@ -160,14 +155,6 @@ async function submit() {
 }
 .product-intro h2:lang(en) { font-size: clamp(35px, 3.95vw, 65px); line-height: 1.02; }
 .product-intro p { margin: 18px 0 0; color: #c3cbd1; font-size: 15px; max-width: 40ch; }
-figure { margin: clamp(24px, 4vh, 48px) 0 0; }
-figure img { display: block; width: 100%; height: auto; }
-figcaption {
-  margin-top: 14px; padding-top: 14px; border-top: 1px solid #47535c;
-  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px;
-  color: #c0c9cf; font-size: 12px;
-}
-.formats { font: 11px/1.5 ui-monospace, monospace; letter-spacing: .07em; }
 .entry { position: relative; min-width: 0; display: grid; place-items: center; padding: 92px clamp(32px, 5vw, 88px); }
 .language-switch {
   position: absolute; top: 24px; right: clamp(16px, 2.5vw, 44px);
