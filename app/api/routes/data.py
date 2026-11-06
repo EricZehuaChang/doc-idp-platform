@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, delete, func, or_, select
 
+from app.result_view import clean, output_shape_of
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.db import session_factory
@@ -451,7 +452,7 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
     sf = session_factory()
     async with sf() as s:
         rows = (await s.execute(
-            select(FileRecord, Transaction.skill_code)
+            select(FileRecord, Transaction.skill_code, Transaction.execution_snapshot)
             .join(Transaction, FileRecord.transaction_id == Transaction.id)
             .where(visible_file_cond(), FileRecord.tenant_id == current_tenant(),
                    Transaction.skill_code == skill_code,
@@ -461,7 +462,8 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
             .order_by(FileRecord.created_at.desc())
             .limit(min(limit, 1000)))).all()
     out = []
-    for f, sc in rows:
+    for f, sc, snapshot in rows:
+        shape = output_shape_of(f, (snapshot or {}).get("package"))
         flat = {k: _flat_value(v) for k, v in (f.result or {}).items()}
         meta = f.document_meta or {}
         # 9.15 WP4: advanced skills emit one row per child document; doc_type
@@ -472,7 +474,12 @@ async def _cabinet_rows(skill_code: str, limit: int) -> list[dict]:
         if meta.get("doc_index") is not None:
             row["doc_type"] = meta.get("doc_type") or ""
             row["source_pages"] = meta.get("source_pages") or []
-        out.append({**row, **flat})
+        if shape == "list":
+            for index, record in enumerate(clean(f.result or {}, shape), 1):
+                out.append({**row, "record_index": index,
+                            **{key: _flat_value(value) for key, value in record.items()}})
+        else:
+            out.append({**row, **flat})
     return out
 
 

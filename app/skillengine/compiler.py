@@ -7,7 +7,7 @@ import json
 from app.parsers.base import UDR
 from app.skillengine.schema import FieldSpec, SkillPackage
 
-_MAX_DOC_CHARS = 24000   # final guard after multi-page detail-table map/reduce
+MAX_DOC_CHARS = 24000   # final guard after multi-page detail-table map/reduce
 
 
 def _rule_text(instruction: str, indent: str) -> str:
@@ -59,8 +59,12 @@ def _spec_line(f: FieldSpec, bullet: str, indent: str) -> str:
             f"{_format_note(f)}{rule}{anchors}")
 
 
-def _field_lines(fields: list[FieldSpec]) -> str:
+def _field_lines(fields: list[FieldSpec], list_mode: bool = False) -> str:
     lines = []
+    if list_mode:
+        lines.append("文档里可能有多份同结构单据（例如一张图里有多张小票）。每份单据输出 records "
+                     "中的一个对象，按版面从左到右、从上到下排列。每条记录的明细只能包含本单据的行，"
+                     "禁止跨单据合并或挪用；只有一份单据时也输出单元素数组。")
     for f in fields:
         if f.type == "table":
             rule = _rule_text(f.instruction, "")
@@ -80,9 +84,11 @@ def _field_lines(fields: list[FieldSpec]) -> str:
     return "\n".join(lines)
 
 
-def _output_contract(fields: list[FieldSpec]) -> dict:
+def _output_contract(fields: list[FieldSpec], list_mode: bool = False) -> dict:
     """Example-shaped contract embedded in the prompt. Verbatim scalar fields ->
     string value; inferred -> {value, reasoning}; table -> array of row objects."""
+    if list_mode:
+        return {"records": [_output_contract(fields)]}
     out: dict = {}
     for f in fields:
         if f.type == "table":
@@ -109,23 +115,27 @@ def compile_messages(pkg: SkillPackage, udr: UDR,
     # one bullet in a long list ahead of up to 24k chars of document text, which
     # is why a rule written on a field lost to the same rule written as an
     # additional rule. They ride in the system turn with the other constraints.
-    system += f"\n\n## 字段定义\n{_field_lines(pkg.fields)}"
+    list_mode = pkg.output_shape == "list"
+    system += f"\n\n## 字段定义\n{_field_lines(pkg.fields, list_mode)}"
 
     doc_text = udr.full_markdown or udr.full_text()
-    if len(doc_text) > _MAX_DOC_CHARS:
-        doc_text = doc_text[:_MAX_DOC_CHARS] + "\n...[截断]"
+    if len(doc_text) > MAX_DOC_CHARS:
+        doc_text = doc_text[:MAX_DOC_CHARS] + "\n...[截断]"
 
     user = (
         f"## 输出契约（JSON，键必须完全一致）\n"
-        f"{json.dumps(_output_contract(pkg.fields), ensure_ascii=False)}\n\n"
+        f"{json.dumps(_output_contract(pkg.fields, list_mode), ensure_ascii=False)}\n\n"
         f"## 文档内容\n{doc_text}"
     )
 
     messages: list[dict] = [{"role": "system", "content": system}]
     for shot in pkg.few_shot:   # samples become few-shot pairs — the "model"
         messages.append({"role": "user", "content": shot.input_excerpt})
+        expected = shot.expected_output
+        if list_mode and not isinstance(expected.get("records"), list):
+            expected = {"records": [expected]}
         messages.append({"role": "assistant",
-                         "content": json.dumps(shot.expected_output, ensure_ascii=False)})
+                         "content": json.dumps(expected, ensure_ascii=False)})
     if images:
         # Vision channel: the parsed text stays in the prompt (it carries the
         # anchors the confidence scorer later matches against) and the page

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.result_view import clean, output_shape_of, review_fields
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
@@ -524,30 +525,19 @@ async def transaction_documents(transaction_id: str):
             snapshot_pkg = (ver.package or {}) if ver else {}
         layout_txn = _is_layout_txn(txn)
         threshold = 2
-        output_shape = "object"
         if snapshot_pkg:
-            output_shape = snapshot_pkg.get("output_shape") or "object"
             rp = snapshot_pkg.get("review_policy") or {}
             threshold = int(rp.get("confidence_threshold") or 2)
 
-        def _clean(v):
-            if isinstance(v, dict):
-                return v.get("$value")
-            if isinstance(v, list):
-                return [{k: cv for k, cv in r.items() if not k.startswith("$")}
-                        if isinstance(r, dict) else r for r in v]
-            return v
+        def _review_fields(file):
+            schema = (file.document_meta or {}).get("effective_schema") or {}
+            policy = schema.get("review_policy") or {}
+            local_threshold = int(policy.get("confidence_threshold", threshold))
+            return review_fields(file.result or {}, output_shape_of(file, snapshot_pkg), local_threshold)
 
-        def _review_fields(result: dict) -> list[str]:
-            names = []
-            for name, cell in (result or {}).items():
-                if not isinstance(cell, dict) or cell.get("$confidence") is None:
-                    continue   # fast mode: unscored -> nothing is "pending"
-                if (cell.get("$confidence", 3) < threshold
-                        or cell.get("$rule_failures")
-                        or cell.get("$format_error")):
-                    names.append(name)
-            return names
+        def _review_meta(file):
+            reasons = (file.document_meta or {}).get("review_reasons")
+            return {"review_reasons": reasons} if reasons else {}
 
         def _extraction_status(f: FileRecord) -> str:
             """#7: meta first, file status as the honest fallback (D8: rejected
@@ -578,8 +568,9 @@ async def transaction_documents(transaction_id: str):
                         "error": k.error or None,
                         "data": _clean_data(k),
                         **({"field_sources": k.document_meta["field_sources"]} if (k.document_meta or {}).get("field_sources") else {}),
-                        "review_fields": _review_fields(k.result or {}),
+                        "review_fields": _review_fields(k),
                         "metrics": (k.document_meta or {}).get("metrics"),
+                        **_review_meta(k),
                         "artifacts": artifacts_by_file.get(k.id, []),
                         **({"layout": _file_layout(k)} if layout_txn else {})})
                 return docs
@@ -595,23 +586,15 @@ async def transaction_documents(transaction_id: str):
                 "error": f.error or None,
                 "data": _clean_data(f),
                 **({"field_sources": f.document_meta["field_sources"]} if (f.document_meta or {}).get("field_sources") else {}),
-                "review_fields": _review_fields(f.result or {}),
+                "review_fields": _review_fields(f),
                 "metrics": (f.document_meta or {}).get("metrics"),
+                **_review_meta(f),
                 "artifacts": artifacts_by_file.get(f.id, []),
                 # new key only, layout skills only: existing callers unchanged
                 **({"layout": _file_layout(f)} if layout_txn else {})}]
 
         def _clean_data(f: FileRecord):
-            result = f.result
-            if result is None:
-                return None
-            if output_shape == "list":
-                rows = result.get("records")
-                if not isinstance(rows, list):
-                    return []
-                return [{k: cv for k, cv in r.items() if not k.startswith("$")}
-                        if isinstance(r, dict) else r for r in rows]
-            return {k: _clean(v) for k, v in result.items()}
+            return clean(f.result, output_shape_of(f, snapshot_pkg))
 
         return {
             "transaction_id": txn.id, "purpose": txn.purpose,
@@ -642,21 +625,17 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond()))).scalars().all()
         layout_txn = _is_layout_txn(txn)
+        snapshot = (txn.execution_snapshot or {}).get("package")
+        if snapshot is None:
+            version = (await s.execute(select(SkillVersion).where(
+                SkillVersion.skill_code == txn.skill_code,
+                SkillVersion.version == txn.skill_version))).scalar_one_or_none()
+            snapshot = version.package if version else {}
 
         def file_payload(f: FileRecord) -> dict:
             result = f.result
             if result is not None and not include_confidence_flag:
-                # plain-value view: scalars collapse to $value, table rows drop
-                # $-metadata ($cells) so integrators get clean row objects
-                def _plain(v):
-                    if isinstance(v, dict):
-                        return v.get("$value")
-                    if isinstance(v, list):
-                        return [{ck: cv for ck, cv in r.items()
-                                 if not ck.startswith("$")}
-                                if isinstance(r, dict) else r for r in v]
-                    return v
-                result = {k: _plain(v) for k, v in result.items()}
+                result = clean(result, output_shape_of(f, snapshot))
             from app.api.routes.docmeta import document_view
             return {
                 "file_id": f.id, "file_name": f.file_name, "status": f.status,
@@ -666,6 +645,8 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
                 # 9.15 WP4 (§3.6): per-document view, new key only — absent for
                 # legacy/standard files without classification metadata
                 "document": document_view(f),
+                **({"review_reasons": f.document_meta["review_reasons"]}
+                   if (f.document_meta or {}).get("review_reasons") else {}),
                 # layout skills: parser text + boxes + page dims, outside
                 # `result` so the field contract and review UI stay untouched
                 **({"layout": _file_layout(f)} if layout_txn else {}),

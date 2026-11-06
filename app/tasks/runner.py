@@ -462,7 +462,7 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
     else:
         result, usage, needs_review = await asyncio.to_thread(
             extract, udr, pkg, page_images=page_images, fast=fast)
-    if fast and not usage.get("review_misses"):
+    if fast and not usage.get("review_misses") and not usage.get("review_reasons"):
         # 极速模式 executes as standard: no review, no scoring (§WP5)
         needs_review = False
 
@@ -478,6 +478,10 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         f.processed_at = datetime.now(timezone.utc)   # per-doc speed figure (§task ledger)
         meta = dict(f.document_meta or {})
         meta["extraction_status"] = "completed"
+        # A5: persist per-document shape and shared reasons from the executable package.
+        meta["output_shape"] = pkg.output_shape
+        if usage.get("review_reasons"):
+            meta["review_reasons"] = list(dict.fromkeys(usage["review_reasons"]))
         if fast:
             # 未评分契约 + bench data source (§3.9 document_meta.metrics)
             meta["processing_mode"] = "fast"

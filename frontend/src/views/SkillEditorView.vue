@@ -316,7 +316,7 @@
               <template v-if="!activeCat || activeCat.handler === 'inline'">
                 <div class="field-heading">
                   <div>
-                    <h3>{{ activeCat ? t('skillEditor.category_fields', { name: translateMessage(catName(activeCat)) }) : $t('skillEditor.field_extraction') }} <span class="field-count">{{ curFields.length }}</span></h3>
+                    <h3>{{ fieldShape === 'list' ? t('skillEditor.fields_per_record') : activeCat ? t('skillEditor.category_fields', { name: translateMessage(catName(activeCat)) }) : $t('skillEditor.field_extraction') }} <span class="field-count">{{ curFields.length }}</span></h3>
                     <p class="dim">{{ $t('skillEditor.referring_to_the_sample_on_the_left_define_the') }}</p>
                   </div>
                   <span class="save-state dim">{{ saving ? $t('skillEditor.saving') : dirty ? $t('skillEditor.unsaved_changes') : isNew ? $t('skillEditor.not_yet_created') : $t('skillEditor.saved') }}</span>
@@ -355,6 +355,10 @@
                   <span v-else-if="fieldTrialStale">{{ $t('skillEditor.the_definition_has_changed_the_results_below_may_be') }}</span>
                   <span v-else-if="fieldTrialReady">{{ $t('skillEditor.trial_extraction_complete') }} {{ fieldTrialFilled }}/{{ curFields.length }} {{ $t('skillEditor.fields_have_values') }}<span v-if="pgDuration != null"> · {{ (pgDuration / 1000).toFixed(1) }} {{ $t('skillEditor.seconds') }}</span></span>
                   <span v-else>{{ activeSample ? $t('skillEditor.run_a_trial_extraction_on_the_current_sample_to') : $t('skillEditor.upload_a_sample_to_run_a_trial_extraction_and') }}</span>
+                  <select v-if="fieldTrialReady && Array.isArray(fieldTrialDoc?.data) && fieldTrialDoc.data.length"
+                          v-model.number="trialRecord" :aria-label="t('review.record')">
+                    <option v-for="(_, i) in fieldTrialDoc.data" :key="i" :value="i">{{ t('review.record_number', { n: i + 1 }) }}</option>
+                  </select>
                   <select v-if="fieldTrialDocs.length > 1" v-model.number="fieldTrialDocIndex" :aria-label="$t('skillEditor.select_trial_extraction_document')">
                     <option v-for="(doc, di) in fieldTrialDocs" :key="doc.file_id" :value="di">{{ doc.doc_type || $t('skillEditor.document') }} {{ di + 1 }} · {{ doc.page_range }}</option>
                   </select>
@@ -604,14 +608,16 @@
                     <span v-if="doc.extraction_status === 'not_requested'" class="dim">
                       {{ $t('skillEditor.classification_only_no_fields_to_validate') }}</span>
                   </div>
-                  <table v-if="pgRowsOf(doc).length" class="pg-fields">
+                  <template v-for="group in pgGroupsOf(doc)" :key="group.index ?? 'object'">
+                    <h4 v-if="group.index !== null">{{ t('review.record_number', { n: group.index + 1 }) }}</h4>
+                    <table v-if="group.rows.length" class="pg-fields">
                     <tbody>
-                      <tr v-for="[k, v] in pgRowsOf(doc)" :key="k"
-                          :class="{ on: pgActiveField === String(k) }"
-                          @click="pgPickDocField(doc, String(k))">
+                      <tr v-for="[k, v] in group.rows" :key="k"
+                          :class="{ on: pgActiveField === pgKey(doc, group.index, k) }"
+                          @click="pgPickDocField(doc, k, group.index)">
                         <td class="pg-field-name">{{ k }}
-                          <span v-if="doc.field_sources?.[String(k)]" class="dim">{{ translateMessage(sourceLabel(doc.field_sources[String(k)])) }}</span>
-                          <span v-if="doc.review_fields.includes(String(k))"
+                          <span v-if="doc.field_sources?.[fieldPath(group.index, k)]" class="dim">{{ translateMessage(sourceLabel(doc.field_sources[fieldPath(group.index, k)])) }}</span>
+                          <span v-if="doc.review_fields.includes(fieldPath(group.index, k))"
                                 class="badge-r">{{ $t('skillEditor.pending_review_6c42f7') }}</span></td>
                         <td>
                           <span v-if="pgIsTable(v)" class="pg-table-grid"
@@ -629,10 +635,11 @@
                         </td>
                       </tr>
                     </tbody>
-                  </table>
-                  <p v-else-if="doc.extraction_status !== 'not_requested' &&
+                    </table>
+                  </template>
+                  <p v-if="!pgGroupsOf(doc).length && doc.extraction_status !== 'not_requested' &&
                                 pgResultTab === 'all'" class="dim">{{ $t('skillEditor.no_results') }}</p>
-                  <p v-else-if="pgResultTab === 'review'" class="dim">{{ $t('skillEditor.no_fields_pending_review') }}</p>
+                  <p v-else-if="!pgGroupsOf(doc).length && pgResultTab === 'review'" class="dim">{{ $t('skillEditor.no_fields_pending_review') }}</p>
                   <div v-if="doc.artifacts?.length" class="pg-arts" data-testid="pg-arts">
                     <span v-for="a in doc.artifacts" :key="a.artifact_id"
                           class="pg-art" :title="a.error ?? ''">
@@ -1004,7 +1011,7 @@ let outPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 function outSampleData(): Record<string, unknown> {
   // prefer the latest Playground result (§WP6), else blank placeholders
   const d = pgDocs.value?.[0]?.data;
-  if (Array.isArray(d)) return {};
+  if (Array.isArray(d)) return d[0] && typeof d[0] === "object" ? d[0] as Record<string, unknown> : {};
   if (d && typeof d === "object") return d as Record<string, unknown>;
   return {};
 }
@@ -1300,6 +1307,7 @@ const pgActiveBox = ref<number[] | null>(null);
 const pgActivePage = ref<number>(1);
 const pgStagePages = ref<{ page_no: number; width: number; height: number }[]>([]);
 const pgStageResult = ref<Record<string, unknown>>({});
+const pgPartResults = ref<Record<string, Record<string, unknown>>>({});
 const runBySample = ref<Record<string, { runId: string; txnId: string; fileId?: string }>>({});
 let pgTimer: ReturnType<typeof setInterval> | null = null;
 let pgStartedAt = 0;
@@ -1328,13 +1336,20 @@ const pgRunStatusChip = computed(() =>
       : pgRunStatus.value === "needs_review" ? "pending_verification" : "processing");
 const pgStageBoxes = computed(() => {
   const out: { key: string; label: string; page: number; bbox: number[] }[] = [];
-  for (const [k, v] of Object.entries(pgStageResult.value ?? {})) {
-    const cell = v as Record<string, unknown>;
-    const bbox = cell?.$bbox as number[] | undefined;
-    const page = cell?.$pages as string | undefined;
-    if (bbox?.length === 4 && page) {
-      out.push({ key: k, label: k, page: Number(page), bbox });
-    }
+  for (const doc of pgVisibleDocs.value) {
+    const raw = pgPartResults.value[doc.file_id] ?? pgStageResult.value;
+    const list = Array.isArray(doc.data);
+    const records = list && Array.isArray(raw.records) ? raw.records : [raw];
+    records.forEach((row, i) => {
+      for (const [name, value] of Object.entries(row ?? {})) {
+        const cell = value as FieldCell | null;
+        const page = Number(cell?.$pages);
+        if (cell?.$bbox?.length === 4 && page > 0) out.push({
+          key: pgKey(doc, list ? i : null, name), label: name,
+          page: doc.source_pages?.[page - 1] ?? page, bbox: cell.$bbox,
+        });
+      }
+    });
   }
   return out;
 });
@@ -1349,15 +1364,26 @@ function pgTableRows(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
 }
 function pgIsList(v: unknown): boolean { return Array.isArray(v); }
-function pgRowsOf(doc: TxnDocument): [string, unknown][] {
-  const data = doc.data;
-  if (!data || Array.isArray(data)) return [];
-  const rows = Object.entries(data as Record<string, unknown>);
-  if (pgResultTab.value === "review") {
-    return rows.filter(([k]) => doc.review_fields.includes(String(k)));
-  }
-  if (!pgExpandAll.value) return rows.slice(0, 1);
-  return rows;
+function fieldPath(index: number | null, name: string) {
+  return index === null ? name : `records[${index}].${name}`;
+}
+function pgKey(doc: TxnDocument, index: number | null, name: string) {
+  return index === null ? name : `${doc.file_id}:${fieldPath(index, name)}`;
+}
+function pgGroupsOf(doc: TxnDocument) {
+  const list = Array.isArray(doc.data);
+  const records = Array.isArray(doc.data) ? doc.data : [doc.data];
+  return records.flatMap((record, i) => {
+    if (!record || typeof record !== "object") return [];
+    const index = list ? i : null;
+    let rows = Object.entries(record);
+    if (pgResultTab.value === "review") {
+      rows = rows.filter(([key]) => doc.review_fields.includes(fieldPath(index, key)));
+    } else if (!pgExpandAll.value) {
+      rows = rows.slice(0, 1);
+    }
+    return rows.length ? [{ index, rows }] : [];
+  });
 }
 const pgFilteredSamples = computed(() => pgSamples.value.filter(
   (s) => !pgSearch.value || s.file_name.toLowerCase().includes(pgSearch.value.toLowerCase())));
@@ -1577,6 +1603,7 @@ async function pgLoadStage(txnId: string | null, fileId: string | undefined) {
     const d = await api.detail(fileId);
     if (pgCurrentTxnId.value !== txnId || pgCurrent.value?.file_id !== fileId) return;
     pgStagePages.value = d.pages ?? [];
+    pgPartResults.value = Object.fromEntries(d.children.map(child => [child.file_id, child.result]));
     pgStageResult.value = (d.result ?? {}) as Record<string, unknown>;
   } catch {
     if (pgCurrentTxnId.value === txnId && pgCurrent.value?.file_id === fileId) pgStagePages.value = [];
@@ -1619,20 +1646,13 @@ async function pgOpenDetail() {
 
 function pgPickField(key: string) {
   pgActiveField.value = key;
-  const cell = pgStageResult.value?.[key] as Record<string, unknown> | undefined;
-  pgActiveBox.value = (cell?.$bbox as number[]) ?? null;
-  pgActivePage.value = Number(cell?.$pages ?? 1) || 1;
+  const box = pgStageBoxes.value.find(b => b.key === key);
+  pgActiveBox.value = box?.bbox ?? null;
+  pgActivePage.value = box?.page ?? 1;
 }
 
-function pgPickDocField(doc: TxnDocument, key: string) {
-  pgActiveField.value = key;
-  const cell = pgStageResult.value?.[key] as Record<string, unknown> | undefined;
-  pgActiveBox.value = (cell?.$bbox as number[]) ?? null;
-  const page = Number(cell?.$pages ?? 1) || 1;
-  // 高级模式：子文档的页码映射回原件（source_pages）
-  const src = doc.source_pages ?? [];
-  pgActivePage.value = src.length >= page ? src[page - 1] : page;
-  if (!cell) pgActiveBox.value = null;
+function pgPickDocField(doc: TxnDocument, key: string, index: number | null) {
+  pgPickField(pgKey(doc, index, key));
 }
 
 /** #26: 「运行」— re-run just the file on screen. */
@@ -1708,13 +1728,15 @@ const fieldTrialError = computed(() => {
     return activeCat.value ? t('skillEditor.this_category_was_not_recognized_in_the_current_sample') : t('skillEditor.this_test_extraction_returned_no_field_results');
   return "";
 });
+const trialRecord = ref(0);
+watch(() => [fieldTrial.value?.txnId, fieldTrialDoc.value?.file_id], () => { trialRecord.value = 0; });
 const fieldTrialReady = computed(() => fieldTrialMatches.value && !fieldTrialRunning.value
   && !fieldTrialError.value && !!fieldTrialDoc.value);
 const exampleScope = computed(() => `${activeCat.value?.id ?? 'standard'}:${activeSample.value?.id ?? ''}`);
 
 function trialValue(name: string): unknown {
   const data = fieldTrialDoc.value?.data;
-  if (Array.isArray(data)) return data.map((row) => (row as Record<string, unknown> | null)?.[name]);
+  if (Array.isArray(data)) return (data[trialRecord.value] as Record<string, unknown> | undefined)?.[name];
   return data?.[name];
 }
 function fieldValue(name: string): unknown {
@@ -1732,8 +1754,9 @@ function fieldResultStatus(name: string): string {
   if (fieldTrialReady.value) {
     if (fieldTrialStale.value) return "stale";
     if (!hasFieldValue(trialValue(name))) return "missing";
-    if (fieldTrialDoc.value?.review_fields?.includes(name)
-        || fieldTrialDoc.value?.field_sources?.[name] === "review") return "review";
+    const key = fieldPath(Array.isArray(fieldTrialDoc.value?.data) ? trialRecord.value : null, name);
+    if (fieldTrialDoc.value?.review_fields?.includes(key)
+        || fieldTrialDoc.value?.field_sources?.[key] === "review") return "review";
     return fieldTrialBoxes.value.some((b) => b.key === name) ? "success" : "extracted";
   }
   return Object.prototype.hasOwnProperty.call(generatedExamples.value[exampleScope.value] ?? {}, name)
@@ -1744,7 +1767,10 @@ const fieldStageResult = computed(() => fieldTrialDoc.value?.file_id === pgCurre
 const fieldTrialBoxes = computed(() => {
   if (!fieldTrialReady.value || fieldTrialStale.value || pgFast.value) return [];
   const sourcePages = fieldTrialDoc.value?.source_pages ?? [];
-  return Object.entries(fieldStageResult.value).flatMap(([key, value]) => {
+  const raw = fieldStageResult.value;
+  const selected = Array.isArray(fieldTrialDoc.value?.data) && Array.isArray(raw.records)
+    ? raw.records[trialRecord.value] ?? {} : raw;
+  return Object.entries(selected).flatMap(([key, value]) => {
     const cell = value as Record<string, unknown> | null;
     const bbox = cell?.$bbox;
     const page = Number(cell?.$pages);

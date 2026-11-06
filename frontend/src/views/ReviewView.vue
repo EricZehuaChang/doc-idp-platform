@@ -14,6 +14,7 @@
                   @click="copyFid">⧉</button>
         </div>
         <strong class="fname-head" :title="detail.file_name">{{ detail.file_name }}</strong>
+        <span v-if="isList" class="dim">{{ t('review.record_count', { n: records.length }) }}</span>
         <span class="chip" :class="`chip-${detail.status}`">{{ statusLabel }}</span>
         <button class="anno" :class="{ primary: annotate }" :disabled="!locked"
                 @click="annotate = !annotate" :title="$t('review.drag_to_select_field_area_b')">
@@ -49,9 +50,24 @@
                   @click="switchPart(part.file_id)">
             <span class="part-name" :title="part.document?.doc_type ?? ''">{{ $t('review.document') }} {{ i + 1 }}{{ part.document?.doc_type ? ` · ${part.document.doc_type}` : "" }}</span>
             <small>{{ $t('review.page_af50a0') }} {{ partRange(part) }} {{ $t('review.page') }}</small>
+            <small v-if="part.output_shape === 'list'">{{ t('review.record_count', { n: recordsOf(part).length }) }}</small>
             <span class="chip" :class="`chip-${part.status}`">{{ stLabel(part.status) }}</span>
           </button>
         </div>
+      </div>
+      <p v-if="activeItem?.review_reasons?.length" class="rulefail review-reasons" role="status">
+        {{ activeItem.review_reasons.map(reasonLabel).join(' · ') }}
+      </p>
+      <div v-if="isList" class="record-nav" data-record-nav>
+        <label v-if="records.length">{{ t('review.record') }}
+          <select :value="recordIndex" :disabled="navBusy || savingRecord" @change="onRecordChoice">
+            <option v-for="(_, i) in records" :key="i" :value="i">{{ i + 1 }} / {{ records.length }}</option>
+          </select>
+        </label>
+        <span v-else class="dim">{{ t('review.no_records') }}</span>
+        <button v-if="locked && reviewable" :disabled="navBusy || savingRecord" @click="changeRecords('add')">{{ t('review.add_record') }}</button>
+        <button v-if="locked && reviewable && records.length" class="danger" :disabled="navBusy || savingRecord"
+                @click="changeRecords('delete')">{{ t('review.delete_record') }}</button>
       </div>
       <div class="tabs">
         <button :class="{ primary: tab === 'all' }" @click="tab = 'all'">{{ $t('review.all_fields') }}</button>
@@ -220,15 +236,15 @@ import { useI18n } from "vue-i18n";
 const { t } = useI18n();
 
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { api, fetchBlob, type Artifact, type DetectResult, type FieldCell,
          type RegionOverlay,
-         type ReviewItem, type StageBox } from "../api";
+         type ReviewItem, type ReviewFields, type FieldEdit, type StageBox } from "../api";
 import DocStage from "../components/DocStage.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { copyText } from "../clipboard";
-import { downloadResult, type ResultExportInput } from "../resultExport";
+import { downloadResult, type ResultExportInput, type ExportRecord } from "../resultExport";
 import { toast } from "../toast";
 
 const props = defineProps<{ fileId: string }>();
@@ -399,20 +415,37 @@ function setInput(i: number, el: HTMLTextAreaElement | null) {
 }
 
 interface ScalarField { name: string; cell: FieldCell }
-const scalarFields = computed<ScalarField[]>(() => {
-  if (!activeItem.value?.result) return [];
-  return Object.entries(activeItem.value.result)
-    .filter(([, v]) => !Array.isArray(v))
-    .map(([name, cell]) => ({ name, cell: cell as FieldCell }));
-});
-const tableNames = computed(() => {
-  if (!activeItem.value?.result) return [];
-  return Object.entries(activeItem.value.result)
-    .filter(([, v]) => Array.isArray(v)).map(([name]) => name);
-});
+function recordsOf(item: ReviewItem | null): ReviewFields[] {
+  return item?.output_shape === "list" && Array.isArray(item.result?.records)
+    ? item.result.records as ReviewFields[] : [];
+}
+const isList = computed(() => activeItem.value?.output_shape === "list");
+const records = computed(() => recordsOf(activeItem.value));
+const recordIndex = ref(0);
+const recordSnapshot = shallowRef<ReviewFields>({});
+const syncedRevision = ref<number>();
+const savingRecord = ref(false);
+const activeFields = computed<ReviewFields>(() => isList.value
+  ? recordSnapshot.value : (activeItem.value?.result ?? {}) as ReviewFields);
+const scalarFields = computed<ScalarField[]>(() => Object.entries(activeFields.value)
+  .filter(([name, v]) => !name.startsWith("$") && !Array.isArray(v))
+  .map(([name, cell]) => ({ name, cell: cell as FieldCell })));
+const tableNames = computed(() => Object.entries(activeFields.value)
+  .filter(([name, v]) => !name.startsWith("$") && Array.isArray(v)).map(([name]) => name));
+const reasonLabels: Record<string, string> = {
+  records_invalid: "review.records_invalid",
+  records_empty: "review.records_empty",
+  records_boundary_uncertain: "review.records_boundary_uncertain",
+  records_overlap: "review.records_overlap",
+  challenger_record_count_mismatch: "review.challenger_record_count_mismatch",
+  parse_cells_collapsed: "review.parse_cells_collapsed",
+  table_shape_mismatch: "review.table_shape_mismatch",
+};
+function reasonLabel(code: string) { return reasonLabels[code] ? t(reasonLabels[code]) : code; }
+
 function tableCols(t: string): string[] {
   const rows = tableEdits.value[t] ?? [];
-  const cols = new Set<string>();
+  const cols = new Set<string>(isList.value ? activeItem.value?.table_columns?.[t] : []);
   // $-prefixed keys are engine metadata ($cells locations), not columns
   for (const r of rows) Object.keys(r).filter((c) => !c.startsWith("$")).forEach((c) => cols.add(c));
   return [...cols];
@@ -468,6 +501,16 @@ function fieldPage(cell: FieldCell): number {
 // —— every locatable thing, drawn on the document and clickable (P02) ——
 const stageBoxes = computed<StageBox[]>(() => {
   const out: StageBox[] = [];
+  // A8: record bounds and cell hits use the child document's local page numbers.
+  const bounds = activeFields.value.$record_bbox;
+  if (isList.value && Array.isArray(bounds)) {
+    for (const { page, bbox } of bounds as unknown as { page: number; bbox: number[] }[]) {
+      if (page > 0 && bbox?.length === 4) out.push({
+        key: `record:${page}`, page: toRootPage(page), bbox,
+        label: t('review.record_number', { n: recordIndex.value + 1 }),
+      });
+    }
+  }
   for (const f of scalarFields.value) {
     const pending = pendingBoxes.value[f.name];
     const bbox = pending?.bbox ?? (f.cell.$bbox?.length === 4 ? f.cell.$bbox : null);
@@ -511,6 +554,11 @@ function pickCell(t: string, ri: number, col: string) {
 /** Canvas -> field: the other half of the selection loop the UI never had. */
 function pickBox(key: string) {
   activeKey.value = key;
+  if (key.startsWith("record:")) {
+    const box = stageBoxes.value.find(b => b.key === key);
+    if (box) { activePage.value = box.page; activeBox.value = box.bbox; }
+    return;
+  }
   if (key.startsWith("f:")) {
     const f = scalarFields.value.find((x) => `f:${x.name}` === key);
     if (f) {
@@ -585,17 +633,32 @@ function setCellHit(t: string, ri: number, col: string, page: number, bbox: numb
 }
 
 // unsaved-draft persistence (caching design §9.0 layer ④)
-const draftKey = () => `idp_draft_${activeItem.value?.file_id ?? props.fileId}`;
+function draftKey(index = recordIndex.value) {
+  const base = `idp_draft_${activeItem.value?.file_id ?? props.fileId}`;
+  // A8: a deletion shifts list indices. Never restore an older revision's
+  // edits into a different record occupying the same index.
+  return isList.value ? `${base}:record:${index}:v${syncedRevision.value ?? 0}` : base;
+}
 function saveDraft() {
-  if (activeItem.value?.can_review && dirty.value) sessionStorage.setItem(draftKey(), JSON.stringify(edits.value));
+  if (!activeItem.value?.can_review || !dirty.value) return;
+  const payload = isList.value
+    ? { edits: edits.value, tables: tableEdits.value, boxes: pendingBoxes.value }
+    : edits.value;
+  sessionStorage.setItem(draftKey(), JSON.stringify(payload));
 }
 function restoreDraft() {
   const raw = sessionStorage.getItem(draftKey());
   if (!raw) return;
   try {
-    const draft = JSON.parse(raw) as Record<string, string>;
-    for (const k of Object.keys(edits.value))
-      if (k in draft && draft[k] !== edits.value[k]) edits.value[k] = draft[k];
+    const draft = JSON.parse(raw);
+    const values = isList.value ? draft.edits : draft;
+    for (const key of Object.keys(edits.value))
+      if (typeof values?.[key] === "string") edits.value[key] = values[key];
+    if (isList.value) {
+      for (const table of tableNames.value)
+        if (Array.isArray(draft.tables?.[table])) tableEdits.value[table] = draft.tables[table];
+      pendingBoxes.value = draft.boxes ?? {};
+    }
     toast.ok(t('review.restored_unsaved_draft'));
   } catch { sessionStorage.removeItem(draftKey()); }
 }
@@ -607,8 +670,8 @@ function syncFromDetail() {
   original.value = { ...vals };
   const tEdits: Record<string, Record<string, string>[]> = {};
   const tOrig: Record<string, string> = {};
-  for (const [name, v] of Object.entries(activeItem.value?.result ?? {})) {
-    if (Array.isArray(v)) {
+  for (const [name, v] of Object.entries(activeFields.value)) {
+    if (!name.startsWith("$") && Array.isArray(v)) {
       tEdits[name] = JSON.parse(JSON.stringify(v));
       tOrig[name] = JSON.stringify(v);
     }
@@ -631,7 +694,27 @@ watch(detail, (v) => {
   const valid = !v.children.length || v.children.some((c) => c.file_id === activeFileId.value);
   if (!valid || !activeFileId.value) activeFileId.value = v.active_file_id;
 }, { immediate: true });
-watch(activeItem, (v) => { if (v) syncFromDetail(); }, { immediate: true });
+watch([activeItem, recordIndex], ([item], previous) => {
+  if (!item) return;
+  const sameRecord = item.file_id === previous?.[0]?.file_id && recordIndex.value === previous?.[1];
+  if (isList.value && sameRecord && locked.value && dirty.value && !savingRecord.value && !navBusy.value) {
+    // A7: background detail refreshes must not rebase an unsaved edit onto
+    // another receipt. Its captured revision will reject a shifted-index PATCH.
+    return;
+  }
+  if (item.file_id !== previous?.[0]?.file_id) recordIndex.value = 0;
+  else if (isList.value) recordIndex.value = Math.min(recordIndex.value, Math.max(0, records.value.length - 1));
+  if (isList.value) {
+    syncedRevision.value = item.result_revision;
+    recordSnapshot.value = records.value[recordIndex.value] ?? {};
+    activeKey.value = "";
+    activeBox.value = null;
+    annotate.value = false;
+    pendingBoxes.value = {};
+    inputEls.clear();
+  }
+  syncFromDetail();
+}, { immediate: true });
 
 // —— 9.15 WP6: output artifacts of the open file (名称/大小/状态/下载) ——
 const artifacts = ref<Artifact[]>([]);
@@ -641,7 +724,7 @@ watch(activeItem, async (v) => {
   try { artifacts.value = (await api.fileArtifacts(v.file_id)).artifacts; }
   catch { /* artifacts are optional; never block the review page */ }
 }, { immediate: true });
-watch(edits, saveDraft, { deep: true });
+watch([edits, tableEdits, pendingBoxes], saveDraft, { deep: true });
 
 // —— navigation destination, one source of truth (WP3): the browse arrows and
 // the post-decision jump used to be two independently coded orderings. Both go
@@ -681,9 +764,10 @@ async function acquire() {
   catch (e) { toast.error(e); }
 }
 async function saveEdits(): Promise<boolean> {
-  if (!locked.value || !activeItem.value?.can_review) return false;
-  const changed: { field: string; value: string; bbox?: number[]; page?: number;
-                   rows?: Record<string, string>[] }[] =
+  if (!locked.value || !activeItem.value?.can_review || savingRecord.value) return false;
+  const index = isList.value ? recordIndex.value : undefined;
+  const revision = isList.value ? syncedRevision.value : undefined;
+  const changed: FieldEdit[] =
     Object.keys(edits.value)
       .filter((k) => edits.value[k] !== original.value[k] || pendingBoxes.value[k])
       .map((k) => ({ field: k, value: edits.value[k],
@@ -697,7 +781,8 @@ async function saveEdits(): Promise<boolean> {
   if (!fileId) return false;
   const dkey = draftKey();                       // captured: the reviewer may switch
   try {                                          // parts while the PATCH is in flight
-    await api.patchFields(fileId, changed);
+    savingRecord.value = true;
+    await api.patchFields(fileId, changed.map(edit => index === undefined ? edit : { ...edit, record: index }), revision);
     if (activeItem.value?.file_id !== fileId) return true;   // switched away: never
     sessionStorage.removeItem(dkey);                         // touch the NEW part's state
     pendingBoxes.value = {};
@@ -705,6 +790,47 @@ async function saveEdits(): Promise<boolean> {
     await refetch();
     return true;
   } catch (e) { toast.error(e); return false; }
+  finally { savingRecord.value = false; }
+}
+
+async function onRecordChoice(event: Event) {
+  const select = event.target as HTMLSelectElement;
+  await selectRecord(Number(select.value));
+  select.value = String(recordIndex.value);
+}
+async function selectRecord(index: number) {
+  if (navBusy.value || savingRecord.value || index === recordIndex.value) return;
+  navBusy.value = true;
+  try {
+    if (locked.value && dirty.value && !(await saveEdits())) return;
+    recordIndex.value = index;
+    await nextTick();
+    const first = stageBoxes.value[0];
+    if (first) { activePage.value = first.page; stage.value?.gotoPage(first.page); }
+  } finally { navBusy.value = false; }
+}
+
+async function changeRecords(action: "add" | "delete") {
+  const item = activeItem.value;
+  if (!locked.value || !item?.can_review || navBusy.value || savingRecord.value) return;
+  const index = recordIndex.value;
+  if (action === "delete" && !window.confirm(t("review.confirm_delete_record", { n: index + 1 }))) return;
+  navBusy.value = true;
+  try {
+    if (action === "add" && dirty.value && !(await saveEdits())) return;
+    const revision = syncedRevision.value;
+    let next = index;
+    if (action === "add") {
+      const added = await api.addRecord(item.file_id, revision);
+      next = added.record_index;
+    } else {
+      await api.deleteRecord(item.file_id, index, revision);
+      sessionStorage.removeItem(draftKey(index));
+    }
+    await refetch();
+    if (activeItem.value?.file_id === item.file_id)
+      recordIndex.value = Math.min(next, Math.max(0, records.value.length - 1));
+  } catch (e) { toast.error(e); } finally { navBusy.value = false; }
 }
 
 // —— result export (识别结果导出: JSON / Markdown) ——
@@ -721,6 +847,7 @@ function exportInput(): ResultExportInput | null {
     statusLabel: stLabel(item.status),
     pageCount: item.page_count,
     verifiedBy: item.verified_by,
+    records: isList.value ? records.value.map((fields, index) => exportRecord(fields, index)) : undefined,
     fields: scalarFields.value.map((f) => ({
       name: f.name,
       value: edits.value[f.name] ?? f.cell.$value ?? "",
@@ -729,6 +856,22 @@ function exportInput(): ResultExportInput | null {
     })),
     tables: tableNames.value.map((t) => ({ name: t, rows: tableEdits.value[t] ?? [] })),
   };
+}
+
+function exportRecord(fields: ReviewFields, index: number): ExportRecord {
+  const result: ExportRecord = { fields: [], tables: [] };
+  const current = index === recordIndex.value;
+  // The current record may have unsaved edits, just like an Object export.
+  for (const [name, cell] of Object.entries(fields)) {
+    if (name.startsWith("$")) continue;
+    if (Array.isArray(cell)) {
+      result.tables.push({ name, rows: current ? tableEdits.value[name] ?? cell : cell });
+    } else {
+      const value = current ? edits.value[name] ?? cell.$value : cell.$value;
+      result.fields.push({ name, value, confidence: value !== cell.$value ? 3 : cell.$confidence ?? 0 });
+    }
+  }
+  return result;
 }
 
 function exportResult(format: "json" | "md") {
@@ -752,7 +895,7 @@ async function releaseLock(fileId = activeItem.value?.file_id) {
 }
 
 async function switchPart(fileId: string) {
-  if (navBusy.value) return;
+  if (navBusy.value || savingRecord.value) return;
   if (fileId === activeItem.value?.file_id) {
     activePage.value = toRootPage(1);
     stage.value?.gotoPage(activePage.value);
@@ -879,6 +1022,7 @@ function moveField(delta: number) {
     ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 function onKey(ev: KeyboardEvent) {
+  if ((ev.target as Element)?.closest?.("[data-record-nav]")) return;
   const typing = (ev.target as HTMLElement)?.tagName === "INPUT"
     || (ev.target as HTMLElement)?.tagName === "TEXTAREA";
   if (typing) {
@@ -925,6 +1069,9 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.record-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 14px; }
+.record-nav label { display: flex; gap: 8px; align-items: center; }
+.review-reasons { margin: 0; padding: 8px 14px; }
 /* Fixed work area, one scroll container per column. Two things are load-bearing
    here and both were wrong before (P08): the height must subtract the REAL
    navbar height (52px — it was 46px, so the shell grew a second scrollbar), and

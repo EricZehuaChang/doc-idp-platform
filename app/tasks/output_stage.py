@@ -18,6 +18,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.result_view import clean as clean_result, output_shape_of
 from app.config import get_settings
 from app.db import session_factory
 from app.extraction.naming import (DEFAULT_RENAME, DEFAULT_SPLIT,
@@ -193,11 +194,16 @@ async def _output_stage_inner(file_id: str) -> None:
         used: set[str] = set()
         for doc_file, doc, revision in targets:
             meta = (doc.document_meta or {}) if doc is not root else {}
-            data = (doc.result or {}) if doc is not root else (root.result or {})
-            clean: dict = {}
-            for k, v in (data or {}).items():
-                if isinstance(v, dict) and "$value" in v:
-                    clean[k] = v.get("$value")
+            data = doc.result or {}
+            # A6: filename variables come from the first List record.
+            if output_shape_of(doc, pkg.model_dump()) == "list":
+                records = clean_result(data, "list")
+                clean = records[0] if records else {}
+            else:
+                clean: dict = {}
+                for k, v in data.items():
+                    if isinstance(v, dict) and "$value" in v:
+                        clean[k] = v.get("$value")
             doc_type = meta.get("doc_type")
             doc_index = meta.get("doc_index") if cfg.action == "split" else None
             output_is_pdf = cfg.searchable_pdf or (

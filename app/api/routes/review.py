@@ -8,17 +8,19 @@ skill quality dashboard (PM item #1). Identity: the JWT actor when auth is on
 (headers can't impersonate past the credential); X-User header in dev mode.
 """
 import json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select, update
 
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
+from app.result_view import output_shape_of
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant, require_role
 
@@ -59,8 +61,15 @@ def _pages(f: FileRecord) -> list[dict]:
              "height": p.get("height", 0)} for p in udr.get("pages", [])]
 
 
-def _detail_payload(f: FileRecord) -> dict:
+def _detail_payload(f: FileRecord, snapshot_pkg: dict | None = None) -> dict:
+    meta = f.document_meta or {}
+    schema = meta.get("effective_schema") or snapshot_pkg or {}
     return {
+        "output_shape": output_shape_of(f, snapshot_pkg),
+        "review_reasons": meta.get("review_reasons") or [],
+        "result_revision": f.result_revision or 0,
+        "table_columns": {field["name"]: [column["name"] for column in field.get("columns", [])]
+                          for field in schema.get("fields", []) if field.get("type") == "table"},
         "file_id": f.id, "file_name": f.file_name, "status": f.status,
         "transaction_id": f.transaction_id, "page_count": f.page_count,
         "parent_file_id": f.parent_file_id, "result": f.result or {},
@@ -148,7 +157,15 @@ async def detail(file_id: str):
         file_ids = [root.id] + [child.id for child in children]
         reviewable_ids = set((await s.scalars(select(FileRecord.id).where(
             FileRecord.id.in_(file_ids), reviewable_file_cond()))).all())
-        payload = _detail_payload(root)
+        txn = await s.get(Transaction, root.transaction_id)
+        snapshot = (txn.execution_snapshot or {}).get("package") if txn else None
+        if snapshot is None and txn:
+            from app.models import SkillVersion
+            version = (await s.execute(select(SkillVersion).where(
+                SkillVersion.skill_code == txn.skill_code,
+                SkillVersion.version == txn.skill_version))).scalar_one_or_none()
+            snapshot = version.package if version else None
+        payload = _detail_payload(root, snapshot)
         payload["can_review"] = root.id in reviewable_ids
         payload["children"] = []
         payload["child_count"] = len(children)
@@ -162,7 +179,7 @@ async def detail(file_id: str):
         offset = 0
         child_payloads = []
         for child in children:
-            item = _detail_payload(child)
+            item = _detail_payload(child, snapshot)
             item["can_review"] = child.id in reviewable_ids
             item["page_offset"] = offset
             # 9.15 WP4 (§3.6): classification metadata for advanced children —
@@ -232,6 +249,7 @@ async def unlock(file_id: str, x_user: str = Header(default="anonymous")):
 
 
 class FieldEdit(BaseModel):
+    record: int | None = Field(default=None, strict=True)
     field: str
     value: str = ""
     # reviewer re-drew the anchor box (M2 box-select): page-pixel space bbox
@@ -243,6 +261,7 @@ class FieldEdit(BaseModel):
 
 class FieldsPatch(BaseModel):
     edits: list[FieldEdit]
+    expected_revision: int | None = Field(default=None, ge=0, strict=True)
 
 
 @router.patch("/{file_id}/fields", dependencies=[Depends(require_role("operator"))])
@@ -258,10 +277,24 @@ async def patch_fields(file_id: str, body: FieldsPatch,
         if f.locked_by != user or _lock_expired(f):
             raise HTTPException(423, "acquire the lock before editing")
         txn = await s.get(Transaction, f.transaction_id)
-        result = dict(f.result or {})
+        result = deepcopy(f.result or {})
+        shape = output_shape_of(f, (txn.execution_snapshot or {}).get("package") if txn else None)
+        if shape == "list":
+            _check_list_revision(f, body.expected_revision)
         applied = []
         for e in body.edits:
-            cell = result.get(e.field)
+            target = result
+            field_path = e.field
+            if shape == "list":
+                if e.field.startswith("$"):
+                    raise HTTPException(400, "record metadata is not editable")
+                if e.record is None:
+                    raise HTTPException(400, "record index is required for List edits")
+                target = _record_at(result, e.record)
+                field_path = f"records[{e.record}].{e.field}"
+            elif e.record is not None:
+                raise HTTPException(400, "record index is only valid for List results")
+            cell = target.get(e.field)
             # table fields arrive as row arrays; a rows payload replaces them
             if isinstance(cell, list) and e.rows is not None:
                 import json as _json
@@ -273,10 +306,10 @@ async def patch_fields(file_id: str, body: FieldsPatch,
                     tenant_id=f.tenant_id, file_id=f.id,
                     skill_code=txn.skill_code if txn else "",
                     skill_version=txn.skill_version if txn else 0,
-                    field=e.field, old_value=old_rows[:4000], new_value=new_rows[:4000],
+                    field=field_path, old_value=old_rows[:4000], new_value=new_rows[:4000],
                     reviewer=user))
-                result[e.field] = e.rows
-                applied.append(e.field)
+                target[e.field] = e.rows
+                applied.append(field_path)
                 continue
             if not isinstance(cell, dict):
                 raise HTTPException(400, f"unknown or non-editable field: {e.field}")
@@ -289,7 +322,7 @@ async def patch_fields(file_id: str, body: FieldsPatch,
                 tenant_id=f.tenant_id, file_id=f.id,
                 skill_code=txn.skill_code if txn else "",
                 skill_version=txn.skill_version if txn else 0,
-                field=e.field, old_value=old, new_value=e.value, reviewer=user))
+                field=field_path, old_value=old, new_value=e.value, reviewer=user))
             cell = dict(cell)
             cell["$value"] = e.value
             cell["$confidence"] = 3          # human truth
@@ -298,18 +331,120 @@ async def patch_fields(file_id: str, body: FieldsPatch,
                 cell["$bbox"] = e.bbox
                 if e.page is not None:
                     cell["$pages"] = e.page
-            result[e.field] = cell
-            applied.append(e.field)
-        f.result = result
+            target[e.field] = cell
+            applied.append(field_path)
+        if shape != "list":
+            f.result = result
         if applied:
             # 9.15 WP6 provenance revision — must be written INSIDE this session
             # (the earlier out-of-block version silently never persisted, so
             # artifacts never regenerated after a correction; found by the
             # FX1 end-to-end test for #4)
-            f.result_revision = (f.result_revision or 0) + 1
+            if shape == "list":
+                # A7: a manually changed record no longer has a reliable derived outline.
+                for edit in body.edits:
+                    _record_at(result, edit.record).pop("$record_bbox", None)
+                await _save_list_result(s, f, result, body.expected_revision)
+            else:
+                f.result_revision = (f.result_revision or 0) + 1
             human_event(s, "review.fields_patched", {"file_id": file_id, "fields": applied})
         await s.commit()
     return {"file_id": file_id, "corrected_fields": applied}
+
+
+def _check_list_revision(file: FileRecord, expected: int | None) -> None:
+    """A7: positional record edits need a revision to prevent shifted-index writes."""
+    if expected is None:
+        raise HTTPException(400, "expected_revision is required for List changes")
+    if expected != (file.result_revision or 0):
+        raise HTTPException(409, "result changed; reload before editing")
+
+
+def _record_at(result: dict, index: int) -> dict:
+    records = result.get("records")
+    if not isinstance(records, list) or index < 0 or index >= len(records):
+        raise HTTPException(400, "record index out of range")
+    if not isinstance(records[index], dict):
+        raise HTTPException(400, "record is not editable")
+    return records[index]
+
+
+async def _save_list_result(session, file: FileRecord, result: dict, expected: int) -> None:
+    # A7: compare-and-swap also protects two same-user sessions on SQLite.
+    changed = await session.execute(update(FileRecord).where(
+        FileRecord.id == file.id, FileRecord.tenant_id == current_tenant(),
+        func.coalesce(FileRecord.result_revision, 0) == expected,
+    ).values(result=result, result_revision=expected + 1).execution_options(synchronize_session=False))
+    if changed.rowcount != 1:
+        raise HTTPException(409, "result changed; reload before editing")
+
+
+class RecordChange(BaseModel):
+    expected_revision: int = Field(ge=0, strict=True)
+
+
+async def _record_edit_context(session, file_id: str, user: str, expected: int):
+    file = await require_file(session, file_id, for_review=True)
+    if file.locked_by != user or _lock_expired(file):
+        raise HTTPException(423, "acquire the lock before editing")
+    txn = await session.get(Transaction, file.transaction_id)
+    schema = (file.document_meta or {}).get("effective_schema") or (
+        (txn.execution_snapshot or {}).get("package") if txn else None) or {}
+    if output_shape_of(file, schema) != "list":
+        raise HTTPException(400, "records are only available for List results")
+    _check_list_revision(file, expected)
+    return file, txn, schema
+
+
+@router.delete("/{file_id}/records/{record}", dependencies=[Depends(require_role("operator"))])
+async def delete_record(file_id: str, record: int, expected_revision: int | None = None,
+                        x_user: str = Header(default="anonymous")):
+    """A7: deleting an over-extracted record is audited and revision guarded."""
+    user = _identity(x_user)
+    async with session_factory()() as s:
+        file, txn, _ = await _record_edit_context(s, file_id, user, expected_revision)
+        result = deepcopy(file.result or {})
+        removed = _record_at(result, record)
+        result["records"].pop(record)
+        await _save_list_result(s, file, result, expected_revision)
+        s.add(Correction(tenant_id=file.tenant_id, file_id=file.id,
+                         skill_code=txn.skill_code, skill_version=txn.skill_version,
+                         field=f"records[{record}]", old_value=json.dumps(removed, ensure_ascii=False)[:4000],
+                         new_value="", reviewer=user))
+        human_event(s, "review.fields_patched", {"file_id": file_id, "fields": [f"records[{record}]"]})
+        await s.commit()
+    return {"file_id": file_id, "deleted_record": record, "record_count": len(result["records"]),
+            "result_revision": expected_revision + 1}
+
+
+@router.post("/{file_id}/records", dependencies=[Depends(require_role("operator"))])
+async def add_record(file_id: str, body: RecordChange,
+                     x_user: str = Header(default="anonymous")):
+    """A7 user extension: create a blank record from the frozen execution schema."""
+    user = _identity(x_user)
+    async with session_factory()() as s:
+        file, txn, schema = await _record_edit_context(s, file_id, user, body.expected_revision)
+        result = deepcopy(file.result or {})
+        records = result.get("records")
+        if not isinstance(records, list):
+            raise HTTPException(400, "invalid List result")
+        if not schema.get("fields"):
+            raise HTTPException(400, "record schema is unavailable")
+        record = {}
+        for field in schema["fields"]:
+            record[field["name"]] = [] if field.get("type") == "table" else {
+                "$value": "", "$confidence": 0, "$bbox": [], "$pages": ""}
+        index = len(records)
+        records.append(record)
+        await _save_list_result(s, file, result, body.expected_revision)
+        s.add(Correction(tenant_id=file.tenant_id, file_id=file.id,
+                         skill_code=txn.skill_code, skill_version=txn.skill_version,
+                         field=f"records[{index}]", old_value="",
+                         new_value=json.dumps(record, ensure_ascii=False)[:4000], reviewer=user))
+        human_event(s, "review.fields_patched", {"file_id": file_id, "fields": [f"records[{index}]"]})
+        await s.commit()
+    return {"file_id": file_id, "record_index": index, "record_count": len(records),
+            "result_revision": body.expected_revision + 1}
 
 
 class DecisionBody(BaseModel):

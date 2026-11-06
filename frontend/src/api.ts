@@ -136,10 +136,19 @@ export interface DocumentView {
   extraction_status: string;
   effective_fields: string[];
 }
+export type ReviewFields = Record<string, FieldCell | Record<string, string>[]>;
+export interface FieldEdit {
+  field: string; record?: number; value?: string; bbox?: number[]; page?: number;
+  rows?: Record<string, string>[];
+}
 export interface ReviewItem {
   can_review: boolean;
   file_id: string; file_name: string; status: string;
-  result: Record<string, FieldCell | Record<string, string>[]>;
+  result: ReviewFields | { records: ReviewFields[] };
+  output_shape?: "object" | "list";
+  review_reasons?: string[];
+  table_columns?: Record<string, string[]>;
+  result_revision?: number;
   pages: { page_no: number; width: number; height: number }[];
   locked_by: string | null; verified_by: string | null;
   parent_file_id: string | null; page_count: number; page_offset?: number;
@@ -507,9 +516,12 @@ export const api = {
   unlock: (id: string) => req("POST", `/api/v1/review/${id}/unlock`),
   assign: (id: string, assignee: string) =>
     req("POST", `/api/v1/review/${id}/assign`, { assignee }),
-  patchFields: (id: string,
-                edits: { field: string; value: string; bbox?: number[]; page?: number }[]) =>
-    req("PATCH", `/api/v1/review/${id}/fields`, { edits }),
+  patchFields: (id: string, edits: FieldEdit[], expected_revision?: number) =>
+    req("PATCH", `/api/v1/review/${id}/fields`, { edits, expected_revision }),
+  addRecord: (id: string, expected_revision?: number) =>
+    req<{ record_index: number }>("POST", `/api/v1/review/${id}/records`, { expected_revision }),
+  deleteRecord: (id: string, record: number, expectedRevision?: number) =>
+    req("DELETE", `/api/v1/review/${id}/records/${record}${expectedRevision === undefined ? "" : `?expected_revision=${expectedRevision}`}`),
   confirm: (id: string) => req("POST", `/api/v1/review/${id}/confirm`, { comment: "" }),
   reject: (id: string) => req("POST", `/api/v1/review/${id}/reject`, { comment: "" }),
   downloadOriginal: (id: string, filename: string) =>
