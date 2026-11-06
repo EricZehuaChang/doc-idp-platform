@@ -1,9 +1,11 @@
 """PR-B: an opted-in skill reads images in its first extraction pass."""
 
 from copy import deepcopy
+from functools import cache
 
 from app.config import get_settings, load_parsers
 from app.extraction import custom_providers
+from app.extraction.confidence import score_cell
 from app.extraction.pipeline import extract
 from app.extraction.provider_client import ProviderError
 from app.extraction.validators import run_validators
@@ -41,6 +43,34 @@ def unavailable_result(pkg: SkillPackage, reason: str):
                     "review_reasons": [reason], "vision_first": {"attempted": False, "reason": reason}}, True
 
 
+def _tag_vision_values(record, fields, prefix, found_in_text) -> list[str]:
+    """Record the extraction channel and identify uncorroborated verbatim values."""
+    unverified = []
+
+    def tag(cell, value, path, inferred):
+        cell["$source"] = "vision"
+        raw = cell.get("$raw", value)
+        text = str(raw).strip() if raw is not None else ""
+        if not inferred and text and not found_in_text(text):
+            unverified.append(path)
+
+    for field in fields:
+        value = record.get(field.name)
+        path = f"{prefix}{field.name}"
+        if field.type != "table" and isinstance(value, dict) and "$value" in value:
+            tag(value, value["$value"], path, field.mode == "inferred")
+        elif field.type == "table" and isinstance(value, list):
+            inferred_columns = {column.name for column in field.columns if column.mode == "inferred"}
+            for index, row in enumerate(value):
+                if not isinstance(row, dict):
+                    continue
+                for column in [key for key in row if not key.startswith("$")]:
+                    cell = row.setdefault("$cells", {}).setdefault(column, {})
+                    tag(cell, row[column], f"{path}[{index}].{column}",
+                        field.mode == "inferred" or column in inferred_columns)
+    return unverified
+
+
 def extract_from_images(udr: UDR, pkg: SkillPackage, images: dict[int, str] | None,
                         tenant: str, transport=None):
     """One extraction pass; failure goes to review without a text-only fallback."""
@@ -59,7 +89,14 @@ def extract_from_images(udr: UDR, pkg: SkillPackage, images: dict[int, str] | No
         return result, usage, review
     records = result.get("records", []) if pkg.output_shape == "list" else [result]
     reasons = list(usage.get("review_reasons") or [])
-    for record in records:
+    unverified = []
+
+    @cache
+    def found_in_text(text: str) -> bool:
+        # A markdown match without a geometric anchor still corroborates the raw value.
+        return score_cell(text, udr)[0] > 0
+
+    for index, record in enumerate(records):
         values = {name: cell.get("$value") if isinstance(cell, dict) else cell
                   for name, cell in record.items() if not name.startswith("$")}
         product_rules = [rule for rule in pkg.validators if rule.type == "row_product"]
@@ -68,22 +105,19 @@ def extract_from_images(udr: UDR, pkg: SkillPackage, images: dict[int, str] | No
             reasons.append("table_arithmetic_mismatch")
             review = True
             for rule in product_rules:
-                for index, row in enumerate(record.get(rule.field) or []):
-                    path = f"{rule.field}[{index}].{rule.target}"
+                for row_index, row in enumerate(record.get(rule.field) or []):
+                    path = f"{rule.field}[{row_index}].{rule.target}"
                     if path in failures:
                         cell = row.setdefault("$cells", {}).setdefault(rule.target, {})
                         cell["$rule_failures"] = failures[path]
                         if cell.get("$confidence") is not None:
                             cell["$confidence"] = min(cell["$confidence"], 1)
-        for field in pkg.fields:
-            value = record.get(field.name)
-            if field.type != "table" and isinstance(value, dict) and "$value" in value:
-                value["$source"] = "vision"
-            elif field.type == "table" and isinstance(value, list):
-                for row in value:
-                    columns = [key for key in row if not key.startswith("$")]
-                    for column in columns:
-                        row.setdefault("$cells", {}).setdefault(column, {})["$source"] = "vision"
+        prefix = f"records[{index}]." if pkg.output_shape == "list" else ""
+        unverified.extend(_tag_vision_values(record, pkg.fields, prefix, found_in_text))
+    if unverified:
+        review = True
+        reasons.append("vision_value_unverified")
+        usage["vision_unverified_fields"] = unverified
     if reasons:
         usage["review_reasons"] = list(dict.fromkeys(reasons))
     usage["vision_first"] = {"attempted": True, "provider": provider}

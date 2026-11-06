@@ -443,22 +443,60 @@ async def _complete_classify_only(file_id: str) -> None:
     await output_stage(file_id)
 
 
-def _vision_first_images(storage_path: str, udr: UDR, source_pages=None) -> dict[int, str]:
-    """B2: map physical or shared-original pages to the child's local coordinates."""
+def _vision_first_images(storage_path: str, udr: UDR, source_pages: list[int] | None = None) -> dict[int, str]:
+    """B2: return genuine PNGs for all local pages, or no images for human review."""
+    from io import BytesIO
+
     from app.parsers import raster
-    path = get_storage().local_path(storage_path)
+
+    local = [page.page_no for page in udr.pages]
+    wanted = local if source_pages is None else source_pages
+    if (not local or not isinstance(wanted, (list, tuple)) or len(local) != len(wanted)
+            or min(local) < 1 or any(type(n) is not int or n < 1 for n in wanted)
+            or len(set(local)) != len(local) or len(set(wanted)) != len(wanted)):
+        return {}
+    path = Path(get_storage().local_path(storage_path))
+    if path.suffix.lower() == ".pdf":
+        # Render one extra page on unsliced inputs to detect a truncated parser page list.
+        images = raster.pdf_pages_to_images(str(path), max(wanted) + int(source_pages is None))
+        if source_pages is None and set(images) != set(wanted):
+            return {}
+        if not all(page in images for page in wanted):
+            return {}
+        return {number: images[original] for number, original in zip(local, wanted)}
+
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+        return {}
     try:
-        if Path(path).suffix.lower() == ".pdf":
-            wanted = source_pages or [page.page_no for page in udr.pages]
-            images = raster.pdf_pages_to_images(path, max(wanted, default=0))
-            return {page.page_no: images[original]
-                    for page, original in zip(udr.pages, wanted) if original in images}
-        if len(udr.pages) == 1 and Path(path).suffix.lower() in {
-                ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
-            return {udr.pages[0].page_no: raster.image_to_data_uri(path)}
-    except (OSError, ValueError):
-        pass
-    return {}
+        from PIL import Image, ImageOps
+    except ImportError:
+        return {}
+    try:
+        with Image.open(path) as source:
+            frame_count = getattr(source, "n_frames", 1)
+            if max(wanted) > frame_count or (source_pages is None and len(wanted) != frame_count):
+                return {}
+            images = {}
+            for number, original in zip(local, wanted):
+                source.seek(original - 1)
+                frame = ImageOps.exif_transpose(source)
+                # Keep PNG-compatible samples exactly. Convert colour spaces that
+                # PNG does not encode, and decline scientific TIFFs that would clip.
+                if frame.mode in {"CMYK", "YCbCr", "RGBX"}:
+                    frame = frame.convert("RGB")
+                elif frame.mode in {"I;16L", "I"}:
+                    low, high = frame.getextrema()
+                    if low < 0 or high > 65535:
+                        return {}
+                    frame = frame.convert("I;16")
+                elif frame.mode not in {"1", "L", "LA", "P", "RGB", "RGBA", "I;16", "I;16B"}:
+                    return {}
+                png = BytesIO()
+                frame.save(png, format="PNG")
+                images[number] = raster._to_data_uri(png.getvalue())
+            return images
+    except (OSError, ValueError, EOFError, Image.DecompressionBombError):
+        return {}
 
 
 async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,

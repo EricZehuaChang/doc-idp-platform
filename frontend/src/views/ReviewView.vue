@@ -443,6 +443,7 @@ const reasonLabels: Record<string, string> = {
   parse_cells_collapsed: "review.parse_cells_collapsed",
   vision_first_unavailable: "review.vision_first_unavailable",
   vision_first_failed: "review.vision_first_failed",
+  vision_value_unverified: "review.vision_value_unverified",
   table_shape_mismatch: "review.table_shape_mismatch",
   table_arithmetic_mismatch: "review.table_arithmetic_mismatch",
 };
