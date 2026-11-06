@@ -109,7 +109,7 @@ async def exchange_code(cfg: dict, code: str) -> dict:
 async def jit_user(session, ident: dict):
     """external_id hard-link first; email anchor second (binds sub to the
     existing account); JIT-create last. Returns an active User or None."""
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from app.models import User
 
@@ -119,11 +119,17 @@ async def jit_user(session, ident: dict):
         select(User).where(User.auth_provider == "oidc",
                            User.external_id == ident["sub"]))).scalar_one_or_none()
     if user is None and ident["email"]:
-        anchor = (await session.execute(
-            select(User).where(User.email == ident["email"]))).scalar_one_or_none()
+        # The platform IdP provisions the default tenant. A matching email in
+        # another tenant cannot grant it that account after a transfer.
+        tenant = get_settings().default_tenant
+        anchor = (await session.execute(select(User).where(
+            User.tenant_id == tenant, User.email == ident["email"]))).scalar_one_or_none()
         if anchor is not None:
-            anchor.auth_provider = "oidc"
-            anchor.external_id = ident["sub"]
+            linked = await session.execute(update(User).where(
+                User.id == anchor.id, User.tenant_id == tenant).values(
+                    auth_provider="oidc", external_id=ident["sub"]))
+            if linked.rowcount != 1:
+                return None
             user = anchor
     if user is None:
         if not ident["email"]:

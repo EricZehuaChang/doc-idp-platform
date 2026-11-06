@@ -1,4 +1,10 @@
 export interface ApiGrants { allow_create: boolean; groups: string[]; allowed_skill_codes: string[] | null }
+export interface UserRow {
+  id: string; email: string; role: string; active: boolean; pending: boolean;
+  auth_provider: string; api_grants?: ApiGrants | null; created_at: string;
+  tenant_id: string; can_transfer: boolean;
+}
+export interface TransferTenant { id: string; name: string }
 export interface ApiCallRow { id: string; key_id: string; key_name: string; endpoint: string; status_code: number; duration_ms: number; page_count: number | null; size_bytes: number | null; created_at: string }
 // API client. Auth-on: Bearer JWT from the session store, 401 kicks back to
 // /login. Auth-off (lite/dev): the M1 dev headers keep working unchanged.
@@ -744,9 +750,12 @@ export const api = {
   changePassword: (old_password: string, new_password: string) =>
     req("POST", "/api/v1/auth/change-password", { old_password, new_password }),
   // admin: users & platform settings (batch E)
-  listUsers: () => req<{ id: string; email: string; role: string; active: boolean;
-                         pending: boolean; auth_provider: string; created_at: string }[]>(
-    "GET", "/api/v1/auth/users"),
+  listUsers: () => req<UserRow[]>("GET", "/api/v1/auth/users"),
+  transferTenants: () => req<TransferTenant[]>("GET", "/api/v1/auth/transfer-tenants"),
+  registerTransferTenant: (id: string, name: string) =>
+    req<TransferTenant>("POST", "/api/v1/auth/transfer-tenants", { id, name }),
+  transferUser: (userId: string, tenantId: string) =>
+    req("POST", `/api/v1/auth/users/${userId}/transfer`, { tenant_id: tenantId }),
   createUser: (email: string, password: string, role: string) =>
     req("POST", "/api/v1/auth/users", { email, password, role }),
   invite: (email: string, role: string) =>

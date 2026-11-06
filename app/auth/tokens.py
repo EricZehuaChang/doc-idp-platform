@@ -5,7 +5,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 
 from app.models import AuthToken, User
 
@@ -47,6 +47,10 @@ async def consume(session, token: str, purpose: str) -> User | None:
     """Validate + burn a token. Returns its user, or None (unknown/expired/
     already used). Caller commits together with its own state change so the
     burn and the effect are one transaction."""
+    # SQLite has no row locks. Reserve this write before reading either row,
+    # so a transfer cannot replace the account while its password is changed.
+    if session.get_bind().dialect.name == "sqlite":
+        await session.execute(text("BEGIN IMMEDIATE"))
     row = (await session.execute(
         select(AuthToken).where(AuthToken.token_hash == _hash(token),
                                 AuthToken.purpose == purpose))).scalar_one_or_none()
@@ -54,8 +58,10 @@ async def consume(session, token: str, purpose: str) -> User | None:
         return None
     if row.expires_at.replace(tzinfo=timezone.utc) < _now():
         return None
-    user = await session.get(User, row.user_id)
+    user = await session.scalar(select(User).where(
+        User.id == row.user_id, User.tenant_id == row.tenant_id).with_for_update())
     if user is None or not user.active:
         return None
-    row.used_at = _now()
-    return user
+    burned = await session.execute(update(AuthToken).where(
+        AuthToken.id == row.id, AuthToken.used_at.is_(None)).values(used_at=_now()))
+    return user if burned.rowcount == 1 else None

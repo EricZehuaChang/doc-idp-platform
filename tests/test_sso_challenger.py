@@ -197,3 +197,19 @@ async def test_oidc_email_anchor_binds_existing_account(sso_client, monkeypatch)
         assert len(rows) == 1                        # bound, not duplicated
         assert rows[0].external_id == "idp-sub-77"
         assert rows[0].role == "admin"               # keeps its role
+
+
+async def test_platform_sso_cannot_claim_a_transferred_local_account(sso_client):
+    from app.auth import oidc
+    from app.db import session_factory
+    from app.models import User
+
+    async with session_factory()() as s:
+        moved = User(tenant_id="customer", email="sso.user@example.com", role="tenant_admin")
+        s.add(moved)
+        await s.commit()
+        moved_id = moved.id
+        signed_in = await oidc.jit_user(s, {"sub": "new-sub", "email": moved.email})
+        assert signed_in.id != moved_id
+        assert (signed_in.tenant_id, signed_in.role) == ("default", "operator")
+        assert moved.auth_provider == "local"

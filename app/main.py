@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.api.routes import (agent, api_calls, audit, auth, billing, data, detect, hooks,
                             locate, me, process, review,
-                            settings as settings_routes, skills, studio)
+                            settings as settings_routes, skills, studio, user_transfers)
 from app.auth import security
 from app.config import get_settings
 from app.db import get_engine, init_db, session_factory
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Doc IDP Platform", version="0.1.0", lifespan=_lifespan)
     app.add_middleware(TenantMiddleware)
     app.include_router(auth.router)
+    app.include_router(user_transfers.router)
     app.include_router(audit.router)
     app.include_router(api_calls.router)
     app.include_router(settings_routes.router)

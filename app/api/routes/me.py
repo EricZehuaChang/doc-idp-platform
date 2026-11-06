@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.api_grants import ApiGrants, Group, grants_for
 from app.auth import security
+from app.auth.membership import locked_member
 from app.config import get_settings
 from app.db import session_factory
 from app.models import ApiKey, AuditLog
@@ -79,6 +80,9 @@ async def create_my_key(body: AgentKeyCreate):
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
+        owner = await locked_member(s, actor["user_id"])
+        if owner is None or not owner.active:
+            raise HTTPException(401, "账号已停用或已转移租户，请重新登录")
         row = ApiKey(tenant_id=tenant, key_hash=key_hash, prefix=prefix, name=name,
                      scopes=scopes, key_type="agent", owner_user_id=actor["user_id"],
                      allowed_skill_codes=body.allowed_skill_codes)

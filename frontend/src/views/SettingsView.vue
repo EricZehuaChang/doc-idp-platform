@@ -80,6 +80,7 @@
             <td class="dim">{{ u.auth_provider }}</td>
             <td class="row-ops">
               <button v-if="u.role !== 'admin'" @click="editGrant(u)">{{ $t('settings.api_permissions') }}</button>
+              <button v-if="u.can_transfer" @click="transferUser = u">{{ $t('settings.transfer_user') }}</button>
               <button v-if="u.pending" @click="resend(u)">{{ $t('settings.resend_invitation') }}</button>
               <button v-if="!u.pending && u.auth_provider === 'local' && u.active"
                       @click="resetPw(u)" :title="$t('settings.reset_password_the_user_must_change_their_password_at')">
@@ -91,6 +92,8 @@
         </tbody>
       </table>
     </section>
+
+    <TransferUserModal v-if="transferUser" :user="transferUser" @close="transferUser = null" @moved="afterTransfer" />
 
     <!-- R2 (2026-09-22): the admin sets a member's personal-key ceiling; a
          key's live reach = what it was issued for ∩ this grant -->
@@ -463,9 +466,10 @@ import { session } from "../session";
 const isAdmin = computed(() => session.authRequired === false || session.role === "admin");
 
 import AppModal from "../components/AppModal.vue";
+import TransferUserModal from "../components/TransferUserModal.vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api, type ApiGrants, type AuditRow, type BillingAccount, type CustomProvider,
-         type GiftRequestRow, type LedgerRow, type SmtpInfo } from "../api";
+         type GiftRequestRow, type LedgerRow, type SmtpInfo, type UserRow } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -504,9 +508,13 @@ async function testSmtp() {
 }
 
 // —— users ——
-interface UserRow { id: string; email: string; role: string; active: boolean;
-                    pending: boolean; auth_provider: string; api_grants?: ApiGrants | null }
 const users = ref<UserRow[]>([]);
+const transferUser = ref<UserRow | null>(null);
+function afterTransfer(userId: string) {
+  transferUser.value = null;
+  users.value = users.value.filter(u => u.id !== userId);
+  loadUsers();
+}
 const grantUser = ref<UserRow | null>(null);
 const grantDraft = reactive<ApiGrants>({ allow_create: true, groups: ['process'], allowed_skill_codes: null });
 const grantSkills = ref('');
@@ -612,6 +620,7 @@ const ACTION_TEXT = computed<Record<string, string>>(() => ({
   "auth.user_created": t('settings.create_user'), "auth.user_updated": t('settings.change_user'), "auth.invite_sent": t('settings.send_invitation'),
   "auth.password_changed": t('settings.change_password_self'), "auth.password_reset": t('settings.reset_password_self_service'),
   "auth.password_reset_admin": t('settings.reset_password_admin'),
+  "auth.user_transferred": t('settings.transfer_user'), "auth.transfer_tenant_registered": t('settings.register_tenant'),
   "skills.created": t('settings.create_skill'), "skills.published": t('settings.publish_version'),
   "skills.state_changed": t('settings.enable_disable_skill'), "skills.deleted": t('settings.delete_skill'),
   "skills.restored": t('settings.restore_skill'), "skills.version_deleted": t('settings.delete_version'), "skills.imported": t('settings.import_skill'),

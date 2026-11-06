@@ -5,8 +5,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
+from app.api.routes.user_transfers import can_transfer
 from app.api_grants import ApiGrants
 from app.auth import security
+from app.auth.membership import lock_membership, locked_member
 from app.billing import engine as billing
 from app.config import get_settings
 from app.db import session_factory
@@ -91,6 +93,7 @@ async def create_user(body: UserCreate):
     sf = session_factory()
     with as_tenant(tenant):
         async with sf() as s:
+            await lock_membership(s, tenant)
             dup = (await s.execute(
                 select(User).where(User.email == body.email,
                                    User.tenant_id == tenant))).scalar_one_or_none()
@@ -125,10 +128,12 @@ async def list_users():
         rows = (await s.execute(
             select(User).where(User.tenant_id == current_tenant())
             .order_by(User.created_at))).scalars().all()
-        return [{"id": u.id, "email": u.email, "role": u.role, "active": u.active,
+        return [{"id": u.id, "email": u.email, "tenant_id": u.tenant_id,
+                 "role": u.role, "active": u.active,
                  "email_verified": u.email_verified,
                  "auth_provider": u.auth_provider, "api_grants": u.api_grants,
                  "pending": u.password_hash is None and u.auth_provider == "local",
+                 "can_transfer": can_transfer(u),
                  "created_at": u.created_at.isoformat()} for u in rows]
 
 
@@ -148,8 +153,8 @@ async def patch_user(user_id: str, body: UserPatch):
     actor = current_actor()
     sf = session_factory()
     async with sf() as s:
-        u = await s.get(User, user_id)
-        if u is None or u.tenant_id != current_tenant():
+        u = await locked_member(s, user_id)
+        if u is None:
             raise HTTPException(404, "user not found")
         if u.id == actor.get("user_id") and body.active is False:
             raise HTTPException(400, "不能停用自己的账号")
@@ -158,6 +163,11 @@ async def patch_user(user_id: str, body: UserPatch):
             s.add(AuditLog(tenant_id=u.tenant_id, actor=actor["name"],
                            action="auth.api_grants_updated",
                            detail={"user_id": u.id, "email": u.email, "api_grants": u.api_grants}))
+        if body.active and not u.active and not actor.get("unlimited"):
+            try:
+                await billing.enforce_member_cap(s, current_tenant())
+            except billing.EntitlementExceeded as e:
+                raise _enforce_member_seat(e)
         if body.active is not None:
             u.active = body.active
         if body.role is not None:
@@ -188,6 +198,7 @@ async def invite(body: InviteBody):
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
+        await lock_membership(s, tenant)
         if await mailer.load_config(s) is None:
             raise HTTPException(409, "SMTP 未配置：请先在 设置→邮件 配置发信，或改用直接建号")
         existing = (await s.execute(
@@ -339,8 +350,8 @@ async def admin_reset_password(user_id: str, body: AdminResetBody):
     actor = current_actor()
     sf = session_factory()
     async with sf() as s:
-        u = await s.get(User, user_id)
-        if u is None or u.tenant_id != current_tenant():
+        u = await locked_member(s, user_id)
+        if u is None:
             raise HTTPException(404, "user not found")
         if u.id == actor.get("user_id"):
             raise HTTPException(400, "不能重置自己的密码，请使用右上角个人密码修改")
@@ -371,7 +382,7 @@ async def change_password(body: ChangePasswordBody):
         raise HTTPException(400, "当前会话没有用户身份（API Key / 免登录模式不支持改密）")
     sf = session_factory()
     async with sf() as s:
-        user = await s.get(User, actor["user_id"])
+        user = await locked_member(s, actor["user_id"])
         if user is None or not user.password_hash \
                 or not security.verify_password(body.old_password, user.password_hash):
             raise HTTPException(401, "原密码不正确")

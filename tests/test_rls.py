@@ -115,3 +115,42 @@ async def test_orm_session_pins_guc_from_contextvar(pg):
             await s.commit()
     finally:
         _tenant_ctx.reset(tok)
+
+
+async def test_transfer_moves_one_user_with_rls_and_rolls_back_a_collision(pg, monkeypatch):
+    from fastapi import HTTPException
+    from app.api.routes import user_transfers
+    from app.tenancy import _actor_ctx, as_tenant
+
+    sessions = async_sessionmaker(pg, expire_on_commit=False)
+    monkeypatch.setattr(user_transfers, "session_factory", lambda: sessions)
+    source = user_transfers.get_settings().default_tenant
+    email = "rls-transfer-member@example.com"
+    target, collision = "rls-transfer-target", "rls-transfer-collision"
+    with as_tenant(source):
+        async with sessions.begin() as s:
+            s.add_all([models.Tenant(id=target), models.Tenant(id=collision),
+                       models.User(id="rls-member", tenant_id=source, role="tenant_admin",
+                                   email=email, password_hash="test-hash")])
+    with as_tenant(collision):
+        async with sessions.begin() as s:
+            s.add(models.User(tenant_id=collision, email=email, password_hash="test-hash"))
+
+    actor = _actor_ctx.set({"role": "admin", "user_id": "platform", "name": "platform"})
+    try:
+        with as_tenant(source):
+            with pytest.raises(HTTPException) as exc:
+                await user_transfers.transfer_user("rls-member", user_transfers.TransferBody(tenant_id=collision))
+            assert exc.value.status_code == 409
+            async with sessions() as s:
+                member = await s.get(models.User, "rls-member")
+                assert member.tenant_id == source and member.session_epoch == 0
+            await user_transfers.transfer_user("rls-member", user_transfers.TransferBody(tenant_id=target))
+            async with sessions() as s:
+                assert await s.get(models.User, "rls-member") is None
+        with as_tenant(target):
+            async with sessions() as s:
+                member = await s.get(models.User, "rls-member")
+                assert (member.tenant_id, member.role, member.session_epoch) == (target, "tenant_admin", 1)
+    finally:
+        _actor_ctx.reset(actor)
