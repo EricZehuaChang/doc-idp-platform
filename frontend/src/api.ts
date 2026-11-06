@@ -9,8 +9,14 @@ export interface ApiCallRow { id: string; key_id: string; key_name: string; endp
 // API client. Auth-on: Bearer JWT from the session store, 401 kicks back to
 // /login. Auth-off (lite/dev): the M1 dev headers keep working unchanged.
 import { clearSession, session } from "./session";
-import { i18n, translateMessage } from "./i18n";
+import { i18n, translateMessage, type MessageDescriptor } from "./i18n";
 import { apiErrorMessage } from "./apiErrors";
+
+export class LocalizedApiError extends Error {
+  constructor(readonly display: MessageDescriptor) {
+    super(translateMessage(display));
+  }
+}
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
@@ -25,7 +31,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (resp.status === 401 && url === "/api/v1/auth/login") {
-    throw new Error(i18n.global.t("login.check_credentials"));
+    throw new LocalizedApiError({ key: "login.check_credentials" });
   }
   if (resp.status === 401 && session.authRequired) {
     clearSession();
