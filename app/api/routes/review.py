@@ -21,7 +21,7 @@ from app.api.task_groups import summary as task_summary
 from app.config import get_settings
 from app.db import session_factory
 from app.models import AuditLog, Correction, FileRecord, Transaction
-from app.result_view import output_shape_of
+from app.result_view import execution_package, output_shape_of
 from app.storage import get_storage
 from app.tenancy import current_actor, current_tenant, require_role
 
@@ -160,13 +160,7 @@ async def detail(file_id: str):
         reviewable_ids = set((await s.scalars(select(FileRecord.id).where(
             FileRecord.id.in_(file_ids), reviewable_file_cond()))).all())
         txn = await s.get(Transaction, root.transaction_id)
-        snapshot = (txn.execution_snapshot or {}).get("package") if txn else None
-        if snapshot is None and txn:
-            from app.models import SkillVersion
-            version = (await s.execute(select(SkillVersion).where(
-                SkillVersion.skill_code == txn.skill_code,
-                SkillVersion.version == txn.skill_version))).scalar_one_or_none()
-            snapshot = version.package if version else None
+        snapshot = await execution_package(s, txn)
         payload = _detail_payload(root, snapshot)
         payload["can_review"] = root.id in reviewable_ids
         payload["children"] = []
@@ -280,7 +274,7 @@ async def patch_fields(file_id: str, body: FieldsPatch,
             raise HTTPException(423, "acquire the lock before editing")
         txn = await s.get(Transaction, f.transaction_id)
         result = deepcopy(f.result or {})
-        shape = output_shape_of(f, (txn.execution_snapshot or {}).get("package") if txn else None)
+        shape = output_shape_of(f, await execution_package(s, txn))
         if shape == "list":
             _check_list_revision(f, body.expected_revision)
         applied = []
@@ -377,7 +371,9 @@ async def _save_list_result(session, file: FileRecord, result: dict, expected: i
     if meta is not None:
         values["document_meta"] = meta
     changed = await session.execute(update(FileRecord).where(
-        FileRecord.id == file.id, FileRecord.tenant_id == current_tenant(),
+        FileRecord.id == file.id, reviewable_file_cond(),
+        FileRecord.status == "pending_verification", FileRecord.locked_by == file.locked_by,
+        FileRecord.locked_at == file.locked_at, FileRecord.locked_at >= _now() - LOCK_TTL,
         func.coalesce(FileRecord.result_revision, 0) == expected,
     ).values(**values).execution_options(synchronize_session=False))
     if changed.rowcount != 1:
@@ -393,8 +389,7 @@ async def _record_edit_context(session, file_id: str, user: str, expected: int):
     if file.locked_by != user or _lock_expired(file):
         raise HTTPException(423, "acquire the lock before editing")
     txn = await session.get(Transaction, file.transaction_id)
-    schema = (file.document_meta or {}).get("effective_schema") or (
-        (txn.execution_snapshot or {}).get("package") if txn else None) or {}
+    schema = (file.document_meta or {}).get("effective_schema") or await execution_package(session, txn)
     if output_shape_of(file, schema) != "list":
         raise HTTPException(400, "records are only available for List results")
     _check_list_revision(file, expected)
@@ -479,17 +474,36 @@ async def reject(file_id: str, body: DecisionBody | None = None,
     return await _decide(file_id, "rejected", _identity(x_user), body.comment if body else "")
 
 
+async def _finalize_list_review(session, file, status, actor):
+    """A7: a competing edit or decision since the read invalidates this approval."""
+    if file.locked_by and file.locked_by != actor and not _lock_expired(file):
+        raise HTTPException(423, "record is locked by another reviewer")
+    changed = await session.execute(update(FileRecord).where(
+        FileRecord.id == file.id, reviewable_file_cond(),
+        FileRecord.status == "pending_verification",
+        FileRecord.locked_by == file.locked_by, FileRecord.locked_at == file.locked_at,
+        func.coalesce(FileRecord.result_revision, 0) == (file.result_revision or 0),
+    ).values(status=status, verified_by=actor, verified_at=_now(), locked_by=None, locked_at=None)
+        .execution_options(synchronize_session=False))
+    if changed.rowcount != 1:
+        raise HTTPException(409, "review changed; reload before deciding")
+
+
 async def _decide(file_id: str, new_status: str, actor: str, comment: str) -> dict:
     sf = session_factory()
     async with sf() as s:
         f = await require_file(s, file_id, for_review=True)
         if f.status != "pending_verification":
             raise HTTPException(400, f"file not reviewable, status={f.status}")
-        f.status = new_status
-        f.verified_by = actor
-        f.verified_at = _now()
-        f.locked_by = None
-        f.locked_at = None
+        txn = await s.get(Transaction, f.transaction_id)
+        if output_shape_of(f, await execution_package(s, txn)) == "list":
+            await _finalize_list_review(s, f, new_status, actor)
+        else:
+            f.status = new_status
+            f.verified_by = actor
+            f.verified_at = _now()
+            f.locked_by = None
+            f.locked_at = None
         s.add(AuditLog(tenant_id=f.tenant_id, actor=actor, action=f"review.{new_status}",
                        detail={"file_id": file_id, "comment": comment}))
         # transaction rolls up: all files decided -> completed

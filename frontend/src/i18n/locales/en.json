@@ -426,6 +426,7 @@
     "positional_column": "Column {n}",
     "table_headers_inferred": "Some column names were inferred. Check them against the original document.",
     "vision_first_unavailable": "Image extraction is unavailable. Check the original document.",
+    "vision_value_unverified": "Some values read from the original image could not be verified against the parsed text. Check them against the original.",
     "vision_first_failed": "Image extraction failed. Check the original document.",
     "record_count": "{n} records",
     "record": "Record",

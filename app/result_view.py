@@ -1,6 +1,24 @@
 """Shared List result views (brief A6); legacy Object cleaning stays stable."""
 
 
+from sqlalchemy import select
+
+from app.models import SkillVersion
+
+
+async def execution_package(session, txn) -> dict:
+    """A6: resolve the immutable snapshot, or the pinned version for pre-snapshot jobs."""
+    if txn is None:
+        return {}
+    package = (txn.execution_snapshot or {}).get("package")
+    if package is not None:
+        return package
+    version = await session.scalar(select(SkillVersion.package).where(
+        SkillVersion.tenant_id == txn.tenant_id,
+        SkillVersion.skill_code == txn.skill_code, SkillVersion.version == txn.skill_version))
+    return version or {}
+
+
 def output_shape_of(file, snapshot_pkg: dict | None = None) -> str:
     meta = file.document_meta or {}
     shape = meta.get("output_shape") or (meta.get("effective_schema") or {}).get("output_shape")

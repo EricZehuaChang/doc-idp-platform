@@ -185,7 +185,7 @@ async def test_runner_flags_structural_gap_after_one_image_pass_and_meters_it(ch
         file = files["bundle.pdf"]
         assert len(calls) == 1 and len(meter) == 1
         assert file.status == "pending_verification"
-        assert file.document_meta["review_reasons"] == ["parse_cells_collapsed"]
+        assert set(file.document_meta["review_reasons"]) == {"vision_value_unverified", "parse_cells_collapsed"}
         assert file.document_meta["metrics"]["vision_first"] == {"attempted": True, "provider": "camera"}
         assert (file.input_tokens, file.output_tokens) == (17, 9)
         assert (meter[0]["usage"]["prompt_tokens"], meter[0]["usage"]["completion_tokens"]) == (17, 9)
@@ -202,9 +202,12 @@ def test_configured_row_product_only_flags_numeric_disagreements(channels, price
     invoice.fields[1].columns.extend([FieldSpec(name="price"), FieldSpec(name="amount")])
     payload = {"seller": "Paper Co.", "items": [{**VALUES["items"][0], "price": price, "amount": amount}]}
     calls = []
+    document = parsed()
+    # Isolate the arithmetic rule: the parser saw these raw values, even the erroneous printed amount.
+    document.full_markdown = " ".join([payload["seller"], *payload["items"][0].values()])
     with as_tenant(TENANT):
         result, usage, review = extract_from_images(
-            parsed(), invoice, {1: IMAGE}, TENANT, transport=transport_for(calls, payload=payload))
+            document, invoice, {1: IMAGE}, TENANT, transport=transport_for(calls, payload=payload))
     assert len(calls) == 1
     assert ("table_arithmetic_mismatch" in usage.get("review_reasons", [])) is flag
     assert review is flag
@@ -214,3 +217,127 @@ def test_configured_row_product_only_flags_numeric_disagreements(channels, price
     assert bool(amount_meta.get("$rule_failures")) is flag
     if flag:
         assert amount_meta["$confidence"] <= 1
+
+
+@pytest.mark.parametrize("shape", ["object", "list"])
+def test_missing_parser_values_require_review_even_with_verified_header_and_complete_rows(channels, shape):
+    invoice = skill(output_shape=shape, review_policy={"mode": "never"})
+    document = UDR(parser="glm-ocr-cloud", full_markdown="Paper Co.",
+                   pages=[Page(page_no=1, blocks=[Block(text="Paper Co.", bbox=[1, 1, 30, 10])])])
+    payload = {"records": [VALUES]} if shape == "list" else VALUES
+    calls = []
+    with as_tenant(TENANT):
+        result, usage, review = extract_from_images(
+            document, invoice, {1: IMAGE}, TENANT, transport=transport_for(calls, payload=payload))
+    record = result["records"][0] if shape == "list" else result
+    prefix = "records[0]." if shape == "list" else ""
+    assert len(calls) == 1 and record["seller"]["$confidence"] == 3
+    assert review and usage["review_reasons"] == ["vision_value_unverified"]
+    assert set(usage["vision_unverified_fields"]) == {f"{prefix}items[0].{name}" for name in VALUES["items"][0]}
+    row = record["items"][0]
+    assert {name: row[name] for name in VALUES["items"][0]} == VALUES["items"][0]
+    assert all(cell["$hits"] == [] for cell in row["$cells"].values())
+
+
+def test_markdown_and_unformatted_raw_values_corroborate_without_coordinates(channels):
+    invoice = skill(review_policy={"mode": "never"})
+    invoice.fields = [
+        FieldSpec(name="amount", type="number", output_format={"decimal_places": 2}),
+        FieldSpec(name="comment", mode="inferred"),
+        FieldSpec(name="items", type="table", columns=[
+            {"name": "price", "type": "number", "output_format": {"decimal_places": 2}},
+            {"name": "guess", "mode": "inferred"}, {"name": "optional"}]),
+    ]
+    payload = {"amount": "1542", "comment": {"value": "estimate", "reasoning": "synthetic"},
+               "items": [{"price": "18", "guess": "estimated total", "optional": " "}]}
+    document = parsed()
+    document.full_markdown = "合计 1542 单价 18"
+    calls = []
+    with as_tenant(TENANT):
+        result, usage, review = extract_from_images(
+            document, invoice, {1: IMAGE}, TENANT, transport=transport_for(calls, payload=payload))
+    assert len(calls) == 1 and not review and not usage.get("vision_unverified_fields")
+    assert result["amount"]["$value"] == "1542.00" and not result["amount"]["$bbox"]
+    assert result["items"][0]["price"] == "18.00"
+    assert result["items"][0]["$cells"]["price"]["$raw"] == "18"
+
+
+def test_unconfigured_vision_table_columns_still_check_the_value_text(channels):
+    invoice = skill(review_policy={"mode": "never"})
+    invoice.fields[1].columns = []
+    document = parsed()
+    document.full_markdown = ("Paper Co.\n| unit | quantity | tax_rate | tax |\n"
+                              "| --- | --- | --- | --- |\n| 吨 |  | 免税 | *** |")
+    with as_tenant(TENANT):
+        result, usage, review = extract_from_images(
+            document, invoice, {1: IMAGE}, TENANT, transport=transport_for([]))
+    assert review and usage["vision_unverified_fields"] == ["items[0].quantity"]
+    assert result["items"][0]["quantity"] == "2"
+
+
+def decode_png(uri):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    prefix, encoded = uri.split(",", 1)
+    assert prefix == "data:image/png;base64"
+    content = base64.b64decode(encoded, validate=True)
+    assert content.startswith(b"\x89PNG\r\n\x1a\n")
+    with Image.open(BytesIO(content)) as image:
+        assert image.format == "PNG"
+        return image.copy()
+
+
+@pytest.mark.parametrize("extension", ["jpg", "png", "bmp", "webp"])
+def test_image_first_raster_is_real_png_with_original_displayed_pixels(tmp_path, extension):
+    from PIL import Image
+    from app.tasks.runner import _vision_first_images
+
+    path = tmp_path / ("scan." + extension)
+    image = Image.new("RGB", (4, 3), (18, 97, 185))
+    image.putpixel((1, 2), (219, 77, 18))
+    image.save(path)
+    # Compare decoded pixels, especially after lossy JPEG/WebP encoding.
+    with Image.open(path) as original:
+        expected = original.convert("RGB")
+    encoded = _vision_first_images(str(path), parsed())
+    actual = decode_png(encoded[1]).convert("RGB")
+    assert actual.size == expected.size and actual.tobytes() == expected.tobytes()
+
+
+def test_multiframe_tiff_maps_local_pages_and_rejects_incomplete_coverage(tmp_path):
+    from PIL import Image
+    from app.tasks.runner import _vision_first_images
+
+    first = Image.new("RGB", (3, 5), (11, 22, 33))
+    second = Image.new("RGBA", (4, 2), (97, 98, 99, 120))
+    path = tmp_path / "invoice.tiff"
+    first.save(path, save_all=True, append_images=[second])
+    encoded = _vision_first_images(str(path), parsed(2))
+    assert set(encoded) == {1, 2}
+    for number, expected in enumerate((first, second), 1):
+        actual = decode_png(encoded[number])
+        assert actual.mode == expected.mode and actual.size == expected.size
+        assert actual.tobytes() == expected.tobytes()
+    # A physical child may map local page 1 to the second frame of a shared parent.
+    assert _vision_first_images(str(path), parsed(1), source_pages=[2]) == {1: encoded[2]}
+    assert _vision_first_images(str(path), parsed(2), source_pages=[2, 1]) == {1: encoded[2], 2: encoded[1]}
+    assert _vision_first_images(str(path), parsed(1)) == {}
+    assert _vision_first_images(str(path), parsed(3)) == {}
+    for requested in ([0], [3], [], [1, 1]):
+        assert _vision_first_images(str(path), parsed(1), source_pages=requested) == {}
+
+
+def test_shared_pdf_maps_pages_without_silently_using_a_partial_subset(tmp_path, monkeypatch):
+    from app.parsers import raster
+    from app.tasks.runner import _vision_first_images
+
+    path = str(tmp_path / "source.pdf")
+    # PDFium's independent renderer is covered by the existing parser tests.
+    monkeypatch.setattr(raster, "pdf_pages_to_images", lambda path, limit: {
+        page: f"png-{page}" for page in range(1, min(limit, 4) + 1)})
+    assert _vision_first_images(path, parsed(2), [2, 4]) == {1: "png-2", 2: "png-4"}
+    assert _vision_first_images(path, parsed(2), [2, 5]) == {}
+    assert _vision_first_images(path, parsed(1)) == {}

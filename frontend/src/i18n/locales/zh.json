@@ -426,6 +426,7 @@
     "positional_column": "列{n}",
     "table_headers_inferred": "部分列名由模型推断，请对照原件核对。",
     "vision_first_unavailable": "原图首抽不可用，请对照原件复核。",
+    "vision_value_unverified": "原图读取的部分值未在解析文本中核实，请对照原件复核。",
     "vision_first_failed": "原图首抽失败，请对照原件复核。",
     "record_count": "{n} 条记录",
     "record": "记录",
