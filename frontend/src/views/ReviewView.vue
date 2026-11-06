@@ -60,7 +60,9 @@
       </p>
       <div v-if="isList" class="record-nav" data-record-nav>
         <label v-if="records.length">{{ t('review.record') }}
-          <select :value="recordIndex" :disabled="navBusy || savingRecord" @change="onRecordChoice">
+          <select :value="recordIndex" :disabled="navBusy || savingRecord" @change="onRecordChoice"
+                  @keydown.left.prevent="selectRecord(recordIndex - 1)"
+                  @keydown.right.prevent="selectRecord(recordIndex + 1)">
             <option v-for="(_, i) in records" :key="i" :value="i">{{ i + 1 }} / {{ records.length }}</option>
           </select>
         </label>
@@ -799,7 +801,7 @@ async function onRecordChoice(event: Event) {
   select.value = String(recordIndex.value);
 }
 async function selectRecord(index: number) {
-  if (navBusy.value || savingRecord.value || index === recordIndex.value) return;
+  if (navBusy.value || savingRecord.value || index === recordIndex.value || index < 0 || index >= records.value.length) return;
   navBusy.value = true;
   try {
     if (locked.value && dirty.value && !(await saveEdits())) return;

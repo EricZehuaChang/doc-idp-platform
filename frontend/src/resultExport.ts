@@ -57,7 +57,7 @@ function stamp(d: Date): string {
 
 /** A markdown table cell: `|` would break the row, newlines would break the table. */
 function mdCell(value: string): string {
-  return (value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  return String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 }
 
 /** Clean result object: field -> value, table -> row array, no `$` keys. */
