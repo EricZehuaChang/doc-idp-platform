@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.result_view import clean, output_shape_of, review_fields
+from app.result_view import clean, execution_package, output_shape_of, review_fields
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
 from app.billing import engine as billing
@@ -513,16 +513,7 @@ async def transaction_documents(transaction_id: str):
             if f.parent_file_id:
                 children_by_parent.setdefault(f.parent_file_id, []).append(f)
 
-        snapshot_pkg = None
-        if txn.execution_snapshot:
-            snapshot_pkg = txn.execution_snapshot.get("package") or {}
-        else:
-            # legacy rows (pre-WP4): fall back to the version row like the runner
-            ver = (await s.execute(
-                select(SkillVersion).where(
-                    SkillVersion.skill_code == txn.skill_code,
-                    SkillVersion.version == txn.skill_version))).scalars().first()
-            snapshot_pkg = (ver.package or {}) if ver else {}
+        snapshot_pkg = await execution_package(s, txn)
         layout_txn = _is_layout_txn(txn)
         threshold = 2
         if snapshot_pkg:
@@ -532,8 +523,9 @@ async def transaction_documents(transaction_id: str):
         def _review_fields(file):
             schema = (file.document_meta or {}).get("effective_schema") or {}
             policy = schema.get("review_policy") or {}
-            local_threshold = int(policy.get("confidence_threshold", threshold))
-            return review_fields(file.result or {}, output_shape_of(file, snapshot_pkg), local_threshold)
+            shape = output_shape_of(file, snapshot_pkg)
+            local_threshold = int(policy.get("confidence_threshold", threshold)) if shape == "list" else threshold
+            return review_fields(file.result or {}, shape, local_threshold)
 
         def _review_meta(file):
             reasons = (file.document_meta or {}).get("review_reasons")
@@ -625,12 +617,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond()))).scalars().all()
         layout_txn = _is_layout_txn(txn)
-        snapshot = (txn.execution_snapshot or {}).get("package")
-        if snapshot is None:
-            version = (await s.execute(select(SkillVersion).where(
-                SkillVersion.skill_code == txn.skill_code,
-                SkillVersion.version == txn.skill_version))).scalar_one_or_none()
-            snapshot = version.package if version else {}
+        snapshot = await execution_package(s, txn)
 
         def file_payload(f: FileRecord) -> dict:
             result = f.result
