@@ -441,7 +441,11 @@ const reasonLabels: Record<string, string> = {
   records_overlap: "review.records_overlap",
   challenger_record_count_mismatch: "review.challenger_record_count_mismatch",
   parse_cells_collapsed: "review.parse_cells_collapsed",
+  vision_first_unavailable: "review.vision_first_unavailable",
+  vision_first_failed: "review.vision_first_failed",
+  vision_value_unverified: "review.vision_value_unverified",
   table_shape_mismatch: "review.table_shape_mismatch",
+  table_arithmetic_mismatch: "review.table_arithmetic_mismatch",
 };
 function reasonLabel(code: string) { return reasonLabels[code] ? t(reasonLabels[code]) : code; }
 

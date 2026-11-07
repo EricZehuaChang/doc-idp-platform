@@ -443,6 +443,62 @@ async def _complete_classify_only(file_id: str) -> None:
     await output_stage(file_id)
 
 
+def _vision_first_images(storage_path: str, udr: UDR, source_pages: list[int] | None = None) -> dict[int, str]:
+    """B2: return genuine PNGs for all local pages, or no images for human review."""
+    from io import BytesIO
+
+    from app.parsers import raster
+
+    local = [page.page_no for page in udr.pages]
+    wanted = local if source_pages is None else source_pages
+    if (not local or not isinstance(wanted, (list, tuple)) or len(local) != len(wanted)
+            or min(local) < 1 or any(type(n) is not int or n < 1 for n in wanted)
+            or len(set(local)) != len(local) or len(set(wanted)) != len(wanted)):
+        return {}
+    path = Path(get_storage().local_path(storage_path))
+    if path.suffix.lower() == ".pdf":
+        # Render one extra page on unsliced inputs to detect a truncated parser page list.
+        images = raster.pdf_pages_to_images(str(path), max(wanted) + int(source_pages is None))
+        if source_pages is None and set(images) != set(wanted):
+            return {}
+        if not all(page in images for page in wanted):
+            return {}
+        return {number: images[original] for number, original in zip(local, wanted)}
+
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+        return {}
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return {}
+    try:
+        with Image.open(path) as source:
+            frame_count = getattr(source, "n_frames", 1)
+            if max(wanted) > frame_count or (source_pages is None and len(wanted) != frame_count):
+                return {}
+            images = {}
+            for number, original in zip(local, wanted):
+                source.seek(original - 1)
+                frame = ImageOps.exif_transpose(source)
+                # Keep PNG-compatible samples exactly. Convert colour spaces that
+                # PNG does not encode, and decline scientific TIFFs that would clip.
+                if frame.mode in {"CMYK", "YCbCr", "RGBX"}:
+                    frame = frame.convert("RGB")
+                elif frame.mode in {"I;16L", "I"}:
+                    low, high = frame.getextrema()
+                    if low < 0 or high > 65535:
+                        return {}
+                    frame = frame.convert("I;16")
+                elif frame.mode not in {"1", "L", "LA", "P", "RGB", "RGBA", "I;16", "I;16B"}:
+                    return {}
+                png = BytesIO()
+                frame.save(png, format="PNG")
+                images[number] = raster._to_data_uri(png.getvalue())
+            return images
+    except (OSError, ValueError, EOFError, Image.DecompressionBombError):
+        return {}
+
+
 async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
                        deps: dict, fast: bool = False,
                        page_images: dict[int, str] | None = None,
@@ -453,12 +509,34 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         f = await s.get(FileRecord, file_id)
         tenant = f.tenant_id
         meta = dict(f.document_meta or {})
+    image_source_pages = None
+    if f.parent_file_id:
+        async with sf() as s:
+            parent = await s.get(FileRecord, f.parent_file_id)
+            if parent and parent.storage_path == f.storage_path:
+                image_source_pages = (f.document_meta or {}).get("source_pages")
     _x0 = datetime.now(timezone.utc)
     if getattr(pkg, "kind", "extract") == "layout" and not pkg.fields:
         # pure layout skill: the parsed regions (served by /status from the
         # persisted UDR) ARE the product — no model call, nothing to review;
         # pages still bill at settle because the file completes
         result, usage, needs_review = {}, {}, False
+    elif pkg.vision_first:
+        from app.extraction.vision_first import extract_from_images
+        if page_images is None:
+            page_images = await asyncio.to_thread(
+                _vision_first_images, f.storage_path, udr, image_source_pages)
+        result, usage, needs_review = await asyncio.to_thread(
+            extract_from_images, udr, pkg, page_images, tenant)
+        from app.extraction.completeness import parse_completeness
+        findings = parse_completeness(udr, pkg, result,
+                                     is_image=Path(f.file_name).suffix.lower() in
+                                     {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"})
+        reasons = list(dict.fromkeys([*usage.get("review_reasons", []),
+                                      *findings["review_reasons"]]))
+        if reasons:
+            usage["review_reasons"] = reasons
+            needs_review = True
     else:
         result, usage, needs_review = await asyncio.to_thread(
             extract, udr, pkg, page_images=page_images, fast=fast)
@@ -496,6 +574,8 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
                 metrics[key] = usage[key]
         if "field_sources" in usage:
             meta["field_sources"] = usage["field_sources"]
+        if "vision_first" in usage:
+            metrics["vision_first"] = usage["vision_first"]
         if classify_ms is not None:
             metrics["classify_ms"] = classify_ms
         # queue/parse already landed in parse_stage

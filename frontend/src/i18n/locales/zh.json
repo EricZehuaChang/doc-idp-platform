@@ -420,6 +420,9 @@
     "revoke_confirm": "吊销 Key「{name}」？使用它的终端将立即失效。"
   },
   "review": {
+    "vision_first_unavailable": "原图首抽不可用，请对照原件复核。",
+    "vision_value_unverified": "原图读取的部分值未在解析文本中核实，请对照原件复核。",
+    "vision_first_failed": "原图首抽失败，请对照原件复核。",
     "record_count": "{n} 条记录",
     "record": "记录",
     "record_number": "记录 {n}",
@@ -433,6 +436,7 @@
     "records_empty": "未抽取到任何记录，请核对原件。",
     "challenger_record_count_mismatch": "两个模型识别出的记录数不同，请核对原件。",
     "parse_cells_collapsed": "解析可能遗漏了表格单元格，请核对原件。",
+    "table_arithmetic_mismatch": "明细行的乘积与金额不一致，请对照原件核对。",
     "table_shape_mismatch": "明细表结构与原件可能不符，请核对行列。",
     "the_current_file_is_not_in_a_pending_approval": "当前文件不在待审批次",
     "copied_file_id": "已复制 file_id",
@@ -855,6 +859,8 @@
     "settings-title": "设置"
   },
   "skillEditor": {
+    "vision_first": "原图首抽",
+    "vision_first_hint": "首次抽取时将原图发送给配置的视觉模型，图片输入计入模型用量。视觉调用失败或表格疑似缺失时转人工复核。",
     "fields_per_record": "每条记录的字段",
     "please_switch_to_standard_extraction_and_configure_fields_first": "请先切换到标准提取并配置字段（fast_mode_requires_standard_fields）",
     "fast_mode_extracts_by_standard_fields_advanced_classification_settings": "极速模式将按标准字段提取，高级分类配置已保留但不生效",
