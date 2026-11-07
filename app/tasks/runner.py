@@ -560,6 +560,8 @@ async def _extract_one(file_id: str, udr: UDR, pkg: SkillPackage,
         meta["output_shape"] = pkg.output_shape
         if usage.get("review_reasons"):
             meta["review_reasons"] = list(dict.fromkeys(usage["review_reasons"]))
+        if usage.get("table_headers"):
+            meta["table_headers"] = usage["table_headers"]
         if fast:
             # 未评分契约 + bench data source (§3.9 document_meta.metrics)
             meta["processing_mode"] = "fast"

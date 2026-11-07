@@ -441,6 +441,28 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         result, lowest = _build_cells(raw, pkg, udr, _record_failures(raw, pkg),
                                       challenger_raw, fast)
 
+    # C2/C3: only unspecified-column tables enter header provenance/shape checks.
+    from app.extraction.table_headers import resolve_table_headers
+    free_tables = [field for field in pkg.fields if field.type == "table" and not field.columns
+                   and not field.entity_list]
+    records = result.get("records", []) if pkg.output_shape == "list" else [result]
+    headers = {}
+    header_reasons = []
+    for index, record in enumerate(records):
+        for field in free_tables:
+            rows, meta, reasons = resolve_table_headers(
+                field, record.get(field.name) or [], udr,
+                sole_table=sum(field.type == "table" for field in pkg.fields) == 1 and len(records) == 1)
+            record[field.name] = rows
+            path = f"records[{index}].{field.name}" if pkg.output_shape == "list" else field.name
+            headers[path] = meta
+            header_reasons.extend(reasons)
+    if headers:
+        usage["table_headers"] = headers
+    if header_reasons:
+        usage["review_reasons"] = list(dict.fromkeys([
+            *usage.get("review_reasons", []), *header_reasons]))
+
     policy = pkg.review_policy
     if policy.mode == "always":
         needs_review = True
@@ -460,4 +482,4 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
                             row.setdefault("$cells", {}).setdefault(column.name, {})["$source"] = source
         if review_misses:
             needs_review = True
-    return result, usage, needs_review or (pkg.output_shape == "list" and bool(usage.get("review_reasons")))
+    return result, usage, needs_review or bool(usage.get("review_reasons"))

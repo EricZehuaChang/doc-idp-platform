@@ -65,6 +65,8 @@
     "click_to_choose": "click to choose"
   },
   "fieldCard": {
+    "infer_headers": "Infer missing column names",
+    "infer_headers_hint": "Without a source header, columns are numbered by position. Enable this to suggest names and send them for review.",
     "not_yet_extracted": "Not yet extracted",
     "press_and_drag_to_reorder_fields": "Press and drag to reorder fields",
     "unnamed_field": "Unnamed field",
@@ -420,6 +422,9 @@
     "revoke_confirm": "Revoke key “{name}”? Clients using it will immediately lose access."
   },
   "review": {
+    "inferred_header": "Inferred header",
+    "positional_column": "Column {n}",
+    "table_headers_inferred": "Some column names were inferred. Check them against the original document.",
     "vision_first_unavailable": "Image extraction is unavailable. Check the original document.",
     "vision_value_unverified": "Some values read from the original image could not be verified against the parsed text. Check them against the original.",
     "vision_first_failed": "Image extraction failed. Check the original document.",
