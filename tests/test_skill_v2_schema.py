@@ -68,7 +68,13 @@ def test_table_nesting_and_list_mode_rules():
 
     lst = _pkg(output_shape="list", fields=[_field("t", type="table")])
     errors, _ = validate_package(lst, "save")
-    assert any("List" in e["message"] for e in errors)
+    assert errors == []
+    for bad in [_pkg(output_shape="list", extraction_channel="rules_first"),
+                _pkg(output_shape="list", fields=[_field("sweep", type="table", entity_list=True)]),
+                _pkg(skill_mode="advanced", extraction_channel="rules_first",
+                     categories=[{**_field_dict_cat(1), "output_shape": "list"}, _other_cat()])]:
+        errors, _ = validate_package(bad, "save")
+        assert any("List" in e["message"] for e in errors)
 
 
 def test_limits_categories_fields_and_rules():

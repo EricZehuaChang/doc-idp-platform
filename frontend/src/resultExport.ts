@@ -14,7 +14,12 @@ import { translateMessage, type DisplayMessage } from "./i18n";
 //    signal a human reader needs to spot a field worth a second look.
 
 /** One document's on-screen result, assembled by the caller (ReviewView). */
-export interface ResultExportInput {
+export interface ExportRecord {
+  fields: { name: string; value: string; confidence: number }[];
+  tables: { name: string; rows: Record<string, string>[] }[];
+}
+export interface ResultExportInput extends ExportRecord {
+  records?: ExportRecord[];
   fileId: string;
   fileName: string;
   /** raw lifecycle status ("passed", "pending_verification", …) */
@@ -23,9 +28,6 @@ export interface ResultExportInput {
   statusLabel: string;
   pageCount: number;
   verifiedBy: string | null;
-  fields: { name: string; value: string; confidence: number }[];
-  /** table rows keyed by column; `$`-prefixed keys are dropped on export */
-  tables: { name: string; rows: Record<string, string>[] }[];
 }
 
 export type ResultFormat = "json" | "md";
@@ -55,15 +57,18 @@ function stamp(d: Date): string {
 
 /** A markdown table cell: `|` would break the row, newlines would break the table. */
 function mdCell(value: string): string {
-  return (value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  return String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 }
 
 /** Clean result object: field -> value, table -> row array, no `$` keys. */
-export function buildResultJson(input: ResultExportInput,
-                                at: Date): Record<string, unknown> {
+function recordJson(input: ExportRecord): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const f of input.fields) result[f.name] = f.value;
   for (const t of input.tables) result[t.name] = t.rows.map(cleanRow);
+  return result;
+}
+export function buildResultJson(input: ResultExportInput,
+                                at: Date): Record<string, unknown> {
   return {
     file_name: input.fileName,
     file_id: input.fileId,
@@ -71,7 +76,7 @@ export function buildResultJson(input: ResultExportInput,
     page_count: input.pageCount,
     verified_by: input.verifiedBy,
     exported_at: at.toISOString(),
-    result,
+    result: input.records ? input.records.map(recordJson) : recordJson(input),
   };
 }
 
@@ -86,9 +91,20 @@ export function buildResultMarkdownLines(input: ResultExportInput, at: Date): Di
     { key: "result_export.verified_by", params: { name: input.verifiedBy || "—" } },
     { key: "result_export.exported_at", params: { time: stamp(at) } },
     "",
-    { key: "result_export.fields" },
-    "",
   ];
+  if (input.records) {
+    input.records.forEach((record, index) => {
+      lines.push({ key: "result_export.record", params: { n: index + 1 } }, "");
+      appendFields(lines, record, true);
+    });
+  } else {
+    appendFields(lines, input);
+  }
+  return lines;
+}
+
+function appendFields(lines: DisplayMessage[], input: ExportRecord, nested = false) {
+  lines.push({ key: nested ? "result_export.record_fields" : "result_export.fields" }, "");
   if (!input.fields.length) {
     lines.push({ key: "result_export.no_fields" }, "");
   } else {
@@ -98,7 +114,7 @@ export function buildResultMarkdownLines(input: ResultExportInput, at: Date): Di
     lines.push("");
   }
   for (const t of input.tables) {
-    lines.push({ key: "result_export.table", params: { name: t.name } }, "");
+    lines.push({ key: nested ? "result_export.record_table" : "result_export.table", params: { name: t.name } }, "");
     const cols = columnsOf(t.rows);
     if (!t.rows.length) lines.push({ key: "result_export.no_rows" }, "");
     else if (!cols.length) lines.push({ key: "result_export.no_columns" }, "");
@@ -110,7 +126,6 @@ export function buildResultMarkdownLines(input: ResultExportInput, at: Date): Di
       lines.push("");
     }
   }
-  return lines;
 }
 
 /** Resolve display messages only at the export boundary, using the current locale. */

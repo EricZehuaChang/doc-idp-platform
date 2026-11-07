@@ -20,25 +20,14 @@ def test_v1_package_effectively_unchanged():
     assert eff is pkg              # same object: zero transformation
 
 
-def test_list_mode_folds_fields_into_records_table():
-    pkg = _v2(output_shape="list",
-              fields=[{"name": "invoice_no", "type": "string"},
-                      {"name": "amount", "type": "number"}])
+def test_list_fields_keep_native_record_metadata_and_nested_tables():
+    pkg = _v2(output_shape="list", fields=[
+        {"name": "invoice_no", "type": "string", "required": True},
+        {"name": "items", "type": "table", "columns": [{"name": "dish"}]}])
     eff = effective_package(pkg)
-    assert len(eff.fields) == 1
-    rec = eff.fields[0]
-    assert rec.name == "records" and rec.type == "table"
-    assert [c.name for c in rec.columns] == ["invoice_no", "amount"]
-    # original package untouched (pure derivation)
-    assert [f.name for f in pkg.fields] == ["invoice_no", "amount"]
-
-
-def test_list_mode_already_wrapped_is_idempotent():
-    pkg = _v2(output_shape="list",
-              fields=[{"name": "records", "type": "table",
-                       "columns": [{"name": "a", "type": "string"}]}])
-    eff = effective_package(pkg)
-    assert eff.fields[0].columns[0].name == "a"
+    assert eff.fields == pkg.fields and eff.output_shape == "list"
+    assert eff.fields is not pkg.fields
+    assert effective_package(eff) == eff
 
 
 def test_fast_forces_never_review_and_drops_challenger():

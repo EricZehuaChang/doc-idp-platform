@@ -1,19 +1,11 @@
-"""Effective execution configuration (9.15 § WP3) — PURE CORE.
+"""Derive processing policies and per-category packages.
 
-`effective_package(pkg)` is the SINGLE place that derives what actually runs
-from what is configured. Editor validation, publish, Playground and the runner
-all call this one function so no surface re-derives modes ad hoc.
-
-- v1 (schema_version 1, plain standard)     -> returned unchanged.
-- List output shape (R09)                   -> fields fold into one `records`
-  table column, so the compiler and extraction pipeline need no changes.
-- fast (WP5)                                -> standard extraction, review
-  forced to never, challenger disabled.
-- advanced (WP4)                            -> per-category subpackages.
+A2: List fields describe one record, including any table fields. The compiler
+and extractor consume that schema directly and retain scalar cell metadata.
 """
 from copy import deepcopy
 
-from app.skillengine.schema import FieldSpec, ReviewPolicy, SkillPackage
+from app.skillengine.schema import ReviewPolicy, SkillPackage
 
 
 def is_v1(pkg: SkillPackage) -> bool:
@@ -26,14 +18,6 @@ def effective_package(pkg: SkillPackage) -> SkillPackage:
     if is_v1(pkg):
         return pkg
     eff = deepcopy(pkg)
-    if eff.output_shape == "list" and eff.fields:
-        # List mode: wrap the configured fields as columns of one table so the
-        # whole pipeline keeps its "extract fields of a package" shape.
-        if not (len(eff.fields) == 1 and eff.fields[0].type == "table"
-                and eff.fields[0].name == "records"):
-            eff.fields = [FieldSpec(
-                name="records", type="table", instruction="按文档中出现顺序逐条列出",
-                columns=deepcopy(pkg.fields))]
     if eff.processing_mode == "fast":
         # fast never reviews and never pays for a challenger channel (WP5)
         eff.review_policy = ReviewPolicy(mode="never",

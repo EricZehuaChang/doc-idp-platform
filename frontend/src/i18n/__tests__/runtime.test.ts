@@ -105,6 +105,20 @@ describe("result export localization", () => {
     expect(after).not.toContain("result_export.");
     expect(after).not.toMatch(/[\u3400-\u9fff]/u);
   });
+  it("keeps each record's fields and line items together in JSON and Markdown", () => {
+    const records = [input, { fields: [{ name: "Amount", value: "12", confidence: 3 }],
+      tables: [{ name: "Items", rows: [{ Item: "Book" }] }] }];
+    const list = { ...input, records };
+    expect(buildResultJson(list, at).result).toEqual([
+      { Amount: "3|4", Items: [{ Item: "Pen" }] },
+      { Amount: "12", Items: [{ Item: "Book" }] },
+    ]);
+    setLanguage("en");
+    const md = buildResultMarkdown(list, at);
+    expect(md).toMatch(/## Record 1[\s\S]*Pen[\s\S]*## Record 2[\s\S]*Book/);
+    expect(md).not.toContain("$confidence");
+    expect(buildResultJson({ ...input, records: [] }, at).result).toEqual([]);
+  });
   it("preserves machine-readable JSON keys and strips metadata", () => {
     const before = buildResultJson(input, at);
     setLanguage("en");

@@ -8,6 +8,9 @@ import re
 from app.config import load_providers
 from app.extraction import confidence as conf
 from app.extraction import formatting
+from app.extraction.list_chunks import (append_chunk, boundary_messages, invalid_structure,
+                                        list_units, model_records)
+from app.extraction.record_geometry import annotate_record_regions
 from app.extraction.provider_client import chat_json_with_fallback
 from app.extraction.validators import run_validators
 from app.parsers.base import UDR
@@ -108,20 +111,36 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
 
     `page_images` (page_no -> data URI) turns this into a multimodal call: the
     caller decides, because only it knows whether the bound channel accepts
-    images. Text-only channels must never receive image parts."""
+    images. Text-only channels must never receive image parts. A4: List chunks
+    only when necessary and merges explicit continuations across boundaries."""
     # Entity-list tables are document-wide de-duplicated sweeps, not layout
     # detail tables.  Keep them whole so page boundaries do not duplicate hits.
-    page_map = (not single_call) and len(udr.pages) > 1 and any(
+    page_map = pkg.output_shape != "list" and not single_call and len(udr.pages) > 1 and any(
         f.type == "table" and not f.entity_list for f in pkg.fields)
-    units = [_page_udr(udr, page) for page in udr.pages] if page_map else [udr]
+    list_mode = pkg.output_shape == "list"
+    if list_mode:
+        units = list_units(udr, page_images or {}, _MAX_VISION_IMAGES)
+    else:
+        pages = [_page_udr(udr, page) for page in udr.pages] if page_map else [udr]
+        units = [(unit, _images_for(unit, page_images)) for unit in pages]
+    chunked_list = list_mode and len(units) > 1
     parts: list[dict] = []
+    records: list[dict] = []
+    chunk_reasons = []
     total_usage: dict[str, object] = {}
     providers: list[str] = []
-    for unit in units:
-        raw, usage, used = chat_json_with_fallback(
-            compile_messages(pkg, unit, _images_for(unit, page_images)),
-            chain, transport=transport)
-        parts.append(raw)
+    for unit, images in units:
+        messages = compile_messages(pkg, unit, images)
+        if chunked_list:
+            boundary_messages(messages, records[-1] if records else None, pkg.fields)
+        raw, usage, used = chat_json_with_fallback(messages, chain, transport=transport)
+        if chunked_list:
+            if invalid_structure(raw, pkg.fields, complete=False):
+                chunk_reasons.append("records_invalid")
+            if append_chunk(records, raw, pkg.fields):
+                chunk_reasons.append("records_boundary_uncertain")
+        else:
+            parts.append(raw)
         if used not in providers:
             providers.append(used)
         for key, value in dict(usage).items():
@@ -130,6 +149,10 @@ def _raw_extract(udr: UDR, pkg: SkillPackage, chain: list[str | None],
             elif len(units) == 1:
                 total_usage[key] = value
     total_usage["provider_used"] = ",".join(providers)
+    if chunked_list:
+        if chunk_reasons:
+            total_usage["review_reasons"] = list(dict.fromkeys(chunk_reasons))
+        return {"records": records}, total_usage, providers
     merged = _merge_page_raw(parts, pkg) if page_map else parts[0]
     return merged, total_usage, providers
 
@@ -193,6 +216,145 @@ def _locate_rows(rows: list, spec, udr: UDR) -> list:
     return out
 
 
+def _record_failures(raw: dict, pkg: SkillPackage) -> dict:
+    # flatten for the rule channel: inferred fields arrive as {value, reasoning}
+    flat: dict[str, object] = {}
+    for f in pkg.fields:
+        v = raw.get(f.name)
+        if f.mode == "inferred" and isinstance(v, dict):
+            flat[f.name] = v.get("value")
+        else:
+            flat[f.name] = v
+    return run_validators(flat, pkg.validators)
+
+
+def _build_cells(raw: dict, pkg: SkillPackage, udr: UDR, rule_failures: dict,
+                 challenger_raw: dict | None, fast: bool) -> tuple[dict, int]:
+    """Build scalar metadata and located table rows identically for a document or one record."""
+    result: dict[str, object] = {}
+    lowest = 3
+    for f in pkg.fields:
+        raw_val = raw.get(f.name)
+        if f.type == "table":
+            rows = raw_val if isinstance(raw_val, list) else []
+            if pkg.output_shape == "list":
+                rows = [{k: v for k, v in row.items() if not k.startswith("$")}
+                        for row in rows if isinstance(row, dict)]
+            if not fast:
+                rows = _locate_rows(rows, f, udr)   # fast mode: no bbox scoring
+            result[f.name] = formatting.format_table_rows(rows, f)
+            continue
+        reasoning = None
+        if f.mode == "inferred" and isinstance(raw_val, dict):
+            value = str(raw_val.get("value") or "")
+            reasoning = str(raw_val.get("reasoning") or "")
+        else:
+            value = "" if raw_val is None else str(raw_val)
+        if fast:
+            # 未评分契约 (§WP5): confidence None — readers must render "未评分";
+            # fabricating a number would fake quality the pipeline never measured
+            cell: dict[str, object] = {"$value": value, "$confidence": None,
+                                       "$bbox": [], "$pages": ""}
+            if f.mode == "inferred":
+                cell["inferred"] = True
+                cell["$reasoning"] = reasoning or ""
+            if f.name in rule_failures:
+                cell["$rule_failures"] = rule_failures[f.name]
+            formatted, fmt_err = formatting.format_value(f, value)
+            if fmt_err is None:
+                if formatted != value:
+                    cell["$raw"] = value
+                    cell["$value"] = formatted
+            else:
+                cell["$format_error"] = fmt_err
+            result[f.name] = cell
+            continue
+        score, page, bbox = conf.score_field(
+            value=value, udr=udr,
+            rule_failed=f.name in rule_failures,
+            inferred=(f.mode == "inferred"),
+            has_reasoning=bool(reasoning))
+        cell = {
+            "$value": value, "$confidence": score,
+            "$bbox": bbox or [], "$pages": page or "",
+        }
+        # model channel (§5.3): challenger disagreement caps confidence at 1
+        # (below any sane threshold) and records the second opinion
+        if challenger_raw is not None and f.name in challenger_raw:
+            ch_val = challenger_raw.get(f.name)
+            if f.mode == "inferred" and isinstance(ch_val, dict):
+                ch_val = ch_val.get("value")
+            ch_str = "" if ch_val is None else str(ch_val)
+            agree = _norm(ch_str) == _norm(value)
+            if not agree:
+                score = min(score, 1)
+                cell["$confidence"] = score
+            cell["$challenger"] = {"value": ch_str, "agree": agree}
+        if f.mode == "inferred":
+            cell["inferred"] = True        # exports must distinguish extracted vs derived (§5.6)
+            cell["$reasoning"] = reasoning or ""
+        if f.name in rule_failures:
+            cell["$rule_failures"] = rule_failures[f.name]
+        # 9.15 R11: format AFTER locating/scoring the raw value — formatting
+        # first would break `$bbox`/highlight lookup. Success adds `$raw`; a
+        # parse failure keeps the raw value, caps confidence at 1 (auto-review)
+        # and never fabricates a value.
+        formatted, fmt_err = formatting.format_value(f, value)
+        if fmt_err is None:
+            if formatted != value:
+                cell["$raw"] = value
+                cell["$value"] = formatted
+        else:
+            cell["$format_error"] = fmt_err
+            score = min(score, 1)
+            cell["$confidence"] = score
+        result[f.name] = cell
+        lowest = min(lowest, score)
+
+    return result, lowest
+
+
+def _build_records(raw: dict, pkg: SkillPackage, udr: UDR, challenger_raw: dict | None,
+                   usage: dict, fast: bool) -> tuple[dict, int]:
+    """A4: preserve record order, arbitrate by index, and aggregate review across records."""
+    rows = model_records(raw)
+    challenger = model_records(challenger_raw) if challenger_raw is not None else None
+    mismatch = challenger is not None and len(challenger) != len(rows)
+    reasons = list(usage.get("review_reasons") or [])
+    if not rows:
+        reasons.append("records_empty")
+    if invalid_structure(raw, pkg.fields, complete=True) and "records_invalid" not in reasons:
+        reasons.append("records_invalid")
+    if mismatch:
+        reasons.append("challenger_record_count_mismatch")
+        usage["challenger_record_count_mismatch"] = True
+
+    records = []
+    lowest = 3
+    for i, row in enumerate(rows):
+        opinion = None
+        if challenger is not None and i < len(challenger):
+            opinion = {f.name: challenger[i].get(f.name) for f in pkg.fields}
+        cells, score = _build_cells(row, pkg, udr, _record_failures(row, pkg), opinion, fast)
+        if mismatch:
+            score = min(score, 1)
+            for value in cells.values():
+                if isinstance(value, dict):
+                    if value.get("$confidence") is not None:
+                        value["$confidence"] = min(value["$confidence"], 1)
+                else:
+                    for detail in value:
+                        for cell in detail.get("$cells", {}).values():
+                            if cell.get("$confidence") is not None:
+                                cell["$confidence"] = min(cell["$confidence"], 1)
+        lowest = min(lowest, score)
+        records.append(cells)
+    if annotate_record_regions(records):
+        reasons.append("records_overlap")
+    usage["review_reasons"] = reasons
+    return {"records": records}, lowest
+
+
 def extract(udr: UDR, pkg: SkillPackage, transport=None,
             provider_override: str | None = None,
             page_images: dict[int, str] | None = None,
@@ -208,6 +370,8 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
     fabricated high score); rule failures still surface as $rule_failures."""
     chain = _provider_chain(pkg, provider_override)
     rules_first = pkg.extraction_channel == "rules_first"
+    if rules_first and pkg.output_shape == "list":
+        raise ValueError("List 输出模式不支持规则优先抽取，请选择模型抽取")
     rule_values: dict = {}
     review_misses: set[str] = set()
     model_pkg = pkg
@@ -258,98 +422,22 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
         try:
             challenger_raw, ch_usage, _ = _raw_extract(
                 udr, model_pkg, [challenger], transport=transport)
+            if pkg.output_shape == "list" and ch_usage.get("review_reasons"):
+                usage["review_reasons"] = list(dict.fromkeys(
+                    [*usage.get("review_reasons", []), *ch_usage["review_reasons"]]))
             usage["challenger_used"] = challenger
             usage["challenger_prompt_tokens"] = int(ch_usage.get("prompt_tokens") or 0)
             usage["challenger_completion_tokens"] = int(ch_usage.get("completion_tokens") or 0)
         except Exception as e:      # arbitration degraded, primary result stands
             usage["challenger_error"] = str(e)[:200]
 
-    # flatten for the rule channel: inferred fields arrive as {value, reasoning}
-    flat: dict[str, object] = {}
-    for f in pkg.fields:
-        v = raw.get(f.name)
-        if f.mode == "inferred" and isinstance(v, dict):
-            flat[f.name] = v.get("value")
-        else:
-            flat[f.name] = v
-    rule_failures = run_validators(flat, pkg.validators)
-
-    result: dict[str, object] = {}
-    lowest = 3
-    for f in pkg.fields:
-        raw_val = raw.get(f.name)
-        if f.type == "table":
-            rows = raw_val if isinstance(raw_val, list) else []
-            if not fast:
-                rows = _locate_rows(rows, f, udr)   # fast mode: no bbox scoring
-            result[f.name] = formatting.format_table_rows(rows, f)
-            continue
-        reasoning = None
-        if f.mode == "inferred" and isinstance(raw_val, dict):
-            value = str(raw_val.get("value") or "")
-            reasoning = str(raw_val.get("reasoning") or "")
-        else:
-            value = "" if raw_val is None else str(raw_val)
-        if fast:
-            # 未评分契约 (§WP5): confidence None — readers must render "未评分";
-            # fabricating a number would fake quality the pipeline never measured
-            cell: dict[str, object] = {"$value": value, "$confidence": None,
-                                       "$bbox": [], "$pages": ""}
-            if f.mode == "inferred":
-                cell["inferred"] = True
-                cell["$reasoning"] = reasoning or ""
-            if f.name in rule_failures:
-                cell["$rule_failures"] = rule_failures[f.name]
-            formatted, fmt_err = formatting.format_value(f, value)
-            if fmt_err is None:
-                if formatted != value:
-                    cell["$raw"] = value
-                    cell["$value"] = formatted
-            else:
-                cell["$format_error"] = fmt_err
-            result[f.name] = cell
-            continue
-        score, page, bbox = conf.score_field(
-            value=value, udr=udr,
-            rule_failed=f.name in rule_failures,
-            inferred=(f.mode == "inferred"),
-            has_reasoning=bool(reasoning))
-        cell = {
-            "$value": value, "$confidence": score,
-            "$bbox": bbox or [], "$pages": page or "",
-        }
-        # model channel (§5.3): challenger disagreement caps confidence at 1
-        # (below any sane threshold) and records the second opinion
-        if challenger_raw is not None and f.name in model_names:
-            ch_val = challenger_raw.get(f.name)
-            if f.mode == "inferred" and isinstance(ch_val, dict):
-                ch_val = ch_val.get("value")
-            ch_str = "" if ch_val is None else str(ch_val)
-            agree = _norm(ch_str) == _norm(value)
-            if not agree:
-                score = min(score, 1)
-                cell["$confidence"] = score
-            cell["$challenger"] = {"value": ch_str, "agree": agree}
-        if f.mode == "inferred":
-            cell["inferred"] = True        # exports must distinguish extracted vs derived (§5.6)
-            cell["$reasoning"] = reasoning or ""
-        if f.name in rule_failures:
-            cell["$rule_failures"] = rule_failures[f.name]
-        # 9.15 R11: format AFTER locating/scoring the raw value — formatting
-        # first would break `$bbox`/highlight lookup. Success adds `$raw`; a
-        # parse failure keeps the raw value, caps confidence at 1 (auto-review)
-        # and never fabricates a value.
-        formatted, fmt_err = formatting.format_value(f, value)
-        if fmt_err is None:
-            if formatted != value:
-                cell["$raw"] = value
-                cell["$value"] = formatted
-        else:
-            cell["$format_error"] = fmt_err
-            score = min(score, 1)
-            cell["$confidence"] = score
-        result[f.name] = cell
-        lowest = min(lowest, score)
+    if pkg.output_shape == "list":
+        result, lowest = _build_records(raw, pkg, udr, challenger_raw, usage, fast)
+    else:
+        if challenger_raw is not None:
+            challenger_raw = {name: challenger_raw.get(name) for name in model_names}
+        result, lowest = _build_cells(raw, pkg, udr, _record_failures(raw, pkg),
+                                      challenger_raw, fast)
 
     policy = pkg.review_policy
     if policy.mode == "always":
@@ -370,4 +458,4 @@ def extract(udr: UDR, pkg: SkillPackage, transport=None,
                             row.setdefault("$cells", {}).setdefault(column.name, {})["$source"] = source
         if review_misses:
             needs_review = True
-    return result, usage, needs_review
+    return result, usage, needs_review or (pkg.output_shape == "list" and bool(usage.get("review_reasons")))

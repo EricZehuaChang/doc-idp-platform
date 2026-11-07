@@ -47,9 +47,9 @@ def _check_field_group(fields: list[FieldSpec], path: str, errors: list[dict],
             errors.append({"path": f"{fp}.name", "message": f"同组内字段名重复：{name}"})
         seen.add(name)
         if f.type == "table":
-            if list_mode:
+            if list_mode and f.entity_list:
                 errors.append({"path": fp,
-                               "message": "List 输出模式下字段不能是表格类型"})
+                               "message": "List 输出模式不支持实体清单（entity_list）表格"})
             for j, col in enumerate(f.columns):
                 if col.type == "table":
                     errors.append({"path": f"{fp}.columns[{j}]",
@@ -78,6 +78,13 @@ def validate_package(pkg: SkillPackage, stage: str = "save",
 
     if pkg.schema_version >= 2 or pkg.skill_mode == "advanced" \
             or pkg.output_shape == "list" or pkg.output.enabled:
+        # A1: rules-first extracts one scalar per document, not one per record.
+        uses_list = pkg.output_shape == "list" or (
+            pkg.skill_mode == "advanced"
+            and any(c.handler == "inline" and c.output_shape == "list" for c in pkg.categories))
+        if uses_list and pkg.extraction_channel == "rules_first":
+            errors.append({"path": "extraction_channel",
+                           "message": "List 输出模式不支持规则优先抽取，请选择模型抽取"})
         # —— v2 field groups ——
         _check_field_group(pkg.fields, "fields", errors,
                            list_mode=(pkg.output_shape == "list"))
