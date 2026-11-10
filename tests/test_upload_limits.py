@@ -7,11 +7,20 @@ from tests.test_wp5_fast_and_playground import _boot
 
 
 async def test_processing_file_and_batch_boundaries(tmp_path, monkeypatch):
+    from starlette.datastructures import UploadFile
     from app.api.routes import process
 
     monkeypatch.setattr(process, "_MAX_SIZE", 8)
     monkeypatch.setattr(process, "_MAX_BATCH", 12)
     submitted = []
+    reads = []
+    original_read = UploadFile.read
+
+    async def tracked_read(upload, size=-1):
+        reads.append((upload.filename, size))
+        return await original_read(upload, size)
+
+    monkeypatch.setattr(UploadFile, "read", tracked_read)
     monkeypatch.setattr(process.runner, "submit", submitted.append)
     async for client, db in _boot(tmp_path, monkeypatch):
         package = {"skill_code": "limits", "kind": "layout", "fields": []}
@@ -20,9 +29,12 @@ async def test_processing_file_and_batch_boundaries(tmp_path, monkeypatch):
         oversized = await client.post("/api/v1/process", data={"skill_code": "limits"},
                                       files={"files": ("large.pdf", b"x" * 9)})
         assert oversized.status_code == 413
+        assert reads == []
         batch = await client.post("/api/v1/process", data={"skill_code": "limits"}, files=[
             ("files", ("a.pdf", b"x" * 7)), ("files", ("b.pdf", b"x" * 6))])
         assert batch.status_code == 413
+        assert reads == [("a.pdf", 9)]
+        reads.clear()
         async with db.session_factory()() as session:
             assert await session.scalar(select(func.count()).select_from(Transaction)) == 0
             assert await session.scalar(select(func.count()).select_from(FileRecord)) == 0
@@ -30,6 +42,7 @@ async def test_processing_file_and_batch_boundaries(tmp_path, monkeypatch):
             ("files", ("a.pdf", b"x" * 8)), ("files", ("b.pdf", b"x" * 4))])
         assert boundary.status_code == 202, boundary.text
         assert submitted == [boundary.json()["transaction_id"]]
+        assert reads == [("a.pdf", 9), ("b.pdf", 5)]
 
 
 @pytest.mark.parametrize("endpoint,form", [
@@ -58,3 +71,27 @@ async def test_agent_advertises_200_mib(tmp_path, monkeypatch):
         response = await client.get("/api/v1/agent/ping")
         assert response.status_code == 200
         assert response.json()["upload_max_mb"] == 200
+
+
+async def test_rejected_tool_call_logs_original_file_size(tmp_path, monkeypatch):
+    from app.api.routes import detect, locate
+    from app.models import ApiCallLog
+
+    monkeypatch.setattr(detect, "_MAX_SIZE", 8)
+    monkeypatch.setattr(locate, "_MAX_SIZE", 8)
+    monkeypatch.setattr(detect, "_make_detector", lambda name: object())
+    async for client, db in _boot(tmp_path, monkeypatch, auth_on=True):
+        login = await client.post("/api/v1/auth/login", json={
+            "email": "admin@example.com", "password": "admin-pass-123"})
+        admin = {"Authorization": "Bearer " + login.json()["access_token"]}
+        key = await client.post("/api/v1/settings/api-keys", headers=admin,
+                                json={"name": "size-audit", "key_type": "application"})
+        headers = {"Authorization": "Bearer " + key.json()["api_key"]}
+        for endpoint, form in [("detect", {"kinds": "seal"}),
+                               ("locate", {"terms": '["term"]'})]:
+            response = await client.post(f"/api/v1/{endpoint}", headers=headers, data=form,
+                                          files={"file": ("large.pdf", b"x" * 16)})
+            assert response.status_code == 413
+        async with db.session_factory()() as session:
+            logs = list(await session.scalars(select(ApiCallLog)))
+            assert len(logs) == 2 and all(row.size_bytes == 16 for row in logs)

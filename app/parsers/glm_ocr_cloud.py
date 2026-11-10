@@ -156,7 +156,7 @@ class GlmOcrCloudParser:
                         f"expected {expected} page lists")
                 count = info.get("num_pages", expected)
                 if (type(count) is not int or count != expected or
-                        (pages_info is not None and
+                        (pages_info not in (None, []) and
                          (not isinstance(pages_info, list) or len(pages_info) != expected))):
                     raise ParserUnavailable(f"glm-ocr PDF page metadata disagrees with {expected} input pages")
             pages_info = pages_info or []

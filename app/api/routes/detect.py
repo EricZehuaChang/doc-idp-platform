@@ -123,7 +123,7 @@ async def detect_endpoint(request: Request, file: UploadFile = File(...),
     dets = [(name, _make_detector(name)) for name in det_names]
 
     blob = await file.read(_MAX_SIZE + 1)
-    request.state.size_bytes = len(blob)
+    request.state.size_bytes = file.size if file.size is not None else len(blob)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, f"file too large: {file.filename}")
     suffix = Path(file.filename or "").suffix.lower()

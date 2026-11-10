@@ -140,7 +140,12 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     blobs: list[tuple[str, bytes]] = []
     batch_bytes = 0
     for up in files:
-        blob = await up.read(_MAX_SIZE + 1)
+        if up.size is not None and up.size > _MAX_SIZE:
+            raise HTTPException(413, f"file too large: {up.filename}")
+        remaining = _MAX_BATCH - batch_bytes
+        if up.size is not None and up.size > remaining:
+            raise HTTPException(413, "batch too large")
+        blob = await up.read(min(_MAX_SIZE, remaining) + 1)
         if len(blob) > _MAX_SIZE:
             raise HTTPException(413, f"file too large: {up.filename}")
         batch_bytes += len(blob)

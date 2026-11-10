@@ -154,3 +154,16 @@ def test_chunk_with_only_layout_text_is_present_in_markdown(tmp_path, service, m
         return httpx.Response(200, json=payload)
 
     assert service(path, reply).full_markdown == "## 第1页  \n正文1\n\n段落2"
+
+
+def test_complete_small_pdf_accepts_empty_optional_dimensions(tmp_path, service):
+    path = make_pdf(tmp_path / "one.pdf", [100])
+
+    def reply(raw, numbers):
+        payload = response(numbers)
+        payload["data_info"]["pages"] = []
+        return httpx.Response(200, json=payload)
+
+    result = service(path, reply)
+    assert result.full_markdown == "## 第1页  \n正文1"
+    assert [(p.page_no, p.width, p.height) for p in result.pages] == [(1, 0, 0)]
