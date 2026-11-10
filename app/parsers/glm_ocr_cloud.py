@@ -26,7 +26,10 @@ _MIME = {
 }
 
 
-_PDF_MAX_BYTES = 50 * 1024 * 1024
+# Base64 expands the body by one third. Bound each upload below 16 MiB to
+# avoid transport write timeouts when a high-resolution scan approaches the
+# provider's 50 MB file ceiling.
+_PDF_MAX_BYTES = 12 * 1024 * 1024
 _PDF_MAX_PAGES = 100
 
 
