@@ -22,6 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request, File, Form, HTTPException, UploadFile
 
 from app.config import get_settings, load_detectors
+from app.api.upload_limits import MAX_FILE_SIZE as _MAX_SIZE
 from app.detectors import (  # noqa: F401  register plugins
     pp_doclayout, red_seal_cv, yolos_signature)
 from app.detectors import render
@@ -32,7 +33,6 @@ from app.tenancy import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["detect"])
 
-_MAX_SIZE = 50 * 1024 * 1024        # same ceiling as /process and /locate
 _KINDS = {"seal", "signature"}
 
 
@@ -122,8 +122,8 @@ async def detect_endpoint(request: Request, file: UploadFile = File(...),
     det_names = _route_detectors(kind_set, detector.strip())
     dets = [(name, _make_detector(name)) for name in det_names]
 
-    blob = await file.read()
-    request.state.size_bytes = len(blob)
+    blob = await file.read(_MAX_SIZE + 1)
+    request.state.size_bytes = file.size if file.size is not None else len(blob)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, f"file too large: {file.filename}")
     suffix = Path(file.filename or "").suffix.lower()

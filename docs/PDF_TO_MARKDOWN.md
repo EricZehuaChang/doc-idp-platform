@@ -2,6 +2,8 @@
 
 技能代码：`pdf_to_markdown`。先在所在租户创建并发布该技能，再为调用方的 API Key 授予此技能的提交与查询权限。接口沿用平台的 Bearer 鉴权；调用方只能读取其有权访问的任务。
 
+单文件上限为 200 MiB，每批文件总大小上限为 240 MiB，最多 10 个文件。大 PDF 在 GLM 解析器内部按上游大小/页数限制无损分块，输出会合并为原文件的全文与统一页序。
+
 技能使用 `kind: layout`、`include_markdown: true` 和空字段列表，固定走 `glm-ocr-cloud` 解析器。扫描 PDF 由 OCR 识别；不调用分类或字段提取模型，不需要配置业务字段。计费沿用平台的版面解析类型。发布技能的原始配置见 `app/skillengine/templates/pdf_to_markdown.yaml`。
 
 ## 提交

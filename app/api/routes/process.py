@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from app.result_view import clean, execution_package, output_shape_of, review_fields
 from app.audit import human_event
 from app.api.task_groups import summary as task_summary
+from app.api.upload_limits import MAX_BATCH_SIZE as _MAX_BATCH, MAX_FILE_SIZE as _MAX_SIZE
 from app.billing import engine as billing
 from app import references
 from app.config import get_settings
@@ -33,12 +34,7 @@ from app.visibility import require_file, require_txn, visible_file_cond
 router = APIRouter(prefix="/api/v1", tags=["process"])
 
 _MAX_FILES = 10                    # limits aligned with Insavlo v1.2.6
-_MAX_SIZE = 50 * 1024 * 1024
-# Per-request body budget for the browser upload page. The production entry
-# (nginx :5004) caps bodies at 100m, so 10 x 50MB would be rejected by the proxy
-# with an HTML error the SPA cannot parse. The UI batches its selection against
-# this number instead; the API itself is unchanged for existing integrations.
-_MAX_BATCH = 80 * 1024 * 1024
+# The ingress allows 256 MiB, leaving multipart overhead above this batch budget.
 
 # —— original-document preview (需求3): Office formats convert to PDF on the
 # server so the review left pane can render them; the conversion result is
@@ -142,10 +138,19 @@ async def submit(files: list[UploadFile] = File(...), skill_code: str = Form(...
     tenant = current_tenant()
     # blobs first: the billing gate needs a page estimate before any row lands
     blobs: list[tuple[str, bytes]] = []
+    batch_bytes = 0
     for up in files:
-        blob = await up.read()
+        if up.size is not None and up.size > _MAX_SIZE:
+            raise HTTPException(413, f"file too large: {up.filename}")
+        remaining = _MAX_BATCH - batch_bytes
+        if up.size is not None and up.size > remaining:
+            raise HTTPException(413, "batch too large")
+        blob = await up.read(min(_MAX_SIZE, remaining) + 1)
         if len(blob) > _MAX_SIZE:
             raise HTTPException(413, f"file too large: {up.filename}")
+        batch_bytes += len(blob)
+        if batch_bytes > _MAX_BATCH:
+            raise HTTPException(413, "batch too large")
         blobs.append((up.filename or "", blob))
 
     # —— 9.15 R21 initiator snapshot: fixed at submit time, never re-derived ——

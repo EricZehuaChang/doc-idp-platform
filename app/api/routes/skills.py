@@ -20,6 +20,7 @@ from app.models import AuditLog, GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
 from app.parsers.router import parse_document
 from app import references
+from app.api.upload_limits import MAX_FILE_SIZE
 from app.skillengine import catalog, studio
 from app.skillengine.schema import SkillPackage, SkillPackageLoose
 from app.storage import get_storage
@@ -56,7 +57,9 @@ async def _parse_upload_kept(up: UploadFile, tenant: str,
     a new parser gets evaluated — silently substituting one makes the evaluation
     meaningless — and golden-check is the publish gate, where it makes the gate
     lie about what production will do."""
-    blob = await up.read()
+    blob = await up.read(MAX_FILE_SIZE + 1)
+    if len(blob) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"file too large: {up.filename}")
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(up.filename or "sample").suffix.lower()
     st = get_storage()
@@ -689,7 +692,9 @@ async def add_golden(skill_code: str, file: UploadFile = File(...),
     """Attach a golden sample (file + expected plain values) to a skill."""
     import json as _json
     tenant = current_tenant()
-    blob = await file.read()
+    blob = await file.read(MAX_FILE_SIZE + 1)
+    if len(blob) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"file too large: {file.filename}")
     digest = hashlib.sha256(blob).hexdigest()[:16]
     suffix = Path(file.filename or "golden").suffix.lower()
     key = get_storage().put_bytes(f"golden/{tenant}/{skill_code}/{digest}{suffix}",

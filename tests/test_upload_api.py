@@ -51,8 +51,8 @@ async def test_formats_declares_only_parsable_types(tmp_path, monkeypatch):
     assert exts.isdisjoint({".doc", ".xls", ".ppt", ".bmp", ".webp"})
     # limits the page batches against; max_batch stays under the proxy ceiling
     assert body["max_files"] == 10
-    assert body["max_size_mb"] == 50
-    assert 0 < body["max_batch_mb"] < 100
+    assert body["max_size_mb"] == 200
+    assert body["max_batch_mb"] == 240
 
 
 async def test_skill_roster_exposes_published_version(tmp_path, monkeypatch):
