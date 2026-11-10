@@ -76,6 +76,10 @@ def validate_package(pkg: SkillPackage, stage: str = "save",
         errors.append({"path": "vision_first",
                        "message": "原图首抽仅支持均衡模式的模型提取技能"})
 
+    if pkg.include_markdown and (pkg.kind != "layout" or pkg.fields):
+        errors.append({"path": "include_markdown", "code": "markdown_requires_pure_layout",
+                       "message": "全文 Markdown 仅支持不配置提取字段的版面解析技能"})
+
     # skill code shape — enforced for new (v2) packages only; legacy v1 codes
     # keep loading untouched
     if pkg.schema_version >= 2 and not _CODE_RE.match(pkg.skill_code or ""):

@@ -1,0 +1,12 @@
+skill_code: pdf_to_markdown
+schema_version: 2
+name: PDF全文转Markdown
+description: 将扫描版或图片型 PDF 通过 OCR 转为全文 Markdown，通过任务查询接口的 files[].markdown 返回。保留解析器的段落、表格及阅读顺序，不做业务字段提取。
+kind: layout
+include_markdown: true
+parser: glm-ocr-cloud
+processing_mode: balanced
+skill_mode: standard
+fields: []
+review_policy:
+  mode: never

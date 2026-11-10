@@ -146,6 +146,7 @@ class _SkillPackageCore(BaseModel):
     name: str = ""
     description: str = ""                # editor "描述" (human context, not prompt)
     kind: str = "extract"                # extract|audit (§5.5, audit lands M3)|layout (region map)
+    include_markdown: bool = False       # opt-in full OCR text for field-free layout skills
     doc_type_hint: str = ""
     # —— v2 execution shape ——
     extraction_channel: Literal["model", "rules_first"] = "model"

@@ -443,6 +443,34 @@ def _is_layout_txn(txn: Transaction) -> bool:
     return pkg.get("kind") == "layout"
 
 
+def _is_markdown_txn(txn: Transaction) -> bool:
+    """Full-text exposure is pinned to this submission, never today's skill."""
+    pkg = (txn.execution_snapshot or {}).get("package") or {}
+    return (pkg.get("kind") == "layout" and pkg.get("include_markdown") is True
+            and not pkg.get("fields"))
+
+
+def _file_markdown(f: FileRecord) -> str | None:
+    """Return persisted OCR Markdown only for a successful conversion.
+
+    Empty pages yield an empty string; unavailable/not-yet-complete output
+    yields null. Parser Markdown, including embedded HTML tables, is verbatim.
+    No parsing or model call happens on a result read.
+    """
+    if f.status not in {"completed", "passed"} or not f.udr_path:
+        return None
+    from app.parsers.base import UDR
+    try:
+        udr = UDR.model_validate_json(get_storage().read_bytes(f.udr_path))
+    except Exception:
+        return None
+    if udr.full_markdown:
+        return udr.full_markdown
+    pages = [page.markdown or "\n".join(block.text for block in page.blocks if block.text)
+             for page in udr.pages]
+    return "\n\n".join(pages) if any(pages) else ""
+
+
 def _file_layout(f: FileRecord) -> dict | None:
     """Region map of one file, read back from the UDR the parse stage
     persisted (no re-parse, no extra charge). None until the parse landed,
@@ -515,6 +543,7 @@ async def transaction_documents(transaction_id: str):
 
         snapshot_pkg = await execution_package(s, txn)
         layout_txn = _is_layout_txn(txn)
+        markdown_txn = _is_markdown_txn(txn)
         threshold = 2
         if snapshot_pkg:
             rp = snapshot_pkg.get("review_policy") or {}
@@ -568,7 +597,8 @@ async def transaction_documents(transaction_id: str):
                         "metrics": (k.document_meta or {}).get("metrics"),
                         **_review_meta(k),
                         "artifacts": artifacts_by_file.get(k.id, []),
-                        **({"layout": _file_layout(k)} if layout_txn else {})})
+                        **({"layout": _file_layout(k)} if layout_txn else {}),
+                        **({"markdown": _file_markdown(k)} if markdown_txn else {})})
                 return docs
             pages = list(range(1, (f.page_count or 0) + 1))
             return [{
@@ -587,7 +617,8 @@ async def transaction_documents(transaction_id: str):
                 **_review_meta(f),
                 "artifacts": artifacts_by_file.get(f.id, []),
                 # new key only, layout skills only: existing callers unchanged
-                **({"layout": _file_layout(f)} if layout_txn else {})}]
+                **({"layout": _file_layout(f)} if layout_txn else {}),
+                **({"markdown": _file_markdown(f)} if markdown_txn else {})}]
 
         def _clean_data(f: FileRecord):
             return clean(f.result, output_shape_of(f, snapshot_pkg))
@@ -621,6 +652,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
         rows = (await s.execute(
             select(FileRecord).where(FileRecord.transaction_id == transaction_id, visible_file_cond()))).scalars().all()
         layout_txn = _is_layout_txn(txn)
+        markdown_txn = _is_markdown_txn(txn)
         snapshot = await execution_package(s, txn)
 
         def file_payload(f: FileRecord) -> dict:
@@ -641,6 +673,7 @@ async def status(transaction_id: str, include_confidence_flag: bool = True):
                 # layout skills: parser text + boxes + page dims, outside
                 # `result` so the field contract and review UI stay untouched
                 **({"layout": _file_layout(f)} if layout_txn else {}),
+                **({"markdown": _file_markdown(f)} if markdown_txn else {}),
             }
 
         # One API row per uploaded file. Internal split jobs remain available as

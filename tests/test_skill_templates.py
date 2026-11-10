@@ -14,7 +14,7 @@ from app.skillengine import catalog
 
 # —— unit: the shipped templates themselves ——
 
-def test_every_shipped_template_parses_and_has_fields():
+def test_every_shipped_template_parses_and_has_fields_or_markdown_output():
     """A template that fails to parse is silently dropped from the gallery, so
     assert on the files directly — otherwise shipping a broken one is invisible."""
     ids = [p.stem for p in catalog._paths()]
@@ -22,7 +22,9 @@ def test_every_shipped_template_parses_and_has_fields():
     for tid in ids:
         pkg = catalog.get_template(tid)
         assert pkg is not None, f"{tid} failed to parse"
-        assert pkg.name and pkg.fields, f"{tid} has no name/fields"
+        assert pkg.name, f"{tid} has no name"
+        assert pkg.fields or (pkg.kind == "layout" and pkg.include_markdown), \
+            f"{tid} has neither fields nor full Markdown output"
         assert pkg.skill_code, f"{tid} has no skill_code"
 
 
