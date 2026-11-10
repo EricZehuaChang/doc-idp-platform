@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 
 from app.db import session_factory
+from app.api.upload_limits import MAX_FILE_SIZE as _MAX_SIZE
 from app.skillengine.schema import SkillPackageLoose
 from app.models import (FileRecord, Skill, SkillVersion, StudioRun,
                         StudioSample, Transaction)
@@ -28,7 +29,6 @@ from app.visibility import require_file, visible_file_cond
 
 router = APIRouter(prefix="/api/v1/studio", tags=["studio"])
 
-_MAX_SIZE = 50 * 1024 * 1024
 _udr_lock = asyncio.Lock()      # parse once per sample (UDR cache writes)
 
 # new-interface error shape (§3.6): require_role already answers structured
@@ -49,10 +49,10 @@ async def upload_sample(file: UploadFile = File(...),
     """Upload one editor sample. Original is content-hash keyed; when a skill
     is given its pinned parser pre-parses a UDR and caches it alongside."""
     require_role("operator")()
-    blob = await file.read()
+    blob = await file.read(_MAX_SIZE + 1)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, detail={"code": "sample_too_large",
-                                         "message": "样本不能超过 50 MB"})
+                                         "message": f"样本不能超过 {_MAX_SIZE // (1024 * 1024)} MB"})
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in UPLOAD_SUFFIXES:
         raise HTTPException(400, detail={

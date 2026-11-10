@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.db import session_factory
+from app.api.upload_limits import MAX_FILE_SIZE
 from app.models import Skill, SkillVersion, Tenant
 from app.tenancy import current_actor, current_tenant
 
@@ -37,7 +38,7 @@ async def ping():
             "tenant_name": (t.name if t and t.name else tenant),
             "skill_count": len(usable),
             "server_version": SERVER_VERSION,
-            "upload_max_mb": 50}
+            "upload_max_mb": MAX_FILE_SIZE // (1024 * 1024)}
 
 
 @router.get("/skills")

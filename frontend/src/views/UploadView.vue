@@ -175,7 +175,7 @@ import { translateMessage, type MessageDescriptor } from "../i18n";
 import { useQuery } from "@tanstack/vue-query";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { api, type SkillInfo, type UploadLimits } from "../api";
+import { api, DEFAULT_UPLOAD_LIMITS, type SkillInfo, type UploadLimits } from "../api";
 import DropZone from "../components/DropZone.vue";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
@@ -203,13 +203,9 @@ const POLL_LIMIT = 600;            // 20 min ceiling: never poll a dead page for
 const route = useRoute();
 
 // —— server-declared capability + limits (never hardcoded in the UI) ——
-const FALLBACK: UploadLimits = {
-  extensions: [".pdf", ".docx", ".xlsx", ".pptx", ".ofd", ".png", ".jpg", ".jpeg"],
-  max_files: 10, max_size_mb: 50, max_batch_mb: 80,
-};
 const { data: limitsData } = useQuery({
   queryKey: ["formats"], queryFn: api.formats, staleTime: 5 * 60_000 });
-const limits = computed<UploadLimits>(() => limitsData.value ?? FALLBACK);
+const limits = computed<UploadLimits>(() => limitsData.value ?? DEFAULT_UPLOAD_LIMITS);
 const accept = computed(() => limits.value.extensions.join(","));
 
 const { data: skills, isFetched: skillsLoaded } = useQuery({
@@ -419,8 +415,8 @@ onBeforeUnmount(() => {
 const stLabel = (s: string) => STATUS_LABELS()[s] ?? s;
 function human(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1048576).toFixed(2)} MB`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / 1048576).toFixed(2)} MiB`;
 }
 </script>
 

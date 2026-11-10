@@ -198,6 +198,10 @@ export interface SkillTemplate {
 export interface UploadLimits {
   extensions: string[]; max_files: number; max_size_mb: number; max_batch_mb: number;
 }
+export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
+  extensions: [".pdf", ".docx", ".xlsx", ".pptx", ".ofd", ".png", ".jpg", ".jpeg"],
+  max_files: 10, max_size_mb: 200, max_batch_mb: 240,
+};
 export interface SubmitResult {
   transaction_id: string;
   files: { file_id: string; original_filename: string }[];
@@ -694,7 +698,10 @@ export const api = {
     return reqForm<DetectResult>("/api/v1/detect", f);
   },
   // —— 9.15 WP3: skill studio samples + combined field generation ——
-  studioUploadSample: (file: File, skillCode?: string, onProgress?: never) => {
+  studioUploadSample: async (file: File, skillCode?: string, onProgress?: never) => {
+    if (file.size > DEFAULT_UPLOAD_LIMITS.max_size_mb * 1024 * 1024) {
+      throw new LocalizedApiError({ key: "api.sample_too_large" });
+    }
     const f = new FormData();
     f.append("file", file);
     if (skillCode) f.append("skill_code", skillCode);

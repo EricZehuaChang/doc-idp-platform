@@ -21,6 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request, File, Form, HTTPException, UploadFile
 
 from app.extraction.confidence import locate_terms
+from app.api.upload_limits import MAX_FILE_SIZE as _MAX_SIZE
 from app.parsers.base import ParserUnavailable
 from app.parsers.router import parse_document
 
@@ -28,7 +29,6 @@ from app.tenancy import require_role
 
 router = APIRouter(prefix="/api/v1", tags=["locate"])
 
-_MAX_SIZE = 50 * 1024 * 1024       # same ceiling as /process (Insavlo v1.2.6)
 _MAX_TERMS = 200
 _MAX_TERM_LEN = 100
 
@@ -70,7 +70,7 @@ def _parse_terms(raw: str) -> list[str]:
 @router.post("/locate", dependencies=[Depends(require_role("operator"))])
 async def locate_endpoint(request: Request, file: UploadFile = File(...), terms: str = Form(...)):
     term_list = _parse_terms(terms)
-    blob = await file.read()
+    blob = await file.read(_MAX_SIZE + 1)
     request.state.size_bytes = len(blob)
     if len(blob) > _MAX_SIZE:
         raise HTTPException(413, f"file too large: {file.filename}")
