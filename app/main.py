@@ -16,6 +16,7 @@ from app.api.routes import (agent, api_calls, audit, auth, billing, data, detect
 from app.auth import security
 from app.config import get_settings
 from app.db import get_engine, init_db, session_factory
+from app.license import LicenseGateMiddleware
 from app.models import Tenant, User
 from app.tenancy import TenantMiddleware
 
@@ -55,6 +56,8 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Doc IDP Platform", version="0.1.0", lifespan=_lifespan)
     app.add_middleware(TenantMiddleware)
+    # added last = outermost: a locked service answers before auth or routing
+    app.add_middleware(LicenseGateMiddleware)
     app.include_router(auth.router)
     app.include_router(user_transfers.router)
     app.include_router(audit.router)

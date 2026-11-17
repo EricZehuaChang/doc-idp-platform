@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     # auth (§11.9): "off" = M1 dev/lite behavior (header tenant, no login);
     # "on" = /api requires Bearer JWT or API key, tenant comes from credential
     auth_mode: str = "off"
+    # private-deploy service switch (app/license.py, BOC POC 2026-11): when on,
+    # every request except the health probes needs a valid signed license
+    license_required: bool = False
     # bootstrap admin, created at startup iff no user exists and password is set
     admin_email: str = "admin@example.com"  # @local would fail EmailStr validation on login
     admin_password: str = ""
