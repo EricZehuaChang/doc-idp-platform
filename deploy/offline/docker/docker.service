@@ -1,0 +1,26 @@
+# Docker engine from the static bundle (install.sh puts the binaries in
+# /usr/local/bin). Based on moby's contrib unit; dockerd starts its own
+# managed containerd, so no separate containerd unit is needed.
+[Unit]
+Description=Docker Application Container Engine (offline bundle)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/dockerd --config-file /etc/docker/daemon.json
+ExecReload=/bin/kill -s HUP $MAINPID
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

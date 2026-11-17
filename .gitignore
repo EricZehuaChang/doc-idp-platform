@@ -22,3 +22,6 @@ samples/
 scripts/i18n/extraction-plan.json
 scripts/i18n/inventory.json
 scripts/i18n/translations.json
+
+# offline deploy packages are build output (GBs), never committed
+deploy/offline/out/

@@ -1,0 +1,20 @@
+# Build context for deploy/docker/Dockerfile: only code, configs and the
+# dependency manifests travel; data, samples and dev tooling never enter an image.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+data
+samples
+dist
+*.egg-info
+frontend
+tests
+docs
+scripts
+.env
+license.json
+*.pem
+deploy/offline/out

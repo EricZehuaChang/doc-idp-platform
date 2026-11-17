@@ -4,3 +4,8 @@
 # (GitHub excludes linguist-generated paths from the language bar).
 app/webdist/** linguist-generated=true
 frontend/dist/** linguist-generated=true
+
+# Files that run on the Linux host or inside the image must keep LF even when
+# checked out on Windows (core.autocrlf=true): a CR breaks bash and env files.
+deploy/docker/** text eol=lf
+deploy/offline/** text eol=lf
