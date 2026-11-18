@@ -3,6 +3,7 @@
 the same request shape the platform uses).
 
 Runtime: the local ONNX runtime loads on this CPU (see check_runtime).
+OCR: the PaddleOCR service saved in the admin console answers a rendered number.
 LLM: one JSON-mode chat call — must answer valid JSON, and should not spend
 tokens on hidden reasoning (structured extraction needs thinking off; a
 reasoning answer is reported so LLM_EXTRA_BODY can be fixed).
@@ -100,11 +101,55 @@ def check_runtime() -> bool:
     return False
 
 
+def check_ocr() -> bool | None:
+    """The PaddleOCR service configured in the admin console (Settings ->
+    OCR service), called exactly as the platform does. None = not enabled."""
+    import asyncio
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    from app.db import session_factory
+    from app.extraction import ocr_service
+    from app.parsers import paddleocr_http
+
+    async def _load():
+        async with session_factory()() as s:
+            return await ocr_service.load(s)
+
+    cfg = asyncio.run(_load())
+    if not (cfg.get("enabled") and cfg.get("url")):
+        print("[跳过] 文字识别服务：后台“设置 → 文字识别服务”未启用")
+        return None
+    print(f"[检查] 文字识别服务 {cfg['url']}")
+    runtime = ocr_service.runtime(cfg)
+    img = Image.new("RGB", (900, 260), "white")
+    ImageDraw.Draw(img).text((50, 80), "OCR TEST 73915", fill="black",
+                             font=ImageFont.load_default(size=72))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    started = time.monotonic()
+    with paddleocr_http.make_client(runtime) as client:
+        blocks, _md, shape = paddleocr_http.ocr_png(buf.getvalue(), runtime, client)
+    text = " ".join(b.text for b in blocks)
+    print(f"  耗时 {time.monotonic() - started:.1f}s  返回：{text[:120]!r}")
+    if not any(b.bbox for b in blocks):
+        print("  ⚠ 返回结果没有坐标：原文高亮和打码对扫描件不可用")
+    return "73915" in text
+
+
 def main() -> int:
     print("[检查] 本机推理库（印章/签名检测、Office 解析）")
     ok = check_runtime()
     print("  ✓ 通过" if ok else "  ✗ 未通过")
     results = [ok]
+    try:
+        ocr_ok = check_ocr()
+    except Exception as e:                          # report, never crash the check
+        print(f"  ✗ 调用失败：{e}")
+        ocr_ok = False
+    if ocr_ok is not None:
+        print("  ✓ 通过" if ocr_ok else "  ✗ 未通过")
+        results.append(ocr_ok)
     for label, prefix, fn in (("抽取大模型", "LLM", check_llm), ("多模态模型", "VLM", check_vlm)):
         if not _env(f"{prefix}_BASE_URL"):
             print(f"[跳过] {label}：idp.env 未填 {prefix}_BASE_URL")

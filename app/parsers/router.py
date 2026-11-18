@@ -8,7 +8,7 @@ from pathlib import Path
 from app.config import get_settings, load_parsers
 from app.parsers import (  # noqa: F401  register plugins
     electronic, glm_ocr_cloud, monkeyocr_http, ofd, opendataloader,
-    rapidocr_http, vlm_ocr)
+    paddleocr_http, rapidocr_http, vlm_ocr)
 from app.parsers.base import UDR, Parser, ParserUnavailable
 from app.plugins.registry import registry
 
@@ -47,14 +47,29 @@ def default_scan_parser() -> str:
     return load_parsers()["default_parser"].get(tier, "glm-ocr-cloud")
 
 
+def scan_chain() -> list[str]:
+    """Scan engines in the order they are tried. A PaddleOCR service enabled in
+    the admin console (BOC POC 2026-11) goes first: it returns line boxes the
+    multimodal route cannot. Unset, the chain is the historical one."""
+    chain = ["paddleocr"] if paddleocr_http.active_config() else []
+    for name in (default_scan_parser(), "rapidocr"):
+        if name not in chain:
+            chain.append(name)
+    return chain
+
+
 def _scan_parse(path: str) -> UDR:
-    """Degradation chain (HA design v2.0 §2.5): tier default OCR first,
-    RapidOCR CPU as last resort. Degradation is logged by the caller via
-    UDR.parser so quality gates can see which engine produced the text."""
-    try:
-        return _make(default_scan_parser()).parse(path)
-    except ParserUnavailable:
-        return _make("rapidocr").parse(path)
+    """Degradation chain (HA design v2.0 §2.5): console OCR service, then the
+    tier default OCR, RapidOCR CPU as last resort. Degradation is logged by
+    the caller via UDR.parser so quality gates can see which engine produced
+    the text; when every engine fails the last error propagates."""
+    last: ParserUnavailable | None = None
+    for name in scan_chain():
+        try:
+            return _make(name).parse(path)
+        except ParserUnavailable as e:
+            last = e
+    raise last
 
 
 def parse_document(path: str, pinned_parser: str | None = None) -> UDR:

@@ -513,3 +513,100 @@ async def test_custom_provider(name: str):
         raise HTTPException(502, f"调用失败：{str(e)[:300]}") from e
     return {"provider": name, "ok": True, "model": p["model"],
             "reply": data, "usage": usage}
+
+
+# —— OCR service (BOC POC 2026-11): customer PaddleOCR endpoint + token ——
+# Platform-level and admin-only. The token is write-only like the SMTP
+# password; GET answers has_token. Saving warms the parser cache, so the next
+# scanned file already uses the new settings.
+
+class OcrServiceBody(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    token: str | None = None            # None/"" = keep the stored token
+    clear_token: bool = False
+    auth_header: str = "Authorization"
+    auth_prefix: str = "Bearer "
+    timeout_s: int = 120
+    verify_tls: bool = True
+    extra_params: dict = {}
+
+
+@router.get("/ocr-service")
+async def get_ocr_service():
+    from app.extraction import ocr_service
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        return ocr_service.public_view(await ocr_service.load(s))
+
+
+@router.put("/ocr-service")
+async def put_ocr_service(body: OcrServiceBody):
+    from app.extraction import ocr_service
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        try:
+            cfg = ocr_service.merge(await ocr_service.load(s), body.model_dump())
+        except ocr_service.OcrServiceError as e:
+            raise HTTPException(400, str(e)) from e
+        await ocr_service.save(s, cfg)
+        s.add(AuditLog(tenant_id=current_tenant(), actor=current_actor()["name"],
+                       action="settings.ocr_service_updated",
+                       detail={"enabled": cfg["enabled"], "url": cfg["url"]}))
+        await s.commit()
+        await ocr_service.warm(s)
+    return ocr_service.public_view(cfg)
+
+
+@router.post("/ocr-service/test")
+async def test_ocr_service(body: OcrServiceBody | None = None):
+    """One real call with a rendered number, using the form's values (so an
+    operator can test before saving); a blank token falls back to the stored
+    one. Answers what came back, never raises on a service error."""
+    import asyncio
+    import io
+    import time
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    from app.extraction import ocr_service
+    from app.parsers import paddleocr_http
+    from app.parsers.base import ParserUnavailable
+
+    _require_admin()
+    sf = session_factory()
+    async with sf() as s:
+        stored = await ocr_service.load(s)
+    try:
+        cfg = ocr_service.merge(stored, {**(body.model_dump() if body else {}), "enabled": True})
+    except ocr_service.OcrServiceError as e:
+        raise HTTPException(400, str(e)) from e
+    if not cfg["url"]:
+        raise HTTPException(400, "请先填写接口地址")
+    runtime = ocr_service.runtime(cfg)
+
+    img = Image.new("RGB", (900, 260), "white")
+    ImageDraw.Draw(img).text((50, 80), "OCR TEST 73915", fill="black",
+                             font=ImageFont.load_default(size=72))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    def _call():
+        with paddleocr_http.make_client(runtime) as client:
+            return paddleocr_http.ocr_png(buf.getvalue(), runtime, client)
+
+    started = time.monotonic()
+    try:
+        blocks, markdown, shape = await asyncio.to_thread(_call)
+    except ParserUnavailable as e:
+        return {"ok": False, "error": str(e),
+                "latency_ms": int((time.monotonic() - started) * 1000)}
+    text = " ".join(b.text for b in blocks) or markdown
+    return {"ok": "73915" in text, "shape": shape, "text": text[:300],
+            "lines": len(blocks), "has_boxes": any(b.bbox for b in blocks),
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "error": "" if "73915" in text else "服务有返回，但没有识别出测试图片里的数字 73915"}

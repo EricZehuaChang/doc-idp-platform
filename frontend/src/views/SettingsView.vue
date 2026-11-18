@@ -75,6 +75,48 @@
       </div>
     </section>
 
+    <!-- —— OCR service (customer PaddleOCR endpoint) —— -->
+    <section v-if="tab === 'ocr'" class="panel">
+      <p class="dim">{{ t('settings.ocr_intro') }}</p>
+      <p class="dim">{{ ocrInfo?.active ? t('settings.ocr_status_active') : t('settings.ocr_status_inactive') }}</p>
+      <label class="chk-row">
+        <input type="checkbox" v-model="ocr.enabled" /> {{ t('settings.ocr_enable') }}
+      </label>
+      <div class="grid2">
+        <label>{{ t('settings.ocr_url') }}
+          <input v-model="ocr.url" placeholder="http://10.0.0.8:8080/ocr" />
+          <small class="dim">{{ t('settings.ocr_url_hint') }}</small></label>
+        <label>{{ t('settings.ocr_token') }}
+          <input v-model="ocr.token" type="password" autocomplete="new-password" />
+          <small class="dim">{{ ocrInfo?.has_token ? t('settings.saved_leave_blank_to_keep_unchanged') : t('settings.ocr_token_hint') }}</small></label>
+        <label>{{ t('settings.ocr_auth_header') }}
+          <input v-model="ocr.auth_header" placeholder="Authorization" /></label>
+        <label>{{ t('settings.ocr_auth_prefix') }}
+          <input v-model="ocr.auth_prefix" placeholder="Bearer " />
+          <small class="dim">{{ t('settings.ocr_auth_prefix_hint') }}</small></label>
+        <label>{{ t('settings.ocr_timeout') }}
+          <input v-model.number="ocr.timeout_s" type="number" min="5" max="600" /></label>
+        <label>{{ t('settings.ocr_extra_params') }}
+          <input v-model="ocr.extra_params" placeholder="{}" />
+          <small class="dim">{{ t('settings.ocr_extra_params_hint') }}</small></label>
+      </div>
+      <label class="chk-row">
+        <input type="checkbox" v-model="ocr.verify_tls" /> {{ t('settings.ocr_verify_tls') }}
+      </label>
+      <label v-if="ocrInfo?.has_token" class="chk-row">
+        <input type="checkbox" v-model="ocr.clear_token" /> {{ t('settings.ocr_clear_token') }}
+      </label>
+      <div class="row">
+        <button class="primary" @click="saveOcr">{{ t('settings.ocr_save') }}</button>
+        <button @click="testOcr" :disabled="ocrTesting">{{ ocrTesting ? t('settings.ocr_testing') : t('settings.ocr_test') }}</button>
+      </div>
+      <p v-if="ocrResult" :class="ocrResult.ok ? 'ok-line' : 'err-line'">
+        {{ ocrResult.ok ? t('settings.ocr_test_ok', { lines: ocrResult.lines ?? 0, ms: ocrResult.latency_ms ?? 0 })
+                        : t('settings.ocr_test_failed', { error: ocrResult.error ?? '' }) }}
+        <span v-if="ocrResult.ok && !ocrResult.has_boxes"><br />{{ t('settings.ocr_test_no_boxes') }}</span>
+      </p>
+    </section>
+
     <!-- —— users —— -->
     <section v-if="tab === 'users'" class="panel">
       <div class="user-entry">
@@ -522,7 +564,8 @@ import AppModal from "../components/AppModal.vue";
 import TransferUserModal from "../components/TransferUserModal.vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api, type ApiGrants, type AuditRow, type BillingAccount, type CustomProvider,
-         type GiftRequestRow, type LedgerRow, type SmtpInfo, type UserRow } from "../api";
+         type GiftRequestRow, type LedgerRow, type OcrServiceInfo, type OcrServiceTest,
+         type SmtpInfo, type UserRow } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -537,6 +580,7 @@ const sections = [
   { label: "settings.service_configuration", items: [
     { id: "email", label: "settings.email_smtp", icon: "M3 5h18v14H3z M3 6l9 7 9-7" },
     { id: "byok", label: "settings.model_channels_keys", icon: "M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-7 0v6" },
+    { id: "ocr", label: "settings.ocr_service", icon: "M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 10h8M8 14h5" },
     { id: "sso", label: "settings.single_sign_on_sso", icon: "M12 3l8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6z M8.5 12l2.5 2.5 4.5-5" },
     { id: "apikeys", label: "settings.api_keys", icon: "M15 3a6 6 0 0 0-5.6 8.2L3 17.6V21h3.4l1.8-1.8V17h2.2l2.2-2.2A6 6 0 1 0 15 3Z M16 7h.01" },
   ] },
@@ -581,6 +625,50 @@ async function testSmtp() {
   try { await api.testSmtp(testTo.value); toast.ok(t('settings.test_email_sent_please_check_your_inbox')); }
   catch (e) { toast.error(e); }
   finally { testing.value = false; }
+}
+
+// —— OCR service ——
+const ocrInfo = ref<OcrServiceInfo | null>(null);
+const ocr = reactive({ enabled: false, url: "", token: "", clear_token: false,
+                       auth_header: "Authorization", auth_prefix: "Bearer ", timeout_s: 120,
+                       verify_tls: true, extra_params: "{}" });
+const ocrTesting = ref(false);
+const ocrResult = ref<OcrServiceTest | null>(null);
+
+function fillOcr(d: OcrServiceInfo) {
+  ocrInfo.value = d;
+  Object.assign(ocr, { enabled: d.enabled, url: d.url, token: "", clear_token: false,
+                       auth_header: d.auth_header, auth_prefix: d.auth_prefix,
+                       timeout_s: d.timeout_s, verify_tls: d.verify_tls,
+                       extra_params: JSON.stringify(d.extra_params ?? {}) });
+}
+// form -> request body; null when the extra-params box is not a JSON object
+function ocrBody(): Record<string, unknown> | null {
+  let extra: unknown;
+  try { extra = JSON.parse(ocr.extra_params.trim() || "{}"); } catch { extra = null; }
+  if (!extra || typeof extra !== "object" || Array.isArray(extra)) {
+    toast.error(t('settings.ocr_extra_params_invalid'));
+    return null;
+  }
+  return { ...ocr, token: ocr.token || undefined, extra_params: extra };
+}
+async function loadOcr() {
+  try { fillOcr(await api.getOcrService()); } catch (e) { toast.error(e); }
+}
+async function saveOcr() {
+  const body = ocrBody();
+  if (!body) return;
+  try { fillOcr(await api.putOcrService(body)); toast.ok(t('settings.ocr_saved')); }
+  catch (e) { toast.error(e); }
+}
+async function testOcr() {
+  const body = ocrBody();
+  if (!body) return;
+  ocrTesting.value = true;
+  ocrResult.value = null;
+  try { ocrResult.value = await api.testOcrService(body); }
+  catch (e) { toast.error(e); }
+  finally { ocrTesting.value = false; }
 }
 
 // —— users ——
@@ -708,6 +796,7 @@ const ACTION_TEXT = computed<Record<string, string>>(() => ({
   "settings.byok_set": t('settings.set_model_key'), "settings.byok_removed": t('settings.remove_model_key'),
   "settings.custom_provider_set": t('settings.set_custom_channel'), "settings.custom_provider_removed": t('settings.remove_custom_channel'),
   "settings.oidc_updated": t('settings.update_sso_configuration'), "settings.smtp_updated": t('settings.update_email_configuration'),
+  "settings.ocr_service_updated": t('settings.ocr_update_service'),
   "skills.package_exported": t('settings.export_skill_package'), "skills.package_imported": t('settings.import_skill_package'),
   "skills.references_pinned": t('settings.pin_reference_version'),
 }));
@@ -975,7 +1064,7 @@ async function revokeKey(k: KeyRow) {
 
 onMounted(() => {
   if (!isAdmin.value) return;
-  loadSmtp(); loadUsers(); loadProviders(); loadCustoms(); loadOidc(); loadKeys();
+  loadSmtp(); loadOcr(); loadUsers(); loadProviders(); loadCustoms(); loadOidc(); loadKeys();
 });
 watch(tab, (t) => {
   if (!isAdmin.value) return;
@@ -1106,6 +1195,8 @@ th { color: var(--text-dim); }
 .dim { color: var(--text-dim); }
 .chk-row { flex-direction: row; align-items: center; gap: 8px; }
 .chk-row input { width: auto; }
+.ok-line { color: var(--green); }
+.err-line { color: var(--red); }
 .grant-form { display: flex; flex-direction: column; gap: 12px; min-width: min(360px, 100%); }
 .grant-groups { display: flex; gap: 16px; flex-wrap: wrap; }
 .fresh-key { border: 1px solid var(--accent); border-radius: 8px; padding: 12px;

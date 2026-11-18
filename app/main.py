@@ -49,6 +49,9 @@ async def _lifespan(app: FastAPI):
         elif n_users == 0 and settings.auth_mode == "on":
             logging.getLogger("app.auth").warning(
                 "auth_mode=on but no users exist and IDP_ADMIN_PASSWORD is unset — no one can log in")
+        # console-managed OCR service: scans route to it from the first file on
+        from app.extraction import ocr_service
+        await ocr_service.warm(s)
     yield
     await get_engine().dispose()
 

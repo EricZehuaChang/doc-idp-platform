@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from app.parsers.base import UDR
 from app.skillengine.schema import SkillPackage
 
-_OCR = {"glm-ocr-cloud", "rapidocr", "monkeyocr"}
+_OCR = {"glm-ocr-cloud", "rapidocr", "monkeyocr", "paddleocr"}
 _SUMMARY = re.compile(
     r"^(?:价税合计|小计|合计|总计|备注|说明|制表人|开票人|复核人|收款人|"
     r"grand\s*total\b|sub\s*total\b|total\b|notes?\b)", re.I)
@@ -119,7 +119,7 @@ def parse_completeness(udr: UDR, pkg: SkillPackage, result: dict, *, is_image=Fa
     """Return review_reasons and affected table_paths; avoid assigning ambiguous evidence."""
     report = {"review_reasons": [], "table_paths": []}
     if pkg.processing_mode != "balanced" or not (
-            is_image or udr.parser in _OCR or udr.parser.startswith("vlm:")):
+            is_image or udr.parser in _OCR or udr.parser.startswith(("vlm:", "paddleocr("))):
         return report
     columns = {field.name: [c.name for c in field.columns if c.mode == "verbatim" and c.type != "table"]
                for field in pkg.fields if field.type == "table" and not field.entity_list}

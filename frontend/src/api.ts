@@ -368,6 +368,15 @@ export interface InitiatorOption {
   type: "user" | "api_key" | "anonymous" | "unknown" | string;
   count: number;
 }
+export interface OcrServiceInfo {
+  enabled: boolean; active: boolean; url: string; has_token: boolean;
+  auth_header: string; auth_prefix: string; timeout_s: number; verify_tls: boolean;
+  extra_params: Record<string, unknown>;
+}
+export interface OcrServiceTest {
+  ok: boolean; error?: string; text?: string; lines?: number; has_boxes?: boolean;
+  shape?: string; latency_ms?: number;
+}
 export interface SmtpInfo {
   configured: boolean; has_password?: boolean; host?: string; port?: number;
   security?: string; username?: string; from_addr?: string; from_name?: string;
@@ -811,6 +820,12 @@ export const api = {
   getSmtp: () => req<SmtpInfo>("GET", "/api/v1/settings/smtp"),
   putSmtp: (cfg: Record<string, unknown>) => req<SmtpInfo>("PUT", "/api/v1/settings/smtp", cfg),
   testSmtp: (to: string) => req("POST", "/api/v1/settings/smtp/test", { to }),
+  // customer OCR service (PaddleOCR serving endpoint); the token is write-only
+  getOcrService: () => req<OcrServiceInfo>("GET", "/api/v1/settings/ocr-service"),
+  putOcrService: (cfg: Record<string, unknown>) =>
+    req<OcrServiceInfo>("PUT", "/api/v1/settings/ocr-service", cfg),
+  testOcrService: (cfg: Record<string, unknown>) =>
+    req<OcrServiceTest>("POST", "/api/v1/settings/ocr-service/test", cfg),
   // console-registered channels (name + base_url + key); key is write-only
   listCustomProviders: () =>
     req<{ providers: CustomProvider[] }>("GET", "/api/v1/settings/custom-providers"),

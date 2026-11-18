@@ -228,6 +228,10 @@ async def parse_stage(file_id: str, parser_pin: str | None,
         f.status = "processing"
         await s.commit()
         path = get_storage().local_path(f.storage_path)
+        # the scan route reads the console OCR service from a process cache;
+        # refresh it here so worker processes see edits without a restart
+        from app.extraction import ocr_service
+        await ocr_service.warm(s)
 
     fast = processing_mode == "fast"
     images: dict[int, str] | None = None
