@@ -19,6 +19,10 @@ import time
 
 import httpx
 
+# run as `python /app/deploy/check_models.py`: make the platform package
+# importable for the console-configured OCR check
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 def _env(name: str) -> str:
     return os.environ.get(name, "").strip().strip("\r")
