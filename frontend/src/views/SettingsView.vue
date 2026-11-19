@@ -382,21 +382,38 @@
       </div>
       <p v-else class="dim">{{ $t('settings.no_custom_channels_yet') }}</p>
 
+      <!-- URL + key come first so the model id can be picked from what the
+           endpoint itself reports (GET {base_url}/models), not guessed -->
       <div class="new-ch">
-        <label>{{ $t('settings.name_channel_identifier') }}
-          <input v-model="draft.name" :placeholder="$t('settings.e_g_qwen_vl_max')" /></label>
-        <label>{{ $t('settings.model_id_leave_blank_same_as_name') }}
-          <input v-model="draft.model" :placeholder="$t('settings.the_model_value_from_the_vendor_s_docs')" /></label>
         <label class="wide">{{ $t('settings.endpoint_url_openai_compatible_base_url') }}
-          <input v-model="draft.base_url"
+          <input v-model="draft.base_url" autocomplete="off" spellcheck="false"
                  :placeholder="$t('settings.e_g_https_dashscope_aliyuncs_com_compatible_mode_v1')" /></label>
         <label class="wide">API Key
           <input v-model="draft.api_key" type="password" :disabled="draft.no_key"
+                 autocomplete="off"
                  :placeholder="draft.no_key ? $t('settings.this_endpoint_requires_no_authentication') : $t('settings.paste_the_key_stored_encrypted_and_never_displayed')" /></label>
         <label class="chk">
           <input type="checkbox" v-model="draft.no_key" />
           {{ $t('settings.this_endpoint_requires_no_api_key_self_hosted_vllm') }}
         </label>
+        <div class="new-act">
+          <button type="button" :disabled="discovering || !draft.base_url
+                                           || (!draft.api_key && !draft.no_key)"
+                  @click="discoverModels">{{ discovering ? $t('settings.detecting_models') : $t('settings.detect_models') }}</button>
+          <span class="dim" role="status">{{ discoverMsg || $t('settings.detect_models_hint') }}</span>
+        </div>
+        <label>{{ $t('settings.model_id_leave_blank_same_as_name') }}
+          <!-- datalist, not select: a picked id from the list, but still free
+               typing when an endpoint hides models or has no /models at all -->
+          <input v-model="draft.model" list="custom-model-options"
+                 autocomplete="off" spellcheck="false"
+                 :placeholder="discovered.length ? $t('settings.pick_or_type_model_id') : $t('settings.the_model_value_from_the_vendor_s_docs')" />
+          <datalist id="custom-model-options">
+            <option v-for="m in discovered" :key="m" :value="m" />
+          </datalist></label>
+        <label>{{ $t('settings.name_channel_identifier') }}
+          <input v-model="draft.name" autocomplete="off" spellcheck="false"
+                 :placeholder="$t('settings.e_g_qwen_vl_max')" /></label>
         <label class="chk">
           <input type="checkbox" v-model="draft.vision" />
           {{ $t('settings.this_model_supports_image_input_when_checked_test_runs') }}
@@ -858,6 +875,45 @@ async function saveCustom() {
   } catch (e) { toast.error(e); }
   finally { savingCustom.value = false; }
 }
+
+// —— model discovery (2026-11-19): customer gives a /v1 URL + key, the
+// endpoint's own GET /models fills the model id dropdown ——
+const discovered = ref<string[]>([]);
+const discovering = ref(false);
+const discoverMsg = ref("");
+
+async function discoverModels() {
+  discovering.value = true;
+  discoverMsg.value = "";
+  try {
+    const r = await api.discoverModels({ base_url: draft.base_url.trim(),
+      api_key: draft.no_key ? "" : draft.api_key, no_key: draft.no_key });
+    discovered.value = r.models;
+    discoverMsg.value = r.models.length
+      ? t('settings.models_detected', { count: r.models.length })
+      : t('settings.no_models_detected');
+  } catch (e) {
+    discovered.value = [];
+    discoverMsg.value = e instanceof Error ? e.message : String(e);
+    toast.error(e);
+  } finally { discovering.value = false; }
+}
+// a list read with another URL/key no longer describes this endpoint
+watch(() => [draft.base_url, draft.api_key, draft.no_key], () => {
+  discovered.value = [];
+  discoverMsg.value = "";
+});
+
+// Channel name follows the picked model until the admin types their own.
+// Names travel in the URL path and may not contain whitespace, so ids such as
+// "Qwen/Qwen3-VL-8B" become "Qwen-Qwen3-VL-8B".
+let autoName = "";
+watch(() => draft.model, (model) => {
+  if (draft.name && draft.name !== autoName) return;
+  autoName = model.trim().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+  draft.name = autoName;
+});
+
 async function removeCustom(name: string) {
   if (!confirm(t('settings.delete-provider-confirm', { name })))
     return;

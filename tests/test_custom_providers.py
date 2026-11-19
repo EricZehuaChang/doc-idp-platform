@@ -215,6 +215,9 @@ async def test_channel_management_is_admin_only(admin_client):
                                headers=op)).status_code == 403
     assert (await fresh.post("/api/v1/settings/custom-providers/x/test",
                              headers=op)).status_code == 403
+    assert (await fresh.post("/api/v1/settings/custom-providers/discover-models",
+                             headers=op, json={"base_url": "https://x.example/v1",
+                                               "api_key": "k"})).status_code == 403
     await fresh.aclose()
 
 
@@ -291,3 +294,92 @@ async def test_base_url_accepts_the_full_endpoint_people_actually_paste(tmp_path
                 assert (await c.post("/api/v1/settings/custom-providers/edge/test")
                         ).status_code == 200
             assert str(seen[0].url) == "https://box.example/v1/chat/completions"
+
+
+async def test_discover_models_lists_what_the_endpoint_serves(tmp_path, monkeypatch):
+    """A customer hands over a /v1 URL and a key: the console asks the endpoint
+    for its models (GET /models) so the admin picks from a list instead of
+    guessing an id. The pasted URL is normalized like registration, the key
+    goes out only as the Bearer header and never comes back."""
+    app = await _app(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            seen: list[httpx.Request] = []
+            listing = {"object": "list", "data": [
+                {"id": "qwen3-vl-plus", "object": "model"},
+                {"id": "DeepSeek-V4", "object": "model"},
+                {"id": "qwen3-vl-plus", "object": "model"},      # duplicate
+                {"id": "", "object": "model"},                   # junk
+                {"object": "model"},                             # no id
+                "x" * 500,                                       # too long
+            ]}
+            with respx.mock:
+                respx.get("https://gw.example/v1/models").mock(
+                    side_effect=lambda req: (seen.append(req),
+                                             httpx.Response(200, json=listing))[1])
+                r = await c.post("/api/v1/settings/custom-providers/discover-models",
+                                 json={"base_url": " https://gw.example/v1/chat/completions/ ",
+                                       "api_key": "sk-cust-secret"})
+            assert r.status_code == 200, r.text
+            assert r.json() == {"base_url": "https://gw.example/v1",
+                                "models": ["DeepSeek-V4", "qwen3-vl-plus"]}
+            assert seen[0].headers["authorization"] == "Bearer sk-cust-secret"
+            assert "sk-cust-secret" not in r.text
+
+            # keyless endpoints (self-hosted vLLM) send no Authorization at all;
+            # the Ollama/Gemini-native {"models": [{"name": ...}]} shape parses too
+            seen.clear()
+            with respx.mock:
+                respx.get("https://box.example/v1/models").mock(
+                    side_effect=lambda req: (seen.append(req), httpx.Response(
+                        200, json={"models": [{"name": "Qwen/Qwen3-VL-8B"}]}))[1])
+                r = await c.post("/api/v1/settings/custom-providers/discover-models",
+                                 json={"base_url": "https://box.example/v1/models",
+                                       "no_key": True})
+            assert r.status_code == 200, r.text
+            assert r.json()["models"] == ["Qwen/Qwen3-VL-8B"]
+            assert "authorization" not in seen[0].headers
+
+            # nothing was registered by any of this
+            assert (await c.get("/api/v1/settings/custom-providers")
+                    ).json()["providers"] == []
+
+
+async def test_discover_models_explains_failures_in_plain_words(tmp_path, monkeypatch):
+    """Each way a pasted URL/key goes wrong gets a message naming the fix."""
+    app = await _app(tmp_path, monkeypatch)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as c:
+            url = "/api/v1/settings/custom-providers/discover-models"
+            # input problems are refused before any network call
+            assert (await c.post(url, json={"base_url": "https://gw.example/v1"})
+                    ).status_code == 400
+            assert (await c.post(url, json={"base_url": "gw.example/v1",
+                                            "api_key": "k"})).status_code == 400
+
+            cases = [
+                (httpx.Response(401, json={"error": "invalid key"}), "鉴权失败"),
+                (httpx.Response(404, text="not found"), "/v1"),
+                (httpx.Response(200, text="<html>portal</html>"), "不是 JSON"),
+                (httpx.Response(200, json={"object": "list"}), "没有模型列表"),
+                (httpx.Response(500, text="upstream boom"), "HTTP 500"),
+                # an error body quoting the key back must not relay it
+                (httpx.Response(402, text="key sk-cust-secret in debt"), "*** in debt"),
+            ]
+            for upstream, hint in cases:
+                with respx.mock:
+                    respx.get("https://gw.example/v1/models").mock(return_value=upstream)
+                    r = await c.post(url, json={"base_url": "https://gw.example/v1",
+                                                "api_key": "sk-cust-secret"})
+                assert r.status_code == 502, (hint, r.text)
+                assert hint in r.json()["detail"], (hint, r.text)
+                assert "sk-cust-secret" not in r.text
+
+            with respx.mock:
+                respx.get("https://gw.example/v1/models").mock(
+                    side_effect=httpx.ConnectError("refused"))
+                r = await c.post(url, json={"base_url": "https://gw.example/v1",
+                                            "api_key": "k"})
+            assert r.status_code == 502 and "无法连接" in r.json()["detail"]

@@ -417,6 +417,38 @@ def _custom_public(name: str, entry: dict) -> dict:
             "extra_body": dict(entry.get("extra_body") or {})}
 
 
+class DiscoverModelsBody(BaseModel):
+    base_url: str
+    api_key: str | None = None
+    no_key: bool = False                # endpoint takes no auth (self-hosted)
+
+
+@router.post("/custom-providers/discover-models")
+async def discover_custom_provider_models(body: DiscoverModelsBody):
+    """List the model ids an OpenAI-compatible endpoint serves (2026-11-19).
+
+    Fills the registration form's model dropdown from GET {base_url}/models,
+    so a customer's "here is a /v1 URL and a key" becomes a pick list instead
+    of a guessed model id. Admin-only like the rest of this section: it makes
+    an outbound call with a credential. Read-only — nothing is stored and the
+    key is not echoed.
+    """
+    from app.extraction import custom_providers
+
+    _require_admin()
+    base_url = custom_providers.normalize_base_url(body.base_url)
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "接口地址需以 http:// 或 https:// 开头")
+    api_key = "" if body.no_key else (body.api_key or "").strip()
+    if not body.no_key and not api_key:
+        raise HTTPException(400, "请先填写 API Key；若该端点无需鉴权，请勾选「无需 API Key」")
+    try:
+        models = await custom_providers.discover_models(base_url, api_key)
+    except custom_providers.ModelDiscoveryError as e:
+        raise HTTPException(502, f"探测失败：{e}") from e
+    return {"base_url": base_url, "models": models}
+
+
 @router.get("/custom-providers")
 async def list_custom_providers():
     """Registered channels. Key material never appears here — only has_key."""

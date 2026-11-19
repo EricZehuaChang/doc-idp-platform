@@ -820,6 +820,11 @@ export const api = {
                                             extra_body?: Record<string, unknown> }) =>
     req<CustomProvider>("PUT",
       `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`, body),
+  /** Read-only probe: GET {base_url}/models on the endpoint, ids sorted.
+   *  Nothing is stored; the key is used for this one call only. */
+  discoverModels: (body: { base_url: string; api_key?: string; no_key?: boolean }) =>
+    req<{ base_url: string; models: string[] }>(
+      "POST", "/api/v1/settings/custom-providers/discover-models", body),
   deleteCustomProvider: (name: string) =>
     req("DELETE", `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`),
   testCustomProvider: (name: string) =>
