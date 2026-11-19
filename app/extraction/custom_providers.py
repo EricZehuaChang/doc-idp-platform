@@ -14,6 +14,7 @@ Discipline:
   time, so "which channel did this run use" always has one answer;
 - the key is stored encrypted and never leaves the server, in any response.
 """
+import httpx
 from sqlalchemy import select
 
 from app.auth import security
@@ -81,16 +82,23 @@ async def load_raw(session, tenant: str) -> dict:
 # what gets pasted into a field labelled "接口地址". The client appends the path
 # itself, and the doubled suffix 404s with nothing pointing at the cause — seen
 # for real on 2026-08-26. Accept both forms instead of being right about it.
-_ENDPOINT_SUFFIXES = ("/chat/completions", "/completions")
+# "/models" joined the list with model discovery (2026-11-19): it is the other
+# endpoint people copy out of vendor docs.
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/completions", "/models")
+
+
+def normalize_base_url(base_url: str) -> str:
+    """Trim whitespace, trailing slashes and one pasted endpoint suffix."""
+    base_url = (base_url or "").strip().rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if base_url.endswith(suffix):
+            return base_url[: -len(suffix)].rstrip("/")
+    return base_url
 
 
 def validate(name: str, base_url: str, model: str) -> tuple[str, str, str]:
     name = (name or "").strip()
-    base_url = (base_url or "").strip().rstrip("/")
-    for suffix in _ENDPOINT_SUFFIXES:
-        if base_url.endswith(suffix):
-            base_url = base_url[: -len(suffix)].rstrip("/")
-            break
+    base_url = normalize_base_url(base_url)
     model = (model or "").strip() or name
     if not name:
         raise CustomProviderError("通道名称不能为空")
@@ -156,3 +164,94 @@ async def remove(session, tenant: str, name: str) -> bool:
         row.value = stored
     _cache.get(tenant, {}).pop(name, None)
     return True
+
+
+# —— model discovery (2026-11-19) ——
+# A customer often hands over nothing but an OpenAI-compatible base URL ending
+# in /v1 plus a key. Typing the model id by hand is where registrations go
+# wrong (a model the vendor does not serve only fails at test time), so the
+# console asks the endpoint itself: GET {base_url}/models, the standard
+# OpenAI list call, and offers the ids as a dropdown. Nothing is stored here;
+# registration still goes through put() above.
+#
+# The response is external input (§6.2.2): size-capped, only id strings are
+# kept, each id length-capped and printable, and the list itself is capped.
+# The key travels only as the Bearer header to the URL the admin typed — it is
+# never put in an error message or a log line.
+_MODEL_LIST_MAX_BYTES = 8 * 1024 * 1024    # OpenRouter's full catalogue is ~1-2 MB
+_MODEL_LIST_MAX_ITEMS = 2000
+_MODEL_ID_MAX_LEN = 200
+
+
+class ModelDiscoveryError(RuntimeError):
+    """The endpoint could not produce a model list. API turns it into a 502."""
+
+
+def parse_model_list(payload) -> list[str]:
+    """Extract model ids from a /models response, sorted case-insensitively.
+
+    Accepted shapes, in the order vendors actually return them:
+    - OpenAI standard        {"data": [{"id": "..."}]}   (also vLLM, DashScope,
+      DeepSeek, Zhipu, OpenRouter, one-api / new-api gateways)
+    - Ollama / Gemini native {"models": [{"name": "..."}]}
+    - bare list              ["...", ...] or [{"id": "..."}]
+    """
+    items = None
+    if isinstance(payload, dict):
+        for key in ("data", "models"):
+            if isinstance(payload.get(key), list):
+                items = payload[key]
+                break
+    elif isinstance(payload, list):
+        items = payload
+    if items is None:
+        raise ModelDiscoveryError("返回内容里没有模型列表（缺少 data 字段），请确认是 OpenAI 兼容接口")
+    ids: set[str] = set()
+    for item in items[:_MODEL_LIST_MAX_ITEMS]:
+        if isinstance(item, dict):
+            item = item.get("id") or item.get("name") or item.get("model")
+        if not isinstance(item, str):
+            continue
+        item = item.strip()
+        if item and len(item) <= _MODEL_ID_MAX_LEN and item.isprintable():
+            ids.add(item)
+    return sorted(ids, key=lambda s: (s.lower(), s))
+
+
+async def discover_models(base_url: str, api_key: str, timeout: float = 20.0,
+                          transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
+    """GET {base_url}/models and return the model ids the endpoint serves.
+
+    `base_url` must already be normalized; an empty `api_key` means the
+    endpoint takes no auth (the same no_key case as put()).
+    """
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+            resp = await client.get(f"{base_url}/models", headers=headers)
+    except httpx.TimeoutException as e:
+        raise ModelDiscoveryError(f"连接超时（{int(timeout)} 秒内无响应），请检查地址或网络") from e
+    except httpx.HTTPError as e:
+        raise ModelDiscoveryError(f"无法连接该地址：{type(e).__name__}") from e
+
+    code = resp.status_code
+    if code in (401, 403):
+        raise ModelDiscoveryError(f"鉴权失败（HTTP {code}），请检查 API Key")
+    if code in (404, 405):
+        raise ModelDiscoveryError(
+            f"该地址没有模型列表接口（HTTP {code}）。请确认地址写到 /v1 为止；"
+            "若厂商不提供列模型接口，可直接手动填写模型 ID")
+    if not 200 <= code < 300:
+        # vendor error bodies sometimes quote the key they were given
+        text = resp.text.replace(api_key, "***") if api_key else resp.text
+        raise ModelDiscoveryError(f"HTTP {code}：{text[:200]}")
+    if len(resp.content) > _MODEL_LIST_MAX_BYTES:
+        raise ModelDiscoveryError("返回内容过大，不像是模型列表")
+    try:
+        payload = resp.json()
+    except ValueError as e:
+        # typically a web page: the site root was pasted instead of the API root
+        raise ModelDiscoveryError("返回的不是 JSON，请确认填的是 API 地址（通常以 /v1 结尾）而不是网页地址") from e
+    return parse_model_list(payload)
