@@ -18,6 +18,7 @@ import base64
 import io
 import os
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import httpx
 
@@ -49,15 +50,33 @@ _PROMPT = (
 class VlmOcrParser:
     """One class, one registered name per vision channel. Which model each name uses comes from
     configs/parsers.yaml (`provider:`), resolved against providers.yaml — so
-    swapping the model behind a parser is a config edit, not a release."""
+    swapping the model behind a parser is a config edit, not a release.
+
+    2026-11-20, recognition engines registered from the console: `channel`
+    carries a tenant custom channel already resolved by the async caller
+    ({model, base_url, api_key, extra_body}; the parser runs in a worker thread
+    and cannot reach the DB), and `prompt` replaces the built-in transcription
+    brief. A model trained on fixed task prompts — PaddleOCR-VL answers "OCR:" —
+    is sent the image first, then the prompt, which is the order those models
+    are trained and served with. No prompt keeps the original request."""
 
     def __init__(self, provider: str = "", timeout: float = 180.0,
-                 transport: httpx.BaseTransport | None = None):
+                 transport: httpx.BaseTransport | None = None,
+                 channel: dict | None = None, prompt: str = ""):
         self.provider = provider
         self.timeout = timeout
         self.transport = transport
+        self.channel = channel
+        self.prompt = prompt
 
-    def parse(self, path: str) -> UDR:
+    def _resolve(self):
+        """(cfg, key) for the call: a console channel when given, else the
+        providers.yaml entry named by `provider`."""
+        if self.channel is not None:
+            ch = self.channel
+            cfg = SimpleNamespace(model=ch.get("model") or "", base_url=ch.get("base_url") or "",
+                                  extra_body=dict(ch.get("extra_body") or {}))
+            return cfg, (ch.get("api_key") or "").strip()
         cfg = load_providers()["providers"].get(self.provider)
         if cfg is None:
             raise ParserUnavailable(f"vlm parser provider not configured: {self.provider}")
@@ -66,6 +85,16 @@ class VlmOcrParser:
             # deployment issue, not a bad document: retryable, same as the
             # other cloud parsers
             raise ParserUnavailable(f"{cfg.api_key_env} not configured")
+        return cfg, key
+
+    def read_image(self, image) -> str:
+        """Transcribe one PIL image — the console's connection test for a
+        recognition engine goes through exactly the request a scan gets."""
+        cfg, key = self._resolve()
+        return self._transcribe(cfg, key, image)
+
+    def parse(self, path: str) -> UDR:
+        cfg, key = self._resolve()
 
         try:
             from app.detectors.render import rasterize
@@ -100,12 +129,15 @@ class VlmOcrParser:
         buf = io.BytesIO()
         image.save(buf, format="JPEG", quality=85)
         uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        image_part = {"type": "image_url", "image_url": {"url": uri}}
+        if self.prompt:
+            content = [image_part, {"type": "text", "text": self.prompt}]
+        else:
+            content = [{"type": "text", "text": _PROMPT}, image_part]
         body = {
             "model": cfg.model,
             "temperature": 0,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": _PROMPT},
-                {"type": "image_url", "image_url": {"url": uri}}]}],
+            "messages": [{"role": "user", "content": content}],
         }
         body.update(dict(cfg.extra_body or {}))
         headers = {"Content-Type": "application/json"}

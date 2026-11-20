@@ -867,7 +867,22 @@
     "revoke-key-confirm": "吊销密钥「{name}」？使用它的集成将立即失效。",
     "language": "界面语言",
     "language-description": "仅保存在此浏览器，切换立即生效。",
-    "settings-title": "设置"
+    "settings-title": "设置",
+    "status_ok": "通过",
+    "status_fail": "失败",
+    "status_untested": "未测试",
+    "status_stale": "待重测",
+    "status_ok_title": "最近一次测试通过 · {at} · {ms} 毫秒",
+    "status_fail_title": "最近一次测试失败 · {at}：{error}",
+    "status_untested_title": "还没有测试过，点“测试连接”",
+    "status_stale_title": "上次测试（{at}）之后配置改过，请重新测试",
+    "recognition_engine": "识别引擎",
+    "use_as_recognition_engine": "用作识别引擎：技能的“解析器”下拉里可以选它，用它把扫描件和图片转成文字（电子版 PDF 和 Office 文件不受影响）",
+    "recognition_prompt": "识别指令（可选）",
+    "recognition_prompt_placeholder": "留空用平台默认的转写指令；PaddleOCR-VL 这类只认固定指令的模型填 OCR:",
+    "engine_prompt": "指令 {prompt}",
+    "engine_default_prompt": "默认指令",
+    "provider-tested-ocr": "✓ {name}（{model}）识别结果：{reply}"
   },
   "skillEditor": {
     "vision_first": "原图首抽",
@@ -1182,7 +1197,8 @@
     "vision_suffix": "・支持图像",
     "insert_token": "插入 {token}",
     "skill_version_rich": "技能版本：{version}",
-    "golden_summary_rich": "{samples} 个样本，平均匹配率 {rate}"
+    "golden_summary_rich": "{samples} 个样本，平均匹配率 {rate}",
+    "custom_engine_option": "{name} — 自定义识别引擎（{model}）"
   },
   "skills": {
     "enabled": "启用中",

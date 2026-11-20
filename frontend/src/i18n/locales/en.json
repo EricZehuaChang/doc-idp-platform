@@ -867,7 +867,22 @@
     "revoke-key-confirm": "Revoke key “{name}”? Integrations using it will stop working immediately.",
     "language": "Interface language",
     "language-description": "Saved in this browser. Changes apply immediately.",
-    "settings-title": "Settings"
+    "settings-title": "Settings",
+    "status_ok": "Passed",
+    "status_fail": "Failed",
+    "status_untested": "Not tested",
+    "status_stale": "Retest",
+    "status_ok_title": "Last test passed · {at} · {ms} ms",
+    "status_fail_title": "Last test failed · {at}: {error}",
+    "status_untested_title": "Not tested yet. Click Test connection",
+    "status_stale_title": "Configuration changed since the last test ({at}). Test again",
+    "recognition_engine": "Recognition engine",
+    "use_as_recognition_engine": "Use as a recognition engine: skills can pick it in the Parser dropdown to turn scans and images into text (electronic PDFs and Office files are not affected)",
+    "recognition_prompt": "Recognition instruction (optional)",
+    "recognition_prompt_placeholder": "Blank = the platform's transcription brief. Models trained on fixed task prompts, such as PaddleOCR-VL, need OCR:",
+    "engine_prompt": "instruction {prompt}",
+    "engine_default_prompt": "default instruction",
+    "provider-tested-ocr": "✓ {name} ({model}) read: {reply}"
   },
   "skillEditor": {
     "vision_first": "Extract from the original image",
@@ -1182,7 +1197,8 @@
     "vision_suffix": " · supports images",
     "insert_token": "Insert {token}",
     "skill_version_rich": "Skill version: {version}",
-    "golden_summary_rich": "{samples} samples, average match rate {rate}"
+    "golden_summary_rich": "{samples} samples, average match rate {rate}",
+    "custom_engine_option": "{name} — custom recognition engine ({model})"
   },
   "skills": {
     "enabled": "Enabled",

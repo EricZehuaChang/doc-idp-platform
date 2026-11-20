@@ -23,7 +23,7 @@ from app.extraction.pipeline import extract
 from app.integrations import webhooks
 from app.models import FileRecord, SkillVersion, Transaction
 from app.parsers.base import Page, UDR
-from app.parsers.router import escalate_if_tables_missing, parse_document
+from app.parsers.router import escalate_if_tables_missing, parse_document, resolve_pin
 from app.skillengine.effective import category_subpackage
 from app.skillengine.schema import SkillPackage, SkillPackageLoose
 from app.storage import get_storage
@@ -147,7 +147,9 @@ def _fast_vision_provider(tenant: str) -> str | None:
         return settings.fast_vision_provider
     from app.extraction import custom_providers
     for name in custom_providers.names(tenant):
-        if (custom_providers.get(tenant, name) or {}).get("vision"):
+        entry = custom_providers.get(tenant, name) or {}
+        # a recognition engine only transcribes; it cannot take an extraction prompt
+        if entry.get("vision") and not custom_providers.is_ocr_engine(entry):
             return name
     return None
 
@@ -168,13 +170,16 @@ def _pinned_vision_provider(parser_pin: str | None) -> str | None:
 
 
 async def _fast_parse(path: str, tenant: str,
-                      parser_pin: str | None = None) -> tuple[UDR, dict[int, str] | None, str]:
+                      parser_pin: str | None = None,
+                      scan_engine=None) -> tuple[UDR, dict[int, str] | None, str]:
     """Fast-mode parse route (§WP5 表): electronic PDF -> pinned pdfplumber
     (skips the JVM first pass); image/scan -> vision channel with a minimal
     UDR + page rasters, else the default OCR route with a metric note;
     Office/OFD -> the existing parser. A pinned cloud_vlm parser forces the
     image route even for PDFs that do have a text layer (see
-    `_pinned_vision_provider`). Returns (udr, page_images, route)."""
+    `_pinned_vision_provider`). A skill's recognition engine (`scan_engine`)
+    only replaces the OCR fallback: fast mode stays the vision route by design.
+    Returns (udr, page_images, route)."""
     from app.parsers import raster
     from app.parsers.router import parse_document
     suffix = Path(path).suffix.lower()
@@ -199,7 +204,8 @@ async def _fast_parse(path: str, tenant: str,
             # validation error for every image / scanned PDF on the vision route
             udr = UDR(pages=pages, full_markdown="", parser="vision_fast", lang=[])
             return udr, images, "vision_forced" if forced else "vision"
-    udr = await asyncio.to_thread(parse_document, path, None)
+    udr = await asyncio.to_thread(parse_document, path, None,
+                                  *((scan_engine,) if scan_engine else ()))
     return udr, None, "ocr_fallback"
 
 
@@ -228,12 +234,21 @@ async def parse_stage(file_id: str, parser_pin: str | None,
         f.status = "processing"
         await s.commit()
         path = get_storage().local_path(f.storage_path)
+        # a skill may pick a console-registered recognition engine as its
+        # parser (2026-11-20); resolving it needs the tenant's custom channels,
+        # which the worker thread below cannot load
+        from app.extraction import custom_providers
+        await custom_providers.warm(s, tenant)
+    parser_pin, scan_engine = resolve_pin(parser_pin, tenant)
 
     fast = processing_mode == "fast"
     images: dict[int, str] | None = None
     route = ""
     if fast:
-        udr, images, route = await _fast_parse(path, tenant, parser_pin)
+        # the engine only travels when a skill picked one: the historical call
+        # shape stays as it was for everything else
+        udr, images, route = await _fast_parse(
+            path, tenant, parser_pin, **({"scan_engine": scan_engine} if scan_engine else {}))
         # fast page cap (§WP5): same code as the submit-time estimate check
         if len(udr.pages) > get_settings().fast_max_pages:
             await mark_error(file_id,
@@ -244,7 +259,8 @@ async def parse_stage(file_id: str, parser_pin: str | None,
             return
     else:
         # blocking parse runs in a worker thread (async app stays responsive)
-        udr = await asyncio.to_thread(parse_document, path, parser_pin)
+        udr = await asyncio.to_thread(parse_document, path, parser_pin,
+                                      *((scan_engine,) if scan_engine else ()))
         if expects_tables and not parser_pin:
             udr = await asyncio.to_thread(escalate_if_tables_missing, path, udr)
 

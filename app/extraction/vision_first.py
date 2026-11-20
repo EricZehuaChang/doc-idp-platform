@@ -27,10 +27,15 @@ def vision_provider(pkg: SkillPackage, tenant: str) -> str | None:
         if not name:
             continue
         custom = custom_providers.get(tenant, name)
-        if name in trusted or (custom and custom.get("vision")):
+        # recognition engines (2026-11-20) only transcribe pages: never the
+        # channel for an image-first extraction prompt
+        if name in trusted or (custom and custom.get("vision")
+                               and not custom_providers.is_ocr_engine(custom)):
             return name
     return next((name for name in custom_providers.names(tenant)
-                 if (custom_providers.get(tenant, name) or {}).get("vision")), None)
+                 if (custom_providers.get(tenant, name) or {}).get("vision")
+                 and not custom_providers.is_ocr_engine(custom_providers.get(tenant, name))),
+                None)
 
 
 def unavailable_result(pkg: SkillPackage, reason: str):

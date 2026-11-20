@@ -419,7 +419,17 @@ export interface SkillOptions {
   providers: { name: string; model: string; active: boolean;
                custom: boolean; vision: boolean }[];
   fallback_chain: string[];
-  parsers: { name: string; type: string; description: string | null }[];
+  /** `custom` + `model`: a console-registered recognition engine (2026-11-20),
+   *  type "custom_ocr" — reads the skill's scans and images */
+  parsers: { name: string; type: string; description: string | null;
+             custom?: boolean; model?: string }[];
+}
+
+/** Last connection test of a model channel (2026-11-20), drawn as a dot:
+ *  ok = green, fail = red, untested / stale (config changed since) = grey. */
+export interface ChannelStatus {
+  state: "ok" | "fail" | "untested" | "stale";
+  at?: string; latency_ms?: number; error?: string; model?: string;
 }
 
 /** A console-registered model channel. The key is never returned — `has_key`
@@ -430,6 +440,9 @@ export interface CustomProvider {
   /** endpoint takes no auth at all (self-hosted vLLM, internal gateway) */
   no_key: boolean;
   extra_body: Record<string, unknown>;
+  /** recognition engine: pickable as a skill's parser; `ocr_prompt` "" = platform brief */
+  ocr: boolean; ocr_prompt: string;
+  status: ChannelStatus;
 }
 
 export interface LoginResult {
@@ -817,7 +830,8 @@ export const api = {
   putCustomProvider: (name: string, body: { base_url: string; model?: string;
                                             api_key?: string; no_key?: boolean;
                                             vision?: boolean;
-                                            extra_body?: Record<string, unknown> }) =>
+                                            extra_body?: Record<string, unknown>;
+                                            ocr?: boolean; ocr_prompt?: string }) =>
     req<CustomProvider>("PUT",
       `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`, body),
   /** Read-only probe: GET {base_url}/models on the endpoint, ids sorted.
@@ -827,13 +841,23 @@ export const api = {
       "POST", "/api/v1/settings/custom-providers/discover-models", body),
   deleteCustomProvider: (name: string) =>
     req("DELETE", `/api/v1/settings/custom-providers/${encodeURIComponent(name)}`),
+  /** a recognition engine answers with the text it read (`reply` is a string,
+   *  no usage); a chat channel with its JSON reply + usage */
   testCustomProvider: (name: string) =>
     req<{ provider: string; ok: boolean; model: string;
-          reply: Record<string, unknown>; usage: Record<string, number> }>(
+          reply: Record<string, unknown> | string; usage?: Record<string, number>;
+          status: ChannelStatus }>(
       "POST", `/api/v1/settings/custom-providers/${encodeURIComponent(name)}/test`),
   listProviders: () => req<{ providers: { name: string; model: string; active: boolean;
-                                          platform_key: boolean; byok_set: boolean }[] }>(
+                                          platform_key: boolean; byok_set: boolean;
+                                          status: ChannelStatus }[] }>(
     "GET", "/api/v1/settings/providers"),
+  /** one real minimal call against a platform channel; the result feeds its dot */
+  testProvider: (name: string) =>
+    req<{ provider: string; ok: boolean; model: string;
+          reply: Record<string, unknown>; usage: Record<string, number>;
+          status: ChannelStatus }>(
+      "POST", `/api/v1/settings/providers/${encodeURIComponent(name)}/test`),
   listApiKeys: () => req<{ id: string; name: string; prefix: string; active: boolean;
                            quota_mode: string; allocated_balance: number;
                            allocated_frozen: number; created_at: string | null;

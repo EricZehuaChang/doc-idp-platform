@@ -18,7 +18,7 @@ from app.extraction.provider_client import ProviderError
 from app.db import session_factory
 from app.models import AuditLog, GoldenSample, Skill, SkillVersion, Transaction
 from app.parsers.base import UDR
-from app.parsers.router import parse_document
+from app.parsers.router import parse_document, resolve_pin
 from app import references
 from app.api.upload_limits import MAX_FILE_SIZE
 from app.skillengine import catalog, studio
@@ -65,7 +65,16 @@ async def _parse_upload_kept(up: UploadFile, tenant: str,
     st = get_storage()
     key = st.put_bytes(f"samples/{tenant}/{digest}{suffix}", blob)
     local = st.local_path(key)
-    return local, await asyncio.to_thread(parse_document, local, pinned)
+    engine = None
+    if pinned:
+        # a recognition engine picked as the skill's parser (2026-11-20) must
+        # read the sample here too, or the dry run evaluates a different engine
+        from app.extraction import custom_providers
+        async with session_factory()() as s:
+            await custom_providers.warm(s, tenant)
+        pinned, engine = resolve_pin(pinned, tenant)
+    return local, await asyncio.to_thread(parse_document, local, pinned,
+                                          *((engine,) if engine else ()))
 
 
 class SkillCreate(BaseModel):
@@ -183,7 +192,12 @@ async def model_options():
         # parsers carry a description so the editor can show what each vlm-*
         # routing name actually resolves to (model + capability), not just the key
         "parsers": [{"name": p.name, "type": p.type, "description": p.description}
-                    for p in load_parsers()["parsers"].values()],
+                    for p in load_parsers()["parsers"].values()]
+        # console-registered recognition engines (2026-11-20): pickable as a
+        # skill's parser; they read the skill's scans and images
+        + [{"name": n, "type": "custom_ocr", "description": None,
+            "custom": True, "model": e.get("model") or ""}
+           for n, e in sorted(stored.items()) if isinstance(e, dict) and e.get("ocr")],
     }
 
 
@@ -730,12 +744,14 @@ async def golden_check(skill_code: str, version: int):
         return {"samples": 0, "note": "no golden samples attached"}
     await _warm_byok()
     pkg = SkillPackageLoose(**row.package)
+    pin, engine = resolve_pin(pkg.parser, tenant)
 
     def _run():
         # the gate must exercise the parser the version actually pins, or it
         # certifies something production will not run
         st = get_storage()
-        pairs = [(parse_document(st.local_path(g.storage_path), pkg.parser),
+        pairs = [(parse_document(st.local_path(g.storage_path), pin,
+                                 *((engine,) if engine else ())),
                   g.expected or {}) for g in goldens]
         return studio.golden_check(pkg, pairs)
 

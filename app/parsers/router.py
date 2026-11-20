@@ -3,6 +3,7 @@ to text-layer parsers, images/scans go to the tier default OCR parser. A skill
 may pin a parser explicitly (skill package "parser" field) which wins over auto.
 OFD three-level handling and multi-doc split land in M2.
 """
+import logging
 from pathlib import Path
 
 from app.config import get_settings, load_parsers
@@ -10,7 +11,10 @@ from app.parsers import (  # noqa: F401  register plugins
     electronic, glm_ocr_cloud, monkeyocr_http, ofd, opendataloader,
     rapidocr_http, vlm_ocr)
 from app.parsers.base import UDR, Parser, ParserUnavailable
+from app.parsers.vlm_ocr import VlmOcrParser
 from app.plugins.registry import registry
+
+log = logging.getLogger("idp.parsers")
 
 _OFFICE = {".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"}
 _IMAGES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -47,17 +51,58 @@ def default_scan_parser() -> str:
     return load_parsers()["default_parser"].get(tier, "glm-ocr-cloud")
 
 
-def _scan_parse(path: str) -> UDR:
-    """Degradation chain (HA design v2.0 §2.5): tier default OCR first,
-    RapidOCR CPU as last resort. Degradation is logged by the caller via
-    UDR.parser so quality gates can see which engine produced the text."""
+def custom_scan_engine(name: str, channel: dict) -> Parser:
+    """A console-registered recognition engine (2026-11-20) as a parser: the
+    tenant custom channel `channel` (already resolved, key included) reads the
+    page images with its own instruction. UDR.parser records it as
+    "vlm:custom:<name>"."""
+    return VlmOcrParser(provider=f"custom:{name}", channel=channel,
+                        prompt=channel.get("ocr_prompt") or "")
+
+
+def resolve_pin(pinned: str | None, tenant: str) -> tuple[str | None, Parser | None]:
+    """Split a skill's `parser` value into (built-in pin, scan engine).
+
+    A built-in parser name stays a pin (whole document through that parser,
+    unchanged behaviour). A recognition engine registered from the console is
+    NOT a pin: it replaces only the scan reader, so electronic PDFs keep their
+    free text-layer parse and Office files keep markitdown — the engine reads
+    what actually needs reading. The custom-channel cache must be warm for
+    `tenant` (async callers warm it). Anything else is returned unchanged and
+    fails in _make with the registry's own message, as before."""
+    if not pinned or pinned in load_parsers()["parsers"]:
+        return pinned, None
+    from app.extraction import custom_providers
+    channel = custom_providers.ocr_engine(tenant, pinned)
+    if channel is None:
+        return pinned, None
+    return None, custom_scan_engine(pinned, channel)
+
+
+def _scan_parse(path: str, engine: Parser | None = None) -> UDR:
+    """Degradation chain (HA design v2.0 §2.5): the skill's recognition engine
+    when it picked one, then the tier default OCR, RapidOCR CPU as last resort.
+    Degradation is logged by the caller via UDR.parser so quality gates can
+    see which engine produced the text."""
+    if engine is not None:
+        try:
+            return engine.parse(path)
+        except ParserUnavailable as e:
+            log.warning("recognition engine failed, falling back to default OCR: %s", e)
     try:
         return _make(default_scan_parser()).parse(path)
     except ParserUnavailable:
         return _make("rapidocr").parse(path)
 
 
-def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
+def _scan(path: str, engine: Parser | None) -> UDR:
+    # no engine -> the historical one-argument call, so a stubbed _scan_parse
+    # (tests, diagnostics) keeps working unchanged
+    return _scan_parse(path, engine) if engine is not None else _scan_parse(path)
+
+
+def parse_document(path: str, pinned_parser: str | None = None,
+                   scan_engine: Parser | None = None) -> UDR:
     if pinned_parser:
         return _make(pinned_parser).parse(path)
     suffix = Path(path).suffix.lower()
@@ -73,9 +118,9 @@ def parse_document(path: str, pinned_parser: str | None = None) -> UDR:
         try:
             return _make("pdfplumber").parse(path)   # pre-upgrade text path
         except ParserUnavailable:
-            return _scan_parse(path)                 # scanned PDF -> OCR chain
+            return _scan(path, scan_engine)          # scanned PDF -> OCR chain
     if suffix in _IMAGES:
-        return _scan_parse(path)
+        return _scan(path, scan_engine)
     if suffix == ".ofd":
         return _make("ofd").parse(path)      # three-level handling inside
     raise ParserUnavailable(f"unsupported file type: {suffix}")

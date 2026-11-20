@@ -43,7 +43,9 @@ def _decode(entry: dict) -> dict | None:
             "api_key": key,
             "no_key": bool(entry.get("no_key")),
             "vision": bool(entry.get("vision")),
-            "extra_body": dict(entry.get("extra_body") or {})}
+            "extra_body": dict(entry.get("extra_body") or {}),
+            "ocr": bool(entry.get("ocr")),
+            "ocr_prompt": entry.get("ocr_prompt") or ""}
 
 
 def get(tenant: str, name: str) -> dict | None:
@@ -53,6 +55,20 @@ def get(tenant: str, name: str) -> dict | None:
 
 def names(tenant: str) -> list[str]:
     return sorted(_cache.get(tenant, {}))
+
+
+def ocr_engine(tenant: str, name: str) -> dict | None:
+    """The channel behind `name` when it is registered as a recognition engine
+    (2026-11-20: a skill may pick it in the parser dropdown), else None."""
+    entry = get(tenant, name)
+    return entry if entry and entry.get("ocr") else None
+
+
+def is_ocr_engine(entry: dict | None) -> bool:
+    """Recognition engines only transcribe pages. Automatic vision picks (fast
+    mode, image-first extraction) must never hand them an extraction prompt —
+    PaddleOCR-VL-style models answer fixed task prompts, not field schemas."""
+    return bool(entry and entry.get("ocr"))
 
 
 async def warm(session, tenant: str, force: bool = False) -> None:
@@ -111,9 +127,13 @@ def validate(name: str, base_url: str, model: str) -> tuple[str, str, str]:
     return name, base_url, model
 
 
+_OCR_PROMPT_MAX = 2000
+
+
 async def put(session, tenant: str, name: str, base_url: str, model: str,
               api_key: str | None, vision: bool = False,
-              extra_body: dict | None = None, no_key: bool = False) -> dict:
+              extra_body: dict | None = None, no_key: bool = False,
+              ocr: bool = False, ocr_prompt: str = "") -> dict:
     """Create or update one channel.
 
     Three distinct key states, and they must stay distinct:
@@ -125,8 +145,23 @@ async def put(session, tenant: str, name: str, base_url: str, model: str,
       chat_json simply omits the Authorization header. providers.yaml already
       ships one such channel (local-vllm with an empty api_key_env), so this is
       a first-class case rather than a loophole.
+
+    `ocr` (2026-11-20) registers the channel as a recognition engine: it then
+    shows up in the skill editor's parser dropdown and, when a skill picks it,
+    reads that skill's scans and images. `ocr_prompt` is the instruction sent
+    with each page image; empty keeps the platform's own transcription brief,
+    a model trained on fixed task prompts (PaddleOCR-VL: "OCR:") gets its own.
     """
     name, base_url, model = validate(name, base_url, model)
+    ocr_prompt = (ocr_prompt or "").strip() if ocr else ""
+    if ocr:
+        from app.config import load_parsers
+        # the parser dropdown and a skill's `parser` field share one namespace:
+        # an engine named like a built-in parser would make a pin ambiguous
+        if name in load_parsers()["parsers"]:
+            raise CustomProviderError(f"名称 {name} 与平台内置解析器重名，请换一个")
+        if len(ocr_prompt) > _OCR_PROMPT_MAX:
+            raise CustomProviderError(f"识别指令不能超过 {_OCR_PROMPT_MAX} 字")
     stored = await load_raw(session, tenant)
     prev = stored.get(name) if isinstance(stored.get(name), dict) else {}
     enc = prev.get("api_key_enc", "")
@@ -136,7 +171,8 @@ async def put(session, tenant: str, name: str, base_url: str, model: str,
         enc = security.encrypt_value(api_key.strip())
     stored[name] = {"model": model, "base_url": base_url, "api_key_enc": enc,
                     "no_key": bool(no_key),
-                    "vision": bool(vision), "extra_body": dict(extra_body or {})}
+                    "vision": bool(vision), "extra_body": dict(extra_body or {}),
+                    "ocr": bool(ocr), "ocr_prompt": ocr_prompt}
     row = (await session.execute(
         select(TenantSetting).where(TenantSetting.tenant_id == tenant,
                                     TenantSetting.key == SETTING_KEY))).scalar_one_or_none()
@@ -149,7 +185,8 @@ async def put(session, tenant: str, name: str, base_url: str, model: str,
         _cache.setdefault(tenant, {})[name] = entry
     _warmed.add(tenant)
     return {"name": name, "model": model, "base_url": base_url,
-            "vision": bool(vision), "has_key": bool(enc), "no_key": bool(no_key)}
+            "vision": bool(vision), "has_key": bool(enc), "no_key": bool(no_key),
+            "ocr": bool(ocr), "ocr_prompt": ocr_prompt}
 
 
 async def remove(session, tenant: str, name: str) -> bool:

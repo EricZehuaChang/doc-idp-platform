@@ -311,19 +311,74 @@ async def list_providers():
     from app.config import load_providers
     from app.extraction import byok
 
+    from app.extraction import channel_status
+
     _require_admin()
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
         await byok.warm(s, tenant, force=True)
+        statuses = await channel_status.load(s, tenant)
     cfg = load_providers()
     out = []
     for name, p in cfg["providers"].items():
+        env_key = bool(p.api_key_env and os.environ.get(p.api_key_env))
+        byok_set = byok.has_key(tenant, name)
+        fp = channel_status.builtin_fingerprint(p, env_key, byok_set)
         out.append({"name": name, "model": p.model, "base_url": p.base_url,
                     "active": name == cfg["active"],
-                    "platform_key": bool(p.api_key_env and os.environ.get(p.api_key_env)),
-                    "byok_set": byok.has_key(tenant, name)})
+                    "platform_key": env_key,
+                    "byok_set": byok_set,
+                    "status": channel_status.view(statuses.get(name), fp)})
     return {"providers": out}
+
+
+@router.post("/providers/{name}/test")
+async def test_provider(name: str):
+    """One real minimal call against a platform channel (2026-11-20), with the
+    key this tenant would actually use (BYOK first, platform env second). The
+    outcome is kept for the status dot; a failure answers 502 like the custom
+    channel test."""
+    import asyncio
+    import os
+    import time
+
+    from app.config import load_providers
+    from app.extraction import byok, channel_status
+    from app.extraction.provider_client import ProviderError, chat_json, resolve_provider
+
+    _require_admin()
+    p = load_providers()["providers"].get(name)
+    if p is None:
+        raise HTTPException(404, f"unknown provider: {name}")
+    tenant = current_tenant()
+    sf = session_factory()
+    async with sf() as s:
+        await byok.warm(s, tenant, force=True)
+    env_key = bool(p.api_key_env and os.environ.get(p.api_key_env))
+    byok_set = byok.has_key(tenant, name)
+    fp = channel_status.builtin_fingerprint(p, env_key, byok_set)
+    provider = resolve_provider(name)
+    started = time.monotonic()
+    error = ""
+    data = usage = None
+    if p.api_key_env and not provider["api_key"]:
+        error = "该通道没有可用的 API Key（平台未配置，本租户也没有自带）"
+    else:
+        try:
+            data, usage = await asyncio.to_thread(chat_json, _TEST_MESSAGES, provider,
+                                                  timeout=45.0, retries=0)
+        except ProviderError as e:
+            error = f"调用失败：{str(e)[:300]}"
+    latency = int((time.monotonic() - started) * 1000)
+    async with sf() as s:
+        status = await channel_status.record(s, tenant, name, fp, not error, latency,
+                                             error, p.model)
+        await s.commit()
+    if error:
+        raise HTTPException(502, error)
+    return {"provider": name, "ok": True, "model": p.model, "reply": data, "usage": usage,
+            "status": channel_status.view(status, fp)}
 
 
 class ByokBody(BaseModel):
@@ -333,7 +388,7 @@ class ByokBody(BaseModel):
 @router.put("/providers/{name}/key")
 async def put_byok(name: str, body: ByokBody):
     from app.config import load_providers
-    from app.extraction import byok
+    from app.extraction import byok, channel_status
 
     _require_admin()
     if name not in load_providers()["providers"]:
@@ -344,6 +399,7 @@ async def put_byok(name: str, body: ByokBody):
     sf = session_factory()
     async with sf() as s:
         await byok.put(s, tenant, name, body.api_key.strip())
+        await channel_status.clear(s, tenant, name)      # new key: old result says nothing
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="settings.byok_set", detail={"provider": name}))
         await s.commit()
@@ -352,13 +408,14 @@ async def put_byok(name: str, body: ByokBody):
 
 @router.delete("/providers/{name}/key")
 async def delete_byok(name: str):
-    from app.extraction import byok
+    from app.extraction import byok, channel_status
 
     _require_admin()
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
         await byok.remove(s, tenant, name)
+        await channel_status.clear(s, tenant, name)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="settings.byok_removed", detail={"provider": name}))
         await s.commit()
@@ -406,6 +463,8 @@ class CustomProviderBody(BaseModel):
     no_key: bool = False                # endpoint takes no auth (self-hosted)
     vision: bool = False                # channel accepts image input
     extra_body: dict = {}               # vendor options, e.g. {"enable_thinking": false}
+    ocr: bool = False                   # recognition engine: pickable as a skill's parser
+    ocr_prompt: str = ""                # instruction sent with each page; "" = platform brief
 
 
 def _custom_public(name: str, entry: dict) -> dict:
@@ -414,7 +473,14 @@ def _custom_public(name: str, entry: dict) -> dict:
             "vision": bool(entry.get("vision")),
             "has_key": bool(entry.get("api_key_enc")),
             "no_key": bool(entry.get("no_key")),
-            "extra_body": dict(entry.get("extra_body") or {})}
+            "extra_body": dict(entry.get("extra_body") or {}),
+            "ocr": bool(entry.get("ocr")),
+            "ocr_prompt": entry.get("ocr_prompt") or ""}
+
+
+# minimal JSON round-trip used by every chat-channel connection test
+_TEST_MESSAGES = [{"role": "system", "content": "只输出 JSON，无任何解释。"},
+                  {"role": "user", "content": '回复 {"ok": true}'}]
 
 
 class DiscoverModelsBody(BaseModel):
@@ -454,12 +520,17 @@ async def list_custom_providers():
     """Registered channels. Key material never appears here — only has_key."""
     from app.extraction import custom_providers
 
+    from app.extraction import channel_status
+
     _require_admin()
     sf = session_factory()
     async with sf() as s:
         stored = await custom_providers.load_raw(s, current_tenant())
-    return {"providers": [_custom_public(n, e) for n, e in sorted(stored.items())
-                          if isinstance(e, dict)]}
+        statuses = await channel_status.load(s, current_tenant())
+    return {"providers": [
+        {**_custom_public(n, e),
+         "status": channel_status.view(statuses.get(n), channel_status.custom_fingerprint(e))}
+        for n, e in sorted(stored.items()) if isinstance(e, dict)]}
 
 
 @router.put("/custom-providers/{name}")
@@ -480,7 +551,8 @@ async def put_custom_provider(name: str, body: CustomProviderBody):
                     400, "首次登记必须填写 API Key；若该端点无需鉴权，请勾选「无需 API Key」")
             out = await custom_providers.put(
                 s, tenant, name, body.base_url, body.model, body.api_key,
-                vision=body.vision, extra_body=body.extra_body, no_key=body.no_key)
+                vision=body.vision, extra_body=body.extra_body, no_key=body.no_key,
+                ocr=body.ocr, ocr_prompt=body.ocr_prompt)
             s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                            action="settings.custom_provider_set",
                            detail={"provider": out["name"],
@@ -503,6 +575,8 @@ async def delete_custom_provider(name: str):
         removed = await custom_providers.remove(s, tenant, name)
         if not removed:
             raise HTTPException(404, f"unknown channel: {name}")
+        from app.extraction import channel_status
+        await channel_status.clear(s, tenant, name)
         s.add(AuditLog(tenant_id=tenant, actor=current_actor()["name"],
                        action="settings.custom_provider_removed",
                        detail={"provider": name}))
@@ -520,28 +594,72 @@ async def test_custom_provider(name: str):
     silent zero-field extraction three screens later.
     """
     import asyncio
+    import time
 
-    from app.extraction import custom_providers
+    from app.extraction import channel_status, custom_providers
     from app.extraction.provider_client import ProviderError, chat_json
+    from app.parsers.base import ParserUnavailable
 
     _require_admin()
     tenant = current_tenant()
     sf = session_factory()
     async with sf() as s:
         await custom_providers.warm(s, tenant, force=True)
+        raw = (await custom_providers.load_raw(s, tenant)).get(name)
     p = custom_providers.get(tenant, name)
-    if p is None:
+    if p is None or not isinstance(raw, dict):
         raise HTTPException(404, f"unknown channel: {name}")
     if not p["api_key"] and not p["no_key"]:
         raise HTTPException(400, "该通道没有可用的 API Key")
-    provider = {"name": name, "model": p["model"], "base_url": p["base_url"],
-                "api_key": p["api_key"], "extra_body": dict(p["extra_body"])}
-    messages = [{"role": "system", "content": "只输出 JSON，无任何解释。"},
-                {"role": "user", "content": '回复 {"ok": true}'}]
-    try:
-        data, usage = await asyncio.to_thread(chat_json, messages, provider,
-                                              timeout=45.0, retries=0)
-    except ProviderError as e:
-        raise HTTPException(502, f"调用失败：{str(e)[:300]}") from e
-    return {"provider": name, "ok": True, "model": p["model"],
-            "reply": data, "usage": usage}
+    fp = channel_status.custom_fingerprint(raw)
+    started = time.monotonic()
+    error = ""
+    out: dict = {}
+    if p.get("ocr"):
+        # a recognition engine is tested the way a scan reaches it: one page
+        # image through the parser's own request (task prompt, image order) —
+        # a JSON chat test would fail on models that only answer task prompts
+        try:
+            text = await asyncio.to_thread(_ocr_probe, name, p)
+        except ParserUnavailable as e:
+            error = f"调用失败：{str(e)[:300]}"
+        else:
+            if _OCR_PROBE_TEXT in text.replace(" ", ""):
+                out = {"reply": text[:300]}
+            else:
+                error = f"服务有返回，但没有识别出测试图片里的数字 {_OCR_PROBE_TEXT}：{text[:200]}"
+    else:
+        provider = {"name": name, "model": p["model"], "base_url": p["base_url"],
+                    "api_key": p["api_key"], "extra_body": dict(p["extra_body"])}
+        try:
+            data, usage = await asyncio.to_thread(chat_json, _TEST_MESSAGES, provider,
+                                                  timeout=45.0, retries=0)
+            out = {"reply": data, "usage": usage}
+        except ProviderError as e:
+            error = f"调用失败：{str(e)[:300]}"
+    latency = int((time.monotonic() - started) * 1000)
+    async with sf() as s:
+        status = await channel_status.record(s, tenant, name, fp, not error, latency,
+                                             error, p["model"])
+        await s.commit()
+    if error:
+        raise HTTPException(502, error)
+    return {"provider": name, "ok": True, "model": p["model"], **out,
+            "status": channel_status.view(status, fp)}
+
+
+_OCR_PROBE_TEXT = "73915"
+
+
+def _ocr_probe(name: str, channel: dict) -> str:
+    """Render a page with a known number and read it with the engine."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    from app.parsers.router import custom_scan_engine
+
+    img = Image.new("RGB", (900, 260), "white")
+    ImageDraw.Draw(img).text((50, 80), f"OCR TEST {_OCR_PROBE_TEXT}", fill="black",
+                             font=ImageFont.load_default(size=72))
+    engine = custom_scan_engine(name, channel)
+    engine.timeout = 60.0
+    return engine.read_image(img)

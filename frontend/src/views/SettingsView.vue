@@ -330,10 +330,12 @@
         {{ $t('settings.bring_your_own_key_byok_this_tenant_can_provide') }}</p>
       <div v-if="providers.length" class="table-scroll" role="region" tabindex="0" :aria-label="$t('settings.model_channels_keys')">
       <table>
-        <thead><tr><th>{{ $t('settings.channel') }}</th><th>{{ $t('settings.model') }}</th><th>{{ $t('settings.platform_key') }}</th><th>{{ $t('settings.tenant_key') }}</th><th></th></tr></thead>
+        <thead><tr><th>{{ $t('settings.channel') }}</th><th>{{ $t('settings.status') }}</th><th>{{ $t('settings.model') }}</th><th>{{ $t('settings.platform_key') }}</th><th>{{ $t('settings.tenant_key') }}</th><th></th></tr></thead>
         <tbody>
           <tr v-for="p in providers" :key="p.name">
             <td class="code">{{ p.name }} <span v-if="p.active" class="state ok">{{ $t('settings.default') }}</span></td>
+            <td><span class="ch-status" :title="statusTitle(p.status)" :data-testid="`status-${p.name}`">
+              <span class="dot" :class="p.status?.state || 'untested'" aria-hidden="true"></span>{{ statusLabel(p.status) }}</span></td>
             <td class="dim">{{ p.model }}</td>
             <td>{{ p.platform_key ? "✓" : "—" }}</td>
             <td>
@@ -341,11 +343,13 @@
               <input v-else v-model="keyDrafts[p.name]" type="password"
                      :placeholder="$t('settings.paste_api_key')" class="key-in" />
             </td>
-            <td>
+            <td><div class="row-ops">
+              <button :disabled="testingName === p.name" @click="testBuiltin(p.name)">
+                {{ testingName === p.name ? $t('settings.calling') : $t('settings.test_connection') }}</button>
               <button v-if="!p.byok_set" class="primary"
                       :disabled="!keyDrafts[p.name]" @click="setKey(p.name)">{{ $t('settings.save') }}</button>
               <button v-else class="danger" @click="removeKey(p.name)">{{ $t('settings.remove') }}</button>
-            </td>
+            </div></td>
           </tr>
         </tbody>
       </table>
@@ -358,14 +362,23 @@
         {{ $t('settings.add_models_beyond_the_platform_s_built_in_list') }}</p>
       <div v-if="customs.length" class="table-scroll" role="region" tabindex="0" :aria-label="$t('settings.custom_model_channel')">
       <table>
-        <thead><tr><th>{{ $t('settings.name') }}</th><th>{{ $t('settings.model_id') }}</th><th>{{ $t('settings.endpoint_url') }}</th><th>{{ $t('settings.image_input') }}</th>
+        <thead><tr><th>{{ $t('settings.name') }}</th><th>{{ $t('settings.status') }}</th><th>{{ $t('settings.model_id') }}</th><th>{{ $t('settings.endpoint_url') }}</th><th>{{ $t('settings.image_input') }}</th>
+                   <th>{{ $t('settings.recognition_engine') }}</th>
                    <th>{{ $t('settings.key') }}</th><th></th></tr></thead>
         <tbody>
           <tr v-for="c in customs" :key="c.name">
             <td class="code">{{ c.name }}</td>
+            <td><span class="ch-status" :title="statusTitle(c.status)" :data-testid="`status-${c.name}`">
+              <span class="dot" :class="c.status?.state || 'untested'" aria-hidden="true"></span>{{ statusLabel(c.status) }}</span></td>
             <td class="dim">{{ c.model }}</td>
             <td class="dim url">{{ c.base_url }}</td>
             <td>{{ c.vision ? $t('settings.supported') : "—" }}</td>
+            <td>
+              <template v-if="c.ocr">✓ <span class="dim">{{ c.ocr_prompt
+                ? $t('settings.engine_prompt', { prompt: c.ocr_prompt })
+                : $t('settings.engine_default_prompt') }}</span></template>
+              <template v-else>—</template>
+            </td>
             <td>
               <span v-if="c.has_key" class="state ok">{{ $t('settings.configured') }}</span>
               <span v-else-if="c.no_key" class="state pend">{{ $t('settings.no_key_required') }}</span>
@@ -418,6 +431,14 @@
           <input type="checkbox" v-model="draft.vision" />
           {{ $t('settings.this_model_supports_image_input_when_checked_test_runs') }}
         </label>
+        <label class="chk">
+          <input type="checkbox" v-model="draft.ocr" data-testid="custom-ocr" />
+          {{ $t('settings.use_as_recognition_engine') }}
+        </label>
+        <label v-if="draft.ocr" class="wide">{{ $t('settings.recognition_prompt') }}
+          <input v-model="draft.ocr_prompt" autocomplete="off" spellcheck="false" maxlength="2000"
+                 data-testid="custom-ocr-prompt"
+                 :placeholder="$t('settings.recognition_prompt_placeholder')" /></label>
         <div class="new-act">
           <button class="primary" :disabled="savingCustom || !draft.name || !draft.base_url
                                              || (!draft.api_key && !draft.no_key)"
@@ -538,7 +559,7 @@ const isAdmin = computed(() => session.authRequired === false || session.role ==
 import AppModal from "../components/AppModal.vue";
 import TransferUserModal from "../components/TransferUserModal.vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { api, type ApiGrants, type AuditRow, type BillingAccount, type CustomProvider,
+import { api, type ApiGrants, type AuditRow, type BillingAccount, type ChannelStatus, type CustomProvider,
          type GiftRequestRow, type LedgerRow, type SmtpInfo, type UserRow } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
@@ -826,7 +847,37 @@ async function decideGift(g: GiftRequestRow, decision: "approve" | "reject") {
 
 // —— BYOK ——
 interface ProviderRow { name: string; model: string; active: boolean;
-                        platform_key: boolean; byok_set: boolean }
+                        platform_key: boolean; byok_set: boolean; status: ChannelStatus }
+
+// —— channel status dots (2026-11-20): the last "测试连接" outcome per channel,
+// kept on the server so the dot survives a reload ——
+function statusLabel(st?: ChannelStatus): string {
+  return t(`settings.status_${st?.state || "untested"}`);
+}
+function statusTitle(st?: ChannelStatus): string {
+  const at = st?.at ? new Date(st.at).toLocaleString() : "";
+  switch (st?.state) {
+    case "ok": return t('settings.status_ok_title', { at, ms: st.latency_ms ?? "" });
+    case "fail": return t('settings.status_fail_title', { at, error: st.error || "" });
+    case "stale": return t('settings.status_stale_title', { at });
+    default: return t('settings.status_untested_title');
+  }
+}
+async function testBuiltin(name: string) {
+  testingName.value = name;
+  testOut.value = "";
+  try {
+    const r = await api.testProvider(name);
+    testOut.value = t('settings.provider-tested', { name, model: r.model, reply: JSON.stringify(r.reply), usage: JSON.stringify(r.usage) });
+    toast.ok(t('settings.provider-connected', { name }));
+  } catch (e) {
+    testOut.value = t('settings.provider-failed', { name, error: e instanceof Error ? e.message : String(e) });
+    toast.error(e);
+  } finally {
+    testingName.value = "";
+    await loadProviders();             // the dot follows the recorded outcome
+  }
+}
 const providers = ref<ProviderRow[]>([]);
 const keyDrafts = reactive<Record<string, string>>({});
 
@@ -853,7 +904,7 @@ async function removeKey(name: string) {
 // —— custom channels ——
 const customs = ref<CustomProvider[]>([]);
 const draft = reactive({ name: "", model: "", base_url: "", api_key: "",
-                         no_key: false, vision: false });
+                         no_key: false, vision: false, ocr: false, ocr_prompt: "" });
 const savingCustom = ref(false);
 const testingName = ref("");
 const testOut = ref("");
@@ -867,10 +918,11 @@ async function saveCustom() {
   try {
     await api.putCustomProvider(draft.name.trim(), {
       base_url: draft.base_url.trim(), model: draft.model.trim(),
-      api_key: draft.api_key, no_key: draft.no_key, vision: draft.vision });
+      api_key: draft.api_key, no_key: draft.no_key, vision: draft.vision,
+      ocr: draft.ocr, ocr_prompt: draft.ocr ? draft.ocr_prompt.trim() : "" });
     toast.ok(t('settings.provider-added', { name: draft.name.trim() }));
     Object.assign(draft, { name: "", model: "", base_url: "", api_key: "",
-                           no_key: false, vision: false });
+                           no_key: false, vision: false, ocr: false, ocr_prompt: "" });
     await loadCustoms();
   } catch (e) { toast.error(e); }
   finally { savingCustom.value = false; }
@@ -928,12 +980,18 @@ async function testCustom(name: string) {
   testOut.value = "";
   try {
     const r = await api.testCustomProvider(name);
-    testOut.value = t('settings.provider-tested', { name, model: r.model, reply: JSON.stringify(r.reply), usage: JSON.stringify(r.usage) });
+    // a recognition engine answers with the text it read off the test image
+    testOut.value = typeof r.reply === "string"
+      ? t('settings.provider-tested-ocr', { name, model: r.model, reply: r.reply })
+      : t('settings.provider-tested', { name, model: r.model, reply: JSON.stringify(r.reply), usage: JSON.stringify(r.usage) });
     toast.ok(t('settings.provider-connected', { name }));
   } catch (e) {
     testOut.value = t('settings.provider-failed', { name, error: e instanceof Error ? e.message : String(e) });
     toast.error(e);
-  } finally { testingName.value = ""; }
+  } finally {
+    testingName.value = "";
+    await loadCustoms();               // the dot follows the recorded outcome
+  }
 }
 
 // —— OIDC ——
@@ -1152,6 +1210,15 @@ th { background: var(--bg-soft); white-space: nowrap; }
 tbody tr:last-child td { border-bottom: none; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
   font-size: 13px; }
+/* channel status dot (2026-11-20): label beside the dot so the state is not
+   carried by colour alone; the tooltip holds time / latency / error */
+.ch-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  cursor: help; }
+.ch-status .dot { width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--text-dim); opacity: .55; }
+.ch-status .dot.ok { background: var(--green); opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent); }
+.ch-status .dot.fail { background: var(--red); opacity: 1; }
 th { color: var(--text-dim); }
 .code { font-family: Consolas, monospace; color: var(--blue); }
 .key-in { max-width: 220px; }

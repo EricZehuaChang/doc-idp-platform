@@ -45,13 +45,15 @@ async def test_register_list_and_delete_never_echoes_the_key(tmp_path, monkeypat
             assert r.status_code == 200, r.text
             assert r.json() == {"name": "my-vlm", "model": "vlm-max",
                                 "base_url": "https://vendor.example/v1",
-                                "vision": True, "has_key": True, "no_key": False}
+                                "vision": True, "has_key": True, "no_key": False,
+                                "ocr": False, "ocr_prompt": ""}
 
             body = (await c.get("/api/v1/settings/custom-providers")).json()
             assert body["providers"] == [{
                 "name": "my-vlm", "model": "vlm-max",
                 "base_url": "https://vendor.example/v1", "vision": True,
-                "has_key": True, "no_key": False, "extra_body": {}}]
+                "has_key": True, "no_key": False, "extra_body": {},
+                "ocr": False, "ocr_prompt": "", "status": {"state": "untested"}}]
             # the secret must not appear anywhere in any response
             assert secret not in r.text
             assert secret not in (await c.get("/api/v1/settings/custom-providers")).text

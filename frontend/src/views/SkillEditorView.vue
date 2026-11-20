@@ -176,7 +176,8 @@
                 </datalist>
                 <datalist id="dl-parsers">
                   <option v-for="p in parserOptions" :key="p.name" :value="p.name"
-                          :label="p.description ? `${p.name} — ${p.description}` : p.name" />
+                          :label="p.custom ? t('skillEditor.custom_engine_option', { name: p.name, model: p.model })
+                                  : p.description ? `${p.name} — ${p.description}` : p.name" />
                 </datalist>
                 <label>{{ $t('skillEditor.extraction_model_empty_platform_default') }}{{ activeProvider ? `：${activeProvider}` : "" }}）
                   <input v-model="pkg.model_binding.extractor" list="dl-providers"
@@ -778,7 +779,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { api, downloadFile, type Artifact, type CategorySpec,
          type DryRunEntry, type FieldCell,
-         type FieldSpec, type SkillPackage, type TxnDocument } from "../api";
+         type FieldSpec, type SkillOptions, type SkillPackage, type TxnDocument } from "../api";
 import AppModal from "../components/AppModal.vue";
 import DocStage from "../components/DocStage.vue";
 import FieldCard from "../components/FieldCard.vue";
@@ -806,7 +807,8 @@ const isNew = computed(() => props.code === "new");
 // provider/parser catalogue from the server (never hardcoded)
 const providerOptions = ref<{ name: string; model: string; active: boolean;
                               custom: boolean; vision: boolean }[]>([]);
-const parserOptions = ref<{ name: string; type: string; description: string | null }[]>([]);
+// `custom` = a recognition engine registered on the settings page (2026-11-20)
+const parserOptions = ref<SkillOptions["parsers"]>([]);
 const activeProvider = computed(() => providerOptions.value.find((p) => p.active)?.name ?? "");
 api.skillOptions()
   .then((o) => { providerOptions.value = o.providers; parserOptions.value = o.parsers; })
