@@ -39,6 +39,8 @@ def _make(name: str) -> Parser:
         kwargs = {"base_url": cfg.base_url, "api_key_env": cfg.api_key_env}
     elif cfg and cfg.type == "cloud_vlm":
         kwargs = {"provider": cfg.provider or ""}
+        if cfg.prompt:
+            kwargs["prompt"] = cfg.prompt
     return registry.create("parser", name, **kwargs)
 
 

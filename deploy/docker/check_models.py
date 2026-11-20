@@ -8,6 +8,8 @@ LLM: one JSON-mode chat call — must answer valid JSON, and should not spend
 tokens on hidden reasoning (structured extraction needs thinking off; a
 reasoning answer is reported so LLM_EXTRA_BODY can be fixed).
 VLM: one image call with a rendered number — the answer must contain it.
+OCR (only when OCR_MODEL is set): the same image sent the way the vlm-ocr
+parser sends it — image first, then the task prompt (PaddleOCR-VL: "OCR:").
 Exit code 0 only when every configured channel passes.
 """
 import base64
@@ -28,16 +30,24 @@ def _env(name: str) -> str:
     return os.environ.get(name, "").strip().strip("\r")
 
 
+def _setting(prefix: str, field: str) -> str:
+    """OCR_BASE_URL / OCR_API_KEY fall back to the VLM ones, as in render_configs."""
+    value = _env(f"{prefix}_{field}")
+    if not value and prefix == "OCR" and field in ("BASE_URL", "API_KEY"):
+        value = _env(f"VLM_{field}")
+    return value
+
+
 def _post(prefix: str, messages: list, extra: dict) -> tuple[dict, float]:
     body = {"model": _env(f"{prefix}_MODEL"), "messages": messages, "temperature": 0, **extra}
     raw_extra = _env(f"{prefix}_EXTRA_BODY")
     if raw_extra:
         body.update(json.loads(raw_extra))
     headers = {"Content-Type": "application/json"}
-    if _env(f"{prefix}_API_KEY"):
-        headers["Authorization"] = f"Bearer {_env(f'{prefix}_API_KEY')}"
+    if _setting(prefix, "API_KEY"):
+        headers["Authorization"] = f"Bearer {_setting(prefix, 'API_KEY')}"
     started = time.monotonic()
-    resp = httpx.post(f"{_env(f'{prefix}_BASE_URL').rstrip('/')}/chat/completions",
+    resp = httpx.post(f"{_setting(prefix, 'BASE_URL').rstrip('/')}/chat/completions",
                       json=body, headers=headers, timeout=120)
     elapsed = time.monotonic() - started
     if resp.status_code != 200:
@@ -67,7 +77,7 @@ def check_llm() -> bool:
     return ok
 
 
-def check_vlm() -> bool:
+def _test_image_uri() -> str:
     from PIL import Image, ImageDraw, ImageFont
     img = Image.new("RGB", (900, 260), "white")
     try:
@@ -77,7 +87,22 @@ def check_vlm() -> bool:
     ImageDraw.Draw(img).text((40, 90), "连通测试 编号 73915", font=font, fill="black")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def check_ocr_model() -> bool:
+    """The OCR model exactly as the vlm-ocr parser calls it: image first, then
+    the task prompt (PaddleOCR-VL: "OCR:")."""
+    data, elapsed = _post("OCR", [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": _test_image_uri()}},
+        {"type": "text", "text": _env("OCR_PROMPT") or "OCR:"}]}], {})
+    content = data["choices"][0]["message"]["content"] or ""
+    print(f"  耗时 {elapsed:.1f}s  返回：{content[:120]!r}")
+    return "73915" in content
+
+
+def check_vlm() -> bool:
+    url = _test_image_uri()
     data, elapsed = _post("VLM", [{"role": "user", "content": [
         {"type": "image_url", "image_url": {"url": url}},
         {"type": "text", "text": "图片里的编号是多少？只回答数字。"}]}], {})
@@ -154,11 +179,15 @@ def main() -> int:
     if ocr_ok is not None:
         print("  ✓ 通过" if ocr_ok else "  ✗ 未通过")
         results.append(ocr_ok)
-    for label, prefix, fn in (("抽取大模型", "LLM", check_llm), ("多模态模型", "VLM", check_vlm)):
-        if not _env(f"{prefix}_BASE_URL"):
+    for label, prefix, fn in (("抽取大模型", "LLM", check_llm), ("多模态模型", "VLM", check_vlm),
+                              ("OCR 识别模型", "OCR", check_ocr_model)):
+        if prefix == "OCR" and not _env("OCR_MODEL"):
+            print("[跳过] OCR 识别模型：idp.env 未填 OCR_MODEL（扫描件走多模态模型）")
+            continue
+        if not _setting(prefix, "BASE_URL"):
             print(f"[跳过] {label}：idp.env 未填 {prefix}_BASE_URL")
             continue
-        print(f"[检查] {label} {_env(f'{prefix}_BASE_URL')}  模型={_env(f'{prefix}_MODEL')}")
+        print(f"[检查] {label} {_setting(prefix, 'BASE_URL')}  模型={_env(f'{prefix}_MODEL')}")
         try:
             ok = fn()
         except Exception as e:                      # surface every failure in plain words

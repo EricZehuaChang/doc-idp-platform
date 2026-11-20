@@ -46,16 +46,23 @@ _PROMPT = (
 @registry.register("parser", "vlm-glm")
 @registry.register("parser", "vlm-deepseek-pro")
 @registry.register("parser", "vlm-gpt")
+@registry.register("parser", "vlm-ocr")        # task-prompt OCR model (BOC POC: PaddleOCR-VL)
 class VlmOcrParser:
     """One class, one registered name per vision channel. Which model each name uses comes from
     configs/parsers.yaml (`provider:`), resolved against providers.yaml — so
-    swapping the model behind a parser is a config edit, not a release."""
+    swapping the model behind a parser is a config edit, not a release.
+
+    `prompt` (parsers.yaml, BOC POC 2026-11): a model trained on fixed task
+    prompts — PaddleOCR-VL answers "OCR:" — gets that instruction instead of
+    the long transcription brief, image first, which is the order those models
+    are trained and served with. Unset keeps the original request unchanged."""
 
     def __init__(self, provider: str = "", timeout: float = 180.0,
-                 transport: httpx.BaseTransport | None = None):
+                 transport: httpx.BaseTransport | None = None, prompt: str = ""):
         self.provider = provider
         self.timeout = timeout
         self.transport = transport
+        self.prompt = prompt
 
     def parse(self, path: str) -> UDR:
         cfg = load_providers()["providers"].get(self.provider)
@@ -100,12 +107,15 @@ class VlmOcrParser:
         buf = io.BytesIO()
         image.save(buf, format="JPEG", quality=85)
         uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        image_part = {"type": "image_url", "image_url": {"url": uri}}
+        if self.prompt:
+            content = [image_part, {"type": "text", "text": self.prompt}]
+        else:
+            content = [{"type": "text", "text": _PROMPT}, image_part]
         body = {
             "model": cfg.model,
             "temperature": 0,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": _PROMPT},
-                {"type": "image_url", "image_url": {"url": uri}}]}],
+            "messages": [{"role": "user", "content": content}],
         }
         body.update(dict(cfg.extra_body or {}))
         headers = {"Content-Type": "application/json"}

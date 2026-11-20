@@ -162,7 +162,9 @@ def _pinned_vision_provider(parser_pin: str | None) -> str | None:
     if not parser_pin:
         return None
     cfg = load_parsers()["parsers"].get(parser_pin)
-    if cfg is None or cfg.type != "cloud_vlm":
+    # a task-prompt OCR reader (cfg.prompt) transcribes; it cannot take an
+    # extraction prompt, so pinning it keeps the normal parse route
+    if cfg is None or cfg.type != "cloud_vlm" or cfg.prompt:
         return None
     return cfg.provider or parser_pin
 

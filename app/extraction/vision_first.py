@@ -16,11 +16,14 @@ from app.skillengine.schema import SkillPackage
 def vision_provider(pkg: SkillPackage, tenant: str) -> str | None:
     """Only trusted cloud-VLM mappings or explicitly marked custom channels accept images."""
     parsers = load_parsers()["parsers"]
-    trusted = {cfg.provider or cfg.name for cfg in parsers.values() if cfg.type == "cloud_vlm"}
+    # task-prompt OCR readers (cfg.prompt, e.g. PaddleOCR-VL) only transcribe;
+    # they are never a channel for an image-first extraction prompt
+    vision_parsers = [cfg for cfg in parsers.values() if cfg.type == "cloud_vlm" and not cfg.prompt]
+    trusted = {cfg.provider or cfg.name for cfg in vision_parsers}
     pinned = parsers.get(pkg.parser) if pkg.parser else None
     candidates = [
         pkg.model_binding.extractor,
-        pinned.provider or pinned.name if pinned and pinned.type == "cloud_vlm" else None,
+        pinned.provider or pinned.name if pinned and pinned.type == "cloud_vlm" and not pinned.prompt else None,
         get_settings().vision_first_provider or get_settings().fast_vision_provider,
     ]
     for name in candidates:

@@ -35,6 +35,11 @@ class ParserCfg(BaseModel):
     for_: str | None = None
     # Human-readable blurb shown in the skill editor picker (hover/option text)
     description: str | None = None
+    # cloud_vlm only (BOC POC 2026-11): replaces the built-in transcription
+    # instruction for a model trained on fixed task prompts (PaddleOCR-VL:
+    # "OCR:"). Such a parser is a reader, not a general vision channel, so the
+    # fast-mode / image-first routes never hand it an extraction prompt.
+    prompt: str | None = None
 
     model_config = {"populate_by_name": True}
 
